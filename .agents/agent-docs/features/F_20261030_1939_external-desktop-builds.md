@@ -26,3 +26,5 @@ design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实
 当前仅构建测试安装包，未签名；生成安装器不能替代Windows真实Provider、权限、取消、配置隔离和进程树验收。原安装器AppId沿用WorkSwarm，实机验收使用独立测试环境。构建实际结果在管理任务记录和Actions运行链接跟踪；未修改Core/协议锁或外部Provider。
 
 首次GitHub校验拒绝工作流：job级env不允许引用runner.temp；未分配runner或运行打包。修正为步骤内从RUNNER_TEMP写入GITHUB_ENV，保持运行数据隔离，随后重新触发；不将本地YAML解析通过当作Actions执行通过。
+
+Windows运行41078652890（提交3fc8f997）成功dispatch，但GitHub在分配runner前终止：账户近期付款失败或消费额度需要提高。job124141593919无runner、无步骤执行，不属于源码/安装器构建失败，未产出exe。官方运行链接：https://github.com/leemine/code-platform/actions/runs/41078652890 。待账户Billing & plans解除限制或提供Windows自托管runner后再运行；本任务未修改账户支付设置。
