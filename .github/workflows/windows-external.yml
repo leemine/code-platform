@@ -1,0 +1,90 @@
+name: Windows external desktop installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-external-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      JIUWENSWARM_BUILD_PROFILE: external
+      UV_PYTHON: '3.13'
+      PYTHONUTF8: '1'
+      JIUWENSWARM_DATA_DIR: ${{ runner.temp }}\swarm-build-data
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.12.0'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.12.5'
+          enable-cache: false
+      - name: Record build source
+        run: |
+          New-Item -ItemType Directory -Force ci-evidence | Out-Null
+          @{
+            source_sha = $env:GITHUB_SHA
+            profile = 'external'
+            runner = $env:RUNNER_OS
+            architecture = $env:RUNNER_ARCH
+            uv_lock_sha256 = (Get-FileHash uv.lock -Algorithm SHA256).Hash
+            signing = 'unsigned test installer'
+          } | ConvertTo-Json | Set-Content ci-evidence/source.json
+          git status --short
+          uv --version
+          node --version
+      - name: Build full Windows installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Transcript -Path ci-evidence/build.log
+          try {
+            & .\scripts\build-electron-exe.ps1 -BuildProfile external -NoSign
+            if ($LASTEXITCODE -ne 0) { throw "Installer build failed: $LASTEXITCODE" }
+            git diff --exit-code -- uv.lock
+            if ($LASTEXITCODE -ne 0) { throw 'Locked dependencies changed during build' }
+            $Installers = @(Get-ChildItem dist -File -Filter *.exe)
+            if ($Installers.Count -eq 0) { throw 'No installer executable was produced' }
+            $Installers | ForEach-Object {
+              $Hash = Get-FileHash $_.FullName -Algorithm SHA256
+              "$($Hash.Hash)  $($_.Name)"
+            } | Set-Content ci-evidence/SHA256SUMS
+          } finally {
+            Stop-Transcript
+          }
+      - name: Upload installer
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-external-installer-${{ github.sha }}
+          path: |
+            dist/*.exe
+            ci-evidence/SHA256SUMS
+            ci-evidence/source.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-external-build-log-${{ github.run_id }}
+          path: ci-evidence/
+          if-no-files-found: warn
+          retention-days: 14

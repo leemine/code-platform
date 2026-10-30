@@ -123,3 +123,6 @@ report/index.html
 # Local resource initialization locks
 jiuwenswarm/resources/config.lock
 jiuwenswarm/resources/.env.media-capability.lock
+
+# CI build diagnostics (uploaded as private Actions artifacts)
+ci-evidence/

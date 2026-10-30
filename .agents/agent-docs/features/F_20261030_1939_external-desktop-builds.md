@@ -17,3 +17,10 @@ design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实
 将Native依赖、Runner、日志、KV缓存、原生适配器及可选推荐/记忆入口留在Native组合；注册实际OpenCode插件；公共审批谓词与Todo投影保持独立。现有Registry支持无Core基础Hook分发并传播失败，Native仍委托原回调框架。补充Swarm直接依赖aiofiles和插件包标识，防止源码成功但wheel漏包。
 
 复用原Electron、PyInstaller和Vite构建，Linux新增组装入口，Windows/macOS增加external选择且保留默认Native。验收从正常非editable安装、源码渠道推进到冻结渠道与桌面壳；失败尝试和限制均在管理验证记录保留。本轮未提交、推送或发布。
+
+
+## code-platform 私仓 Windows 构建入口（2026-10-30）
+
+用户授权在新私仓通过 GitHub Actions 启动 Windows 构建。新增手动 workflow_dispatch 工作流 .github/workflows/windows-external.yml，在 windows-2022 x64 runner 调用原 build-electron-exe.ps1 -BuildProfile external -NoSign，保留完整 Inno Setup 安装器阶段，不使用 SkipInstaller。Actions 固定提交、令牌只读、独立运行数据目录，不注入模型凭据或发布Release。成功归档exe/摘要/源SHA，失败保留构建日志；免Core冻结检查仍由原脚本执行。
+
+当前仅构建测试安装包，未签名；生成安装器不能替代Windows真实Provider、权限、取消、配置隔离和进程树验收。原安装器AppId沿用WorkSwarm，实机验收使用独立测试环境。构建实际结果在管理任务记录和Actions运行链接跟踪；未修改Core/协议锁或外部Provider。
