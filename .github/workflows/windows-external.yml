@@ -21,7 +21,6 @@ jobs:
       JIUWENSWARM_BUILD_PROFILE: external
       UV_PYTHON: '3.13'
       PYTHONUTF8: '1'
-      JIUWENSWARM_DATA_DIR: ${{ runner.temp }}\swarm-build-data
     steps:
       - name: Check out candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -38,6 +37,7 @@ jobs:
           enable-cache: false
       - name: Record build source
         run: |
+          "JIUWENSWARM_DATA_DIR=$env:RUNNER_TEMP\swarm-build-data" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           New-Item -ItemType Directory -Force ci-evidence | Out-Null
           @{
             source_sha = $env:GITHUB_SHA

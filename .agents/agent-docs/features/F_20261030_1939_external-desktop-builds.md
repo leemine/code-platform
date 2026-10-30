@@ -24,3 +24,5 @@ design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实
 用户授权在新私仓通过 GitHub Actions 启动 Windows 构建。新增手动 workflow_dispatch 工作流 .github/workflows/windows-external.yml，在 windows-2022 x64 runner 调用原 build-electron-exe.ps1 -BuildProfile external -NoSign，保留完整 Inno Setup 安装器阶段，不使用 SkipInstaller。Actions 固定提交、令牌只读、独立运行数据目录，不注入模型凭据或发布Release。成功归档exe/摘要/源SHA，失败保留构建日志；免Core冻结检查仍由原脚本执行。
 
 当前仅构建测试安装包，未签名；生成安装器不能替代Windows真实Provider、权限、取消、配置隔离和进程树验收。原安装器AppId沿用WorkSwarm，实机验收使用独立测试环境。构建实际结果在管理任务记录和Actions运行链接跟踪；未修改Core/协议锁或外部Provider。
+
+首次GitHub校验拒绝工作流：job级env不允许引用runner.temp；未分配runner或运行打包。修正为步骤内从RUNNER_TEMP写入GITHUB_ENV，保持运行数据隔离，随后重新触发；不将本地YAML解析通过当作Actions执行通过。
