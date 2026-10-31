@@ -29,6 +29,7 @@ class Session:
     model_revision: str = ""
     active: bool = False
     cancelled: bool = False
+    cancel_acknowledged: bool = False
     effective_permission: str | None = None
     desired_permission: str = "default"
     pending: dict = field(default_factory=dict)
@@ -273,7 +274,7 @@ class CodexAdapter:
                 session.effective_permission = session.desired_permission
             session.turn_id = ""
             session.control_ready.clear()
-            session.active, session.cancelled = True, False
+            session.active, session.cancelled, session.cancel_acknowledged = True, False, False
         reader = None
         terminal = False
         text_parts = {}
@@ -283,6 +284,7 @@ class CodexAdapter:
                 session.turn_id = response.turn.id
                 if session.cancelled:
                     await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
+                    session.cancel_acknowledged = True
                 while True:
                     if reader is None:
                         reader = asyncio.create_task(asyncio.to_thread(session.client.next_turn_notification, session.turn_id))
@@ -335,11 +337,13 @@ class CodexAdapter:
             yield self._chunk(request, {"event_type": "chat.error", "code": "codex_transport_failed", "error": "Codex runtime connection failed or an unsupported interaction was requested"}, complete=True, outcome="error")
         finally:
             self._release_controls(session)
+            cancelled_turn_stopped = session.cancelled and session.cancel_acknowledged
             try:
-                if not terminal and session.client and session.turn_id:
+                if not terminal and not cancelled_turn_stopped and session.client and session.turn_id:
                     # The callback is released above before any reader-dependent RPC.
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
+                        cancelled_turn_stopped = session.cancelled
             finally:
                 if reader is not None:
                     reader.cancel()
@@ -347,7 +351,9 @@ class CodexAdapter:
                 if session.turn_id and session.client:
                     session.client.unregister_turn_notifications(session.turn_id)
                 session.active = False
-                if not terminal:
+                # A confirmed user interrupt ends the Turn, not its Thread.
+                # Failed interrupts and other nonterminal exits still dispose it.
+                if not terminal and not cancelled_turn_stopped:
                     await self.cleanup_session_adapter(sid)
 
     @staticmethod
@@ -393,6 +399,7 @@ class CodexAdapter:
             if session.turn_id:
                 try:
                     await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
+                    session.cancel_acknowledged = True
                 except Exception:
                     await asyncio.to_thread(session.client.close)
                     raise

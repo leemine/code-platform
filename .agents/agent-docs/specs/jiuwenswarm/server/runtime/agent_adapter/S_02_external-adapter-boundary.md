@@ -162,3 +162,9 @@ Codex chat.final优先使用原生final_answer项，否则取最后一个phase�
 可用性只检查启用和官方SDK已安装，不比较SDK/CLI精确版本，也不以配套CLI分发包缺失禁用显式CLI配置。实例创建不设版本白名单；SDK负责默认/显式CLI启动，适配器继续要求公开审批接口、初始化成功和原生权限读回确认，不兼容时明确失败，不去掉审批处理器重试。可选依赖不声明精确SDK版本；uv.lock和桌面下载清单只记录可重复验收/默认安装组合，不承诺任意SDK/CLI兼容。
 
 保留上游Third-party Agents路径探测、版本展示与较旧CLI警告，保留桌面托管目录完整性及清单一致性检查；不自动覆盖外部自定义CLI。Linux冻结应用沿原用户数据目录使用runtime/external-cli，不写安装目录；Gateway与Runtime读取同一资源清单。
+
+## Codex 取消与会话关闭边界（候选）
+
+用户取消只结束本Turn。已初始化Thread在原生turn_interrupt回执确认后保留SDK客户端、thread_id及原私有目录，下一轮继续同一Thread。cancel_acknowledged仅记录本轮中断回执，每轮重置；清理不重复发送已经确认的中断，不因重复中断失败销毁可续聊Session。本轮reader、通知订阅和pending审批仍释放。
+
+未确认中断、非用户取消的异常流退出继续原清理保护；显式关闭/驱逐依然关闭客户端、删除目录、移除Session。原Runtime仍独占生产任务与取消收敛。没有历史文本重放、额外恢复队列或冷重启持久化映射。

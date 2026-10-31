@@ -184,6 +184,12 @@ When an execution error occurs or the user expresses dissatisfaction, the system
 
 ---
 
+### Q: Can I continue the same Codex main-agent conversation after stopping it?
+
+With `codex-direct`, an acknowledged user stop ends the current turn while preserving the conversation and its context. You can send another message in the same session. This does not guarantee recovery after session closure, process restart, or a failed interrupt. Recovery errors are reported explicitly; the adapter does not silently create a replacement conversation.
+
+---
+
 ## More Help
 
 - **Documentation**: [docs/README_EN.md](../README_EN.md)
