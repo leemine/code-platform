@@ -45,3 +45,8 @@ design_note: 用户已确认原AgentAdapter直接接官方SDK的实施方向，�
 ## 遗留与发布边界
 
 Skill/MCP/模板/附件、Team、完整用量、冷重启恢复及Windows/macOS桌面包另行交付。真实UI基于同字节源码与按锁环境，不替代干净CI；stable沿既有workflow增加Claude和模型配置回归，未绕过或修改检查结论。PR#1/#2的用户豁免不自动扩展至本PR。任务状态与全部证据在管理仓DEVELOPMENT_TASK_TRACKER及MAIN_UI_CLAUDE_RELEASE_20261031验证记录维护。
+
+
+## 发布复核补充
+
+提交c197e41后真实UI又复现旧授权重放，不能仅凭早先的待答刷新和取消续聊通过宣布收尾。沿原WebClient/RuntimeResume更新metadata中的完成dispatch边界，未增加恢复流程或改Provider。故障、反例测试与真实复验续写B_20261031_1418_session-recovery-lifecycle；当前候选是c197e41加该前端修复。PR#3保持草稿，stable因GitHub付款/额度未启动，不是代码断言失败，也不记为通过。

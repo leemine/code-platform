@@ -321,7 +321,16 @@ class WebClient {
       }, timeoutMs);
 
       const pending: PendingRequest = {
-        resolve: (value) => resolve(value as T),
+        resolve: (value) => {
+          const runtime = (value as { runtime?: Record<string, unknown> } | null)?.runtime;
+          if (method === 'session.get_metadata' && typeof params?.session_id === 'string'
+            && runtime && typeof runtime.worker_instance === 'string' && runtime.recovery_pending !== true) {
+            // Adopt completion boundaries before queued replay frames arrive,
+            // including idle snapshots and reconnects with an existing cursor.
+            this.runtimeResume.queryFromSnapshot(params.session_id, runtime);
+          }
+          resolve(value as T);
+        },
         reject,
         timeoutId,
         awaitRuntimeAccepted: options.awaitRuntimeAccepted === true,

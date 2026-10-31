@@ -192,3 +192,11 @@ Default沿官方default并通过原permission_interrupt/CHAT_ANSWER答复；Full
 ## 2026-10-31 P1 生命周期修复补充
 
 Claude取消结束当前Turn，已确认初始化的官方SDK会话保留到显式关闭/驱逐，下一Turn仍用原resume；取消不引入历史文本重放，冷重启恢复仍未实现。external-only历史查询不加载Native Team，保留现有workflow响应协议；Native安装继续原live/checkpoint路径。Web恢复快照不得覆盖请求期间已收到的同会话实时活动状态，历史重建期间仍维护活动状态。详见B_20261031_1418_session-recovery-lifecycle。
+
+
+### Web重放与活动授权
+
+session.get_metadata返回的Worker快照在原WebClient/RuntimeResume更新已完成dispatch边界；已有游标也必须更新，不能只在初次订阅时初始化。已完成dispatch的replayed事件不再进入实时交互队列；活跃dispatch的chat.final片段不能据此剔除。实际待审批仍通过原控制通道恢复/答复，不从历史问答构建可执行授权，不重发chat.send或Provider prompt。
+
+
+Worker事件日志可能比dispatch记录保留更久：快照cursor以前的重放提问，必须仍在该快照pending_interactions控制ID集合内，才能恢复活动交互。不能因为旧dispatch已被回收就把其审批重新激活；快照以后或实时的新事件不按旧快照丢弃。无完整权威快照时不伪造待答集合。
