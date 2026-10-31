@@ -1291,3 +1291,26 @@ test('4470 history preserves token-related choices while masking custom input', 
   assert.deepEqual(parsed.items[0].answers,['让你代登录','••••••']);
   assert.ok(!summary.content.includes('FAKE-4470'));
 });
+
+test('history preview leaves calls without native results unknown', () => {
+  const call = {
+    role: 'assistant', event_type: 'chat.tool_call', timestamp: '2026-10-31T00:00:01Z',
+    event_payload: { tool_call: { tool_call_id: 'unreturned', name: 'shell', arguments: {} } },
+  };
+  const preview = parseHistoryJsonFileToTimelinePreview([call], sessionId);
+  assert.equal(preview.executions.length, 1);
+  assert.equal(preview.executions[0].status, 'unknown');
+  assert.equal(preview.executions[0].result.success, false);
+  assert.equal(preview.executions[0].result.outcomeUnknown, true);
+});
+
+test('history preview preserves an explicitly unknown command outcome', () => {
+  const preview = parseHistoryJsonFileToTimelinePreview([
+    { role: 'assistant', event_type: 'chat.tool_call', timestamp: '2026-10-31T00:00:01Z',
+      event_payload: { tool_call: { tool_call_id: 'unknown-exit', name: 'shell', arguments: {} } } },
+    { role: 'assistant', event_type: 'chat.tool_result', timestamp: '2026-10-31T00:00:02Z',
+      event_payload: { tool_result: { tool_call_id: 'unknown-exit', tool_name: 'shell',
+        result: 'Returned without exit code', success: null, command_success: null, invocation_status: 'completed' } } },
+  ], sessionId);
+  assert.equal(preview.executions[0].status, 'unknown');
+});

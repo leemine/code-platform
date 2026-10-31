@@ -1392,7 +1392,8 @@ class AgentManager:
             import hashlib
             import json
             from jiuwenswarm.common.config import get_config
-            external_config = get_config().get("opencode", {}) if selected_sdk == "opencode-direct" else {}
+            from jiuwenswarm.server.runtime.agent_adapter.agent_adapters import adapter_config_snapshot
+            external_config = adapter_config_snapshot(selected_sdk, get_config())
             revision = hashlib.sha256(json.dumps(external_config, sort_keys=True).encode()).hexdigest()
             cache_key += f":provider:{selected_sdk}:{revision}"
         if run_permissions_enabled:
@@ -1408,8 +1409,8 @@ class AgentManager:
                 return self._borrow_agent(existing)
 
             config = {}
-            if external_config is not None and selected_sdk == "opencode-direct":
-                config["opencode"] = external_config
+            if external_config is not None:
+                config.update(external_config)
             if project_key:
                 config["project_dir"] = project_key
             # Surface the channel id to the adapter so session-scoped children

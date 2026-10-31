@@ -34,6 +34,11 @@ def public_fields(config):
             row["modes"] = [mode for mode in modes if mode in {"agent", "code"}]
             row["available"] = bool(row["modes"])
             row["reason"] = None if row["available"] else "unsupported_mode"
+            availability = getattr(factory, "availability", None)
+            if row["available"] and availability is not None:
+                reason = availability(config)
+                row["available"] = reason is None
+                row["reason"] = reason
             declared = getattr(factory, "permission_profiles", ())
             profiles[entry.name] = [p for p in declared if p in {"default", "automatic", "full_access"}]
         except Exception:

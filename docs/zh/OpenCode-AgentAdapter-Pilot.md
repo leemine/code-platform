@@ -76,3 +76,13 @@ HTTP/初始化错误输出固定阶段、错误类型或 HTTP 状态，日志保
 带原 SQL2Java 插件的隔离副本现在可准备会话，但仍需约 27～31 秒；插件导出约束错误独立存在，不能宣称插件功能通过。仅在诊断中通过官方 npm_config_cache 复用下载缓存，冷/第二会话约 30/9 秒，未成为产品默认。后续只评估同用户下载缓存；配置、凭据、权限、MCP、会话数据库继续隔离，不共享整个 HOME/XDG，不自行重写官方依赖安装流程。
 
 按锁非 editable 免 Core 与冻结后端均经原 Runtime 完成真实读取、审批、exit7/历史和清理。免 Core 97 项、带固定 Core 124 项回归通过（重叠不相加）。Linux新候选包独立输出 startup-fix-dist，系统旧安装未自动升级；本轮没有桌面点击复验，Windows/macOS实机仍待验收。
+
+## Codex 主 Agent 候选
+
+新增 `uv sync --locked --no-default-groups --extra codex-direct` 安装组合，使用官方 Codex Python SDK/CLI 0.163.0，不安装 agent-core。沿用 Third-party Agents 中 Codex 的启用/显式路径；未指定路径时由官方 SDK 使用配套运行时。新聊天或 Code 会话在原执行引擎菜单选择 Codex，已有会话不切换 Provider。
+
+模型仍选择 Swarm 模型服务中的单模型，当前需要 OpenAI Responses 兼容端点和 TLS 校验。不会复用个人 Codex 默认模型/登录状态；OpenAIAccount、模型组及未映射请求参数明确不支持。默认权限及 Full Access 映射并核对原生策略，审批/拒绝/取消沿用原控件；缺失退出码保持未知，权限拒绝不显示成功。
+
+这是未发布候选：Linux真实Runtime、Code命令及原审批已验证；Codex装备、冷恢复、完整用量、Claude及Windows/macOS/桌面安装包仍待实现或验证。Web刷新重放与Front配置导入边界已在收尾中修正；活动请求和审批仍通过原恢复通道。历史没有结果的工具调用保留未知，不推断成功。旧OpenCode及Native流程继续保留。
+
+Codex不按SDK/CLI精确版本禁用执行引擎。官方SDK负责CLI选择与兼容，`codex-direct`可选依赖不固定版本；按锁安装及桌面默认下载目前验证为0.163.0。显式CLI路径错误不回退，审批接口或原生权限策略不兼容时明确失败。上游Third-party Agents的较旧CLI警告与桌面托管安装清单校验保留；默认下载版本不等同自定义CLI版本白名单。Linux托管安装路径与Gateway清单定位已补齐，Windows/macOS和新安装包仍待真机验收。

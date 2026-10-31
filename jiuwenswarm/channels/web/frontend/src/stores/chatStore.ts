@@ -364,6 +364,7 @@ interface ChatState {
     }[],
   ) => void;
   startStreaming: (sessionId: string, messageId: string, streamKey?: string) => void;
+  resumeHistoricalStream: (sessionId: string, requestId: string) => void;
   stopStreaming: (sessionId: string, streamKey?: string) => void;
   finalizeStreamSegment: (sessionId: string, streamKey?: string) => void;
   finalizeTeamLeaderSegment: (sessionId: string, requestId?: string) => void;
@@ -838,6 +839,22 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
         },
       };
     });
+  },
+
+  resumeHistoricalStream: (sessionId, requestId) => {
+    const runtime = get().runtimes[sessionId];
+    if (!runtime || runtime.currentStreamId) return;
+    // The legacy history writer snapshots a live reply under this stable ID.
+    // Rebuild that same bubble from replay instead of appending a second copy.
+    const id = `${requestId}:assistant`;
+    const restored = runtime.messages.find(message =>
+      message.id === id && message.role === 'assistant' && message.historyBatchSeq !== undefined
+    );
+    if (!restored) return;
+    get().updateMessage(sessionId, id, {
+      content: '', isStreaming: true, completedAt: undefined, historyBatchSeq: undefined,
+    });
+    get().startStreaming(sessionId, id);
   },
 
   stopStreaming: (sessionId, streamKey = 'default') => {
@@ -1691,16 +1708,17 @@ export const useChatStore = create<ChatState>()(subscribeWithSelector((set, get)
           }
           continue;
         }
-        // 无真实 result：按调用时刻结算为完成，不引入 Date.now()
+        // Missing results are unknown; history restoration cannot prove success.
         changed = true;
         nextExecutions.set(toolCallId, {
           ...execution,
-          status: 'completed',
+          status: 'unknown',
           updatedAt: execution.startedAt,
           result: {
             toolName: execution.toolCall.name,
             result: '',
-            success: true,
+            success: false,
+            outcomeUnknown: true,
             toolCallId,
           } as ToolResult,
         });

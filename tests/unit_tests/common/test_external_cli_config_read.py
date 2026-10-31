@@ -138,7 +138,7 @@ def test_front_config_payload_with_custom_agents_blocks_runtime_imports(tmp_path
     (custom_dir / "agents.json").write_text(json.dumps({
         "acme": {"version": "2.0", "summary": "Current registry", "cli_path": "/uploaded/acme"},
     }), encoding="utf-8")
-    raw = {"modes": {"team": {"jiuwen_team": {"external_cli_agents": ["claude", "acme"]}}}}
+    raw = {"modes": {"team": {"jiuwen_team": {"external_cli_agents": ["claude", "codex", "acme"]}}}}
     (config_dir / "config.yaml").write_text(yaml.safe_dump(raw), encoding="utf-8")
     code = '''
 import importlib.abc
@@ -154,6 +154,9 @@ class ImportBoundary(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, ImportBoundary())
 from jiuwenswarm.server.control.config_service import get_panel
 payload = get_panel()
+catalog = {item["id"]: item for item in json.loads(payload["execution_provider_catalog"])}
+assert catalog["opencode-direct"]["available"] is True
+assert catalog["codex-direct"]["available"] is True
 assert payload["external_cli_agent_claude_enabled"] == "true"
 assert payload["external_cli_agent_acme_enabled"] == "true"
 assert payload["external_cli_agent_acme_use_builtin"] == "true"

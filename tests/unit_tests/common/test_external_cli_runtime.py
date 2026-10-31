@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +15,50 @@ import httpx
 import pytest
 
 from jiuwenswarm.common import external_cli_runtime as runtime
+
+
+@pytest.mark.parametrize("module_name", ["jiuwenswarm.common.external_cli_runtime", "gateway.common.external_cli_runtime"])
+def test_frozen_linux_runtime_uses_shared_manifest_and_data_directory(monkeypatch, tmp_path, module_name) -> None:
+    import importlib
+    module = importlib.import_module(module_name)
+    monkeypatch.setattr(module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    monkeypatch.setattr(module, "_runtime_platform_key", lambda: "linux-x86_64")
+    paths = importlib.import_module("gateway.common.paths" if module_name.startswith("gateway") else "jiuwenswarm.common.utils")
+    monkeypatch.setattr(paths, "get_user_workspace_dir", lambda: tmp_path)
+    assert module.pinned_sdk_requirements("codex") == ["openai-codex==0.163.0", "openai-codex-cli-bin==0.163.0"]
+    target = tmp_path / "runtime/external-cli/codex/site-packages"
+    assert module.external_cli_site_packages("codex") == target
+    assert module.get_external_cli_runtime_status("codex")["runtime_state"] == "not_installed"
+    monkeypatch.setattr(module.sys, "path", list(module.sys.path))
+    module.activate_external_cli_runtime_paths()
+    assert str(target) not in module.sys.path
+
+
+def test_codex_desktop_artifacts_match_locked_sdk_and_platforms() -> None:
+    """The default desktop download is reproducible against the tested lock."""
+    root = Path(__file__).resolve().parents[3]
+    lock = tomllib.loads((root / "uv.lock").read_text())
+    packages = {package["name"]: package for package in lock["package"]}
+    entry = json.loads((root / "jiuwenswarm/resources/external_cli_runtime.json").read_text())["agents"]["codex"]
+    expected = {
+        "windows-x86_64": "win_amd64", "windows-arm64": "win_arm64",
+        "macos-x86_64": "macosx_10_9_x86_64", "macos-arm64": "macosx_11_0_arm64",
+        "linux-x86_64": "manylinux_2_17_x86_64", "linux-arm64": "manylinux_2_17_aarch64",
+        "linux-musl-x86_64": "musllinux_1_1_x86_64", "linux-musl-arm64": "musllinux_1_1_aarch64",
+    }
+    assert set(entry["platforms"]) == set(expected)
+    for platform, tag in expected.items():
+        artifacts = entry["platforms"][platform]
+        assert {artifact["name"] for artifact in artifacts} == {"openai-codex", "openai-codex-cli-bin"}
+        for artifact in artifacts:
+            package = packages[artifact["name"]]
+            assert artifact["version"] == package["version"]
+            wheel = next(wheel for wheel in package["wheels"] if wheel["url"] == artifact["url"])
+            assert wheel["hash"] == "sha256:" + artifact["sha256"]
+            if artifact["name"] == "openai-codex-cli-bin":
+                assert artifact["url"].endswith(tag + ".whl")
+        assert entry["executables"][platform].endswith("codex.exe" if platform.startswith("windows") else "codex")
 
 
 def _artifact(*, mirror_url: str = "") -> dict[str, str]:

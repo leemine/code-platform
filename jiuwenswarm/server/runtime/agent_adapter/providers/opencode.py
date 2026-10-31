@@ -633,12 +633,5 @@ def safe_error_type(error):
     return name if name in {"APIError", "ProviderAuthError", "UnknownError", "MessageOutputLengthError", "ContextOverflowError", "StructuredOutputError"} else "unknown"
 
 
-def create(*, mode):
-    return OpenCodeAdapter(mode=mode)
-
-
-# Optional factory metadata for the existing configuration catalog.
-create.permission_profiles = OpenCodeAdapter.permission_profiles
-
-create.display_name = "OpenCode"
-create.supported_modes = ("agent", "code")
+# Preserve the existing import while discovery uses a lightweight entry point.
+from jiuwenswarm.common.external_adapter_factories import create_opencode as create

@@ -4262,7 +4262,7 @@
       }
     },
     "toolResult": {
-      "unknown": "调用已结束，命令结果未知",
+      "unknown": "命令结果未知",
       "answersInSummary": "请查看问题澄清卡片中的回答，敏感输入已隐藏。",
       "success": "完成",
       "failed": "失败",

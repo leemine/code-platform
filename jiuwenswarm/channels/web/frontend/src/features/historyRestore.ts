@@ -2170,7 +2170,7 @@ function buildToolExecutionsFromReplay(toolReplay: HistoryToolReplayItem[]): Too
       toolName: n.toolName,
       result: n.result,
       success: n.success,
-            ...(n.outcomeUnknown ? { outcomeUnknown: true } : {}),
+      ...(n.outcomeUnknown ? { outcomeUnknown: true } : {}),
       ...(n.pending ? { pending: true as const } : {}),
       toolCallId: n.toolCallId,
       summary: n.summary,
@@ -2184,9 +2184,11 @@ function buildToolExecutionsFromReplay(toolReplay: HistoryToolReplayItem[]): Too
       ? 'pending'
       : n.timedOut
         ? 'timeout'
-        : n.success
-          ? 'completed'
-          : 'error';
+        : n.outcomeUnknown
+          ? 'unknown'
+          : n.success
+            ? 'completed'
+            : 'error';
     const parsed = parseTimestampToMs(item.at);
     const atIso = Number.isFinite(parsed) ? timestampMsToIso(parsed) : undefined;
     if (!existing) {
@@ -2225,12 +2227,13 @@ function buildToolExecutionsFromReplay(toolReplay: HistoryToolReplayItem[]): Too
     }
     byId.set(id, {
       ...execution,
-      status: 'completed',
+      status: 'unknown',
       updatedAt: execution.startedAt,
       result: {
         toolName: execution.toolCall.name,
         result: '',
-        success: true,
+        success: false,
+        outcomeUnknown: true,
         toolCallId: id,
       },
     });

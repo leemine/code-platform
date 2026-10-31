@@ -1,0 +1,118 @@
+name: Stable provider regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [external, native]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+          enable-cache: false
+      - name: Install locked candidate
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          extras=(--extra codex-direct)
+          if [ "$PROFILE" = native ]; then extras+=(--extra native --extra codex); fi
+          uv sync --locked --no-default-groups --group test --no-editable --python 3.13 "${extras[@]}"
+      - name: Verify installed sources
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import importlib.metadata as metadata
+          import importlib.util
+          import json, os, subprocess, sys, tomllib
+          from pathlib import Path
+          source = tomllib.loads(Path('pyproject.toml').read_text())['tool']['uv']['sources']['openjiuwen']
+          lock = tomllib.loads(Path('uv.lock').read_text())
+          for name in ('openai-codex', 'openai-codex-cli-bin'):
+              package = next(p for p in lock['package'] if p['name'] == name)
+              assert metadata.version(name) == package['version']
+          dist = metadata.distribution('workswarm')
+          assert not json.loads(dist.read_text('direct_url.json')).get('dir_info', {}).get('editable', False)
+          if os.environ['PROFILE'] == 'native':
+              package = next(p for p in lock['package'] if p['name'] == 'openjiuwen')
+              assert package['source']['git'].endswith('#' + source['rev'])
+              direct = json.loads(metadata.distribution('openjiuwen').read_text('direct_url.json'))
+              assert direct['url'].removesuffix('.git') == source['git'].removesuffix('.git')
+              assert direct['vcs_info']['commit_id'] == source['rev']
+              origin = Path(importlib.util.find_spec('openjiuwen').origin).resolve()
+              assert origin.is_relative_to(Path(sys.prefix).resolve())
+              print('Locked Core:', source['rev'], origin)
+          else:
+              assert importlib.util.find_spec('openjiuwen') is None
+          probe = "import sys,jiuwenswarm; from pathlib import Path; assert Path(jiuwenswarm.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()); print(jiuwenswarm.__file__)"
+          subprocess.run([sys.executable, '-c', probe], cwd=os.environ['RUNNER_TEMP'], check=True)
+          print('Verified non-editable candidate and locked SDK/CLI')
+          PY
+      - name: Test production boundaries
+        env:
+          PROFILE: ${{ matrix.profile }}
+          HOME: ${{ runner.temp }}/provider-home
+          JIUWENSWARM_DATA_DIR: ${{ runner.temp }}/provider-data
+        run: |
+          mkdir -p "$HOME" "$JIUWENSWARM_DATA_DIR"
+          suites=(tests/unit_tests/common/test_external_cli_config_read.py
+                  tests/unit_tests/common/test_external_cli_runtime.py
+                  tests/unit_tests/agentserver/test_codex_direct_adapter.py
+                  tests/unit_tests/agentserver/test_opencode_direct_adapter.py
+                  tests/unit_tests/agentserver/test_provider_session_selection.py)
+          if [ "$PROFILE" = native ]; then
+            suites+=(tests/unit_tests/agentserver/test_adapter_host_contract.py
+                     tests/unit_tests/common/test_external_cli_catalog.py)
+          fi
+          .venv/bin/python -m pytest "${suites[@]}" -q --no-cov --tb=short -rs
+
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: jiuwenswarm/channels/web/frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.12.0'
+      - run: npm ci --no-audit --no-fund
+      - name: Test original history and approval UI
+        run: |
+          npm run test:web-client-runtime-ack
+          npm run test:subagent-history
+          npm run test:settle-historical-tool-executions
+          npm run test:auto-reviewer-events
+          npm run test:chat-store-streaming
+      - run: npm run build
+
+  stable:
+    if: always()
+    needs: [python, web]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require all supported installation profiles
+        env:
+          PYTHON_RESULT: ${{ needs.python.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+        run: test "$PYTHON_RESULT" = success && test "$WEB_RESULT" = success

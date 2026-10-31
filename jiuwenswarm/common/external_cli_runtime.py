@@ -237,7 +237,7 @@ def external_cli_site_packages(cli_agent: str) -> Path:
 
 
 def _runtime_site_packages(cli_agent: str) -> Path:
-    if _is_frozen_windows():
+    if _is_frozen_windows() or _is_frozen_linux():
         from jiuwenswarm.common.utils import get_user_workspace_dir
 
         return (
@@ -259,7 +259,7 @@ def _runtime_site_packages(cli_agent: str) -> Path:
             / "site-packages"
         )
     raise RuntimeError(
-        "managed external CLI runtimes require a frozen Windows or macOS application"
+        "managed external CLI runtimes require a frozen Windows, macOS or Linux application"
     )
 
 
@@ -270,7 +270,7 @@ def activate_external_cli_runtime_paths() -> None:
     failure is logged at warning level and treated as the optional SDKs being
     unavailable rather than propagated to the caller.
     """
-    if not (_is_frozen_windows() or _is_frozen_macos()):
+    if not (_is_frozen_windows() or _is_frozen_macos() or _is_frozen_linux()):
         return
     try:
         cli_agents = external_cli_runtime_names()
@@ -285,7 +285,7 @@ def activate_external_cli_runtime_paths() -> None:
             # Preserved SDKs can belong to a different release. Never expose an
             # incompatible or incomplete runtime to provider imports.
             try:
-                if _is_frozen_windows() and get_external_cli_runtime_status(cli_agent)["runtime_state"] != "current":
+                if (_is_frozen_windows() or _is_frozen_linux()) and get_external_cli_runtime_status(cli_agent)["runtime_state"] != "current":
                     continue
                 site_packages.mkdir(parents=True, exist_ok=True)
             except (OSError, RuntimeError) as exc:
@@ -671,6 +671,10 @@ def _is_frozen_windows() -> bool:
 
 def _is_frozen_macos() -> bool:
     return sys.platform == "darwin" and bool(getattr(sys, "frozen", False))
+
+
+def _is_frozen_linux() -> bool:
+    return sys.platform.startswith("linux") and bool(getattr(sys, "frozen", False))
 
 
 def _verify_installed_runtime(cli_agent: str) -> None:

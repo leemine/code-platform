@@ -134,3 +134,31 @@ HTTP/初始化错误输出固定阶段、错误类型或 HTTP 状态，日志保
 带原 SQL2Java 插件的隔离副本现在可准备会话，但仍需约 27～31 秒；插件导出约束错误独立存在，不能宣称插件功能通过。仅在诊断中通过官方 npm_config_cache 复用下载缓存，冷/第二会话约 30/9 秒，未成为产品默认。后续只评估同用户下载缓存；配置、凭据、权限、MCP、会话数据库继续隔离，不共享整个 HOME/XDG，不自行重写官方依赖安装流程。
 
 按锁非 editable 免 Core 与冻结后端均经原 Runtime 完成真实读取、审批、exit7/历史和清理。免 Core 97 项、带固定 Core 124 项回归通过（重叠不相加）。Linux新候选包独立输出 startup-fix-dist，系统旧安装未自动升级；本轮没有桌面点击复验，Windows/macOS实机仍待验收。
+
+## Codex 主 Agent 候选（2026-10-31，未发布）
+
+`codex-direct` 工厂以 `jiuwenswarm.agent_adapters` 注册；可选依赖 `codex-direct` 安装官方 `openai-codex`（当前验证锁为0.163.0），无需 Core。保留原 `native`/`codex` extra。工厂可提供 `config_snapshot(config) -> dict` 与 `availability(config) -> str | None`；Manager 缓存使用快照摘要，原动态目录使用可用性原因。不在配置读取时启动 CLI，不新建注册表、设置页或调度器。OpenCode 通过同一快照接缝传递其原配置。
+
+Codex 启用和显式 CLI 路径来自原 `modes.team.jiuwen_team.external_cli_agents`，此旧配置路径兼容保留；它不改绑已有会话。主 Agent 模型经原 ModelSelectionResolver 取单模型；当前仅支持 OpenAI Responses 兼容端点，严格 TLS，不退回 Codex 个人默认模型或 OpenAIAccount 登录配置。请求选项不支持时明确拒绝，密钥仅通过会话私有进程环境传递，不进入 CLI 参数、历史或目录响应。
+
+官方 SDK 的公开 `CodexClient(config, approval_handler=...)` 拥有 JSON-RPC 传输；同一 Turn 仅一个事件读者。Swarm Runtime/Facade 仍拥有队列、控制、历史与生命周期。同步审批 callback 转接原 `permission_interrupt` 通道，取消先释放 callback 再调用原生 interrupt，未知交互失败关闭。每会话私有 HOME/CODEX_HOME，初始化及权限确认有界；未完整消费的 producer 关闭后不可复用不确定状态。
+
+Default 映射 workspace-write/on-request/user，Full Access 映射 danger-full-access/never/user，官方读回确认；Automatic 明确不支持。档位更新作用于下次 Turn，以同一 thread resume 并读回，不自动回答正在等待的审批。命令退出码只取原生整数，缺失仍未知，Turn completed 不等同任务验收。原生 declined 映射既有 `status=error`，`invocation_status=declined` 保留事实，command_success/exit_code 仍未知，避免工具 UI 误显示成功。
+
+当前支持文本、单 Agent/Code、同生命周期续聊、原审批/取消/历史。Codex 的 Skill/MCP/模板/附件、Team、Goal、完整用量和冷恢复未交付，显式装备请求拒绝，不能把 OpenCode 已有装备能力转记为 Codex 已支持。桌面默认下载清单随当前验证锁更新；Linux路径入口已补齐。Windows/macOS真机与新冻结安装包尚未验收。
+
+
+### 2026-10-31 Codex 渠道收尾
+
+配置目录通过 common 中的轻量工厂元数据读取插件，只有创建执行实例时才导入 Runtime；旧 providers.create 导出兼容保留。Native 可用性读取安装分发元数据，Front 不导入 Core。Codex Goal 查询返回空快照，设置仍明确拒绝，不启动另一套持续执行流程。
+
+Web 新页面恢复以当前 Worker 的 dispatch 快照区分已结束历史与活动请求；历史已负责呈现的终态 dispatch 不再追加到当前回复，活动事件/审批与已有游标仍走原 runtime_resume。不得重发 chat.send。无真实工具结果的历史调用使用原 unknown 展示；后续结果可更新为实际成功或失败，历史文件预览采用相同语义。
+
+Codex chat.final优先使用原生final_answer项，否则取最后一个phase缺失的AgentMessage；commentary只保留在实时过程，不凭文本猜测phase，不把所有消息累加为最终答复。
+
+
+### Codex 版本与安装边界（2026-10-31）
+
+可用性只检查启用和官方SDK已安装，不比较SDK/CLI精确版本，也不以配套CLI分发包缺失禁用显式CLI配置。实例创建不设版本白名单；SDK负责默认/显式CLI启动，适配器继续要求公开审批接口、初始化成功和原生权限读回确认，不兼容时明确失败，不去掉审批处理器重试。可选依赖不声明精确SDK版本；uv.lock和桌面下载清单只记录可重复验收/默认安装组合，不承诺任意SDK/CLI兼容。
+
+保留上游Third-party Agents路径探测、版本展示与较旧CLI警告，保留桌面托管目录完整性及清单一致性检查；不自动覆盖外部自定义CLI。Linux冻结应用沿原用户数据目录使用runtime/external-cli，不写安装目录；Gateway与Runtime读取同一资源清单。
