@@ -41,3 +41,6 @@ Windows运行41078652890（提交3fc8f997）成功dispatch，但GitHub在分配r
 ## 2026-10-31 beta2 交付候选
 
 在已合入工具结果与Codex TLS修复的main 5fc40e2上，保留原Linux官方SDK按需安装清单、Front目录刷新与App延迟保存修复。版本由原同步工具更新0.2.5.beta2，锁只改本项目/TUI版本；新建按锁非editable免Core环境，无官方Provider SDK预装。联合201项后端、6个前端入口和Electron前端构建通过；冻结验收/产物摘要待补。用户明确豁免本次GitHub Actions，未修改工作流或自动关闭实际TLS校验。
+
+
+beta2候选验收闭合：201项联合后端、69项打包契约、6个前端入口；按锁非editable免Core冻结；正常Gateway下载/Front热发现；原用户模型选项的三Provider真实Runtime及实际Electron Code UI/刷新历史通过。QA12个进程正常退出、私有配置已删除，模板/私钥零匹配与tar/deb关键内容一致审计通过。具体摘要和截图见B_20261031_1930_optional-provider-menu；本次用户豁免Actions，未实际安装系统deb或运行Windows/macOS。

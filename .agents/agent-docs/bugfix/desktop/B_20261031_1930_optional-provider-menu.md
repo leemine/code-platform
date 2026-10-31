@@ -33,3 +33,24 @@ design_note: 沿原 Third-party Agents 配置/安装和 Front 执行器目录职
 
 
 补充打包契约：原69项中2项旧断言仍要求Electron单安装命令/固定连续参数，未识别现有Native与external分支。产品打包脚本未改；更新测试覆盖两条分支归属、external不带Core/CUA、所有Windows分支仍限定x86_64目标，CLI SDK排除不变；最终69项通过。初次2失败/67通过日志保留，不跳过或新增白名单。本测试为源码契约，不代表Windows/macOS实机运行通过。
+
+
+## beta2 冻结与实际桌面验收
+
+新建按锁非editable环境冻结后端，版本0.2.5b2，未包含Core或预装Provider SDK；原Gateway安装/既有Front热发现两家SDK通过。正式deb和便携包复用同一后端、前端与资源，关键文件摘要一致，模板中仅环境占位，当前用户实际密钥扫描零匹配。
+
+实际验收配置从当前系统桌面配置复制，模型字段未改值：Codex原verify_ssl:false、Claude原Anthropic模型（verify_ssl省略）、OpenCode原OpenAI模型。新冻结Runtime三家真实调用全部通过，Claude Read/正常Bash/失败Bash原生事实和缺失退出码保留。独立Electron桌面Code界面三家可选，Codex正常返回4并刷新保留；Claude显示Completed Read、Completed Bash、Failed Bash，两个命令详情均注明退出码未提供，刷新同样保留。截图如下，均为独立QA数据，不含密钥。
+
+![Codex Code界面](assets/ui-codex.png)
+
+![Claude工具详情](assets/ui-claude-tools.png)
+
+![Claude失败工具](assets/ui-claude-failure.png)
+
+QA桌面通过正常SIGTERM收尾，其12个所属进程均退出，私有配置删除；原系统窗口/配置未动。自动化曾引用未显示侧栏控件、未展开原耗时折叠栏，以及在异步目录加载完成前断言标签；修正脚本使用当前可见入口/原折叠栏和等待条件后通过，未改产品控件、增加流程或重发模型输入。首次结束进程校验把启动器路径当作exec后路径，校验拒绝后改为实际Electron路径+独立user-data-dir双重核对，再完成正常收尾。
+
+用户授权本次忽略GitHub Actions，远端Actions/stable不计通过。Windows/macOS及系统deb实际安装升级未执行；Linux便携桌面与deb同源关键文件一致，安装包供正常升级。冻结时产品源码提交5a32432，后续提交仅测试/受管文档，不改变运行代码；交付时核对合入源码和运行代码一致。
+
+- `workswarm-external-linux-amd64.tar.gz`：453123920 bytes；SHA256 `cd2bd1bcda372813544a489fc19a4c3d0dc9e3bdfe8ff208add165bded610dfb`。
+
+- `workswarm-external_0.2.5.beta2_amd64.deb`：453056120 bytes；SHA256 `f3f35ee9497c15ffb757aec0da26f06c4eb76dfd9008d54394a284a5d2cd115d`。
