@@ -200,3 +200,10 @@ session.get_metadata返回的Worker快照在原WebClient/RuntimeResume更新已�
 
 
 Worker事件日志可能比dispatch记录保留更久：快照cursor以前的重放提问，必须仍在该快照pending_interactions控制ID集合内，才能恢复活动交互。不能因为旧dispatch已被回收就把其审批重新激活；快照以后或实时的新事件不按旧快照丢弃。无完整权威快照时不伪造待答集合。
+
+
+## 工具返回及 Codex TLS 选项边界（2026-10-31 候选）
+
+Claude 工具原生 is_error 保留在 provider.claude 命名空间，显式错误不被退出码0覆盖；Bash 只认原生整数退出码，缺失仍为 null，Read 等非命令工具不带命令字段。工具调用已返回/未报错、命令成功、任务验收分别保留，不由 completed 补退出码。Web commandExitUnknown 仅投影已返回 Bash/shell 的缺码事实到详情；outcomeUnknown 继续用于无原生结果的调用，旧 Read 历史兼容。
+
+Codex 模型配置中的 verify_ssl 是 Swarm HTTP-client 选项，不控制官方 CLI 传输；不因其 false 阻止选择模型，也不投影为 CLI 的关闭校验参数。实际 TLS/信任链仍由官方 SDK/CLI 校验；远程 HTTPS、协议和地址准入要求保持。连接受限/证书错误仍经原错误通道返回，不修改用户模型配置，不建立另一模型访问路径。

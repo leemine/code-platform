@@ -113,11 +113,11 @@ test('renders the Beam search tree before the flowchart tool result', async () =
   assert.doesNotMatch(html, /专家团/);
 });
 
-async function renderExpandedResult({ name = 'ask_user', args, result, success = true, pending = false, outcomeUnknown = false }) {
+async function renderExpandedResult({ name = 'ask_user', args, result, success = true, pending = false, outcomeUnknown = false, commandExitUnknown = false }) {
   const execution = {
     toolCallId: 'redaction-test',
     toolCall: { id: 'redaction-test', name, arguments: args },
-    result: { toolName: name, result, success, pending, outcomeUnknown },
+    result: { toolName: name, result, success, pending, outcomeUnknown, commandExitUnknown },
     status: pending ? 'pending' : success ? 'completed' : 'error',
   };
   const before = JSON.stringify(execution);
@@ -169,4 +169,13 @@ test('unknown command outcome has neither a success nor a failure badge', async 
   assert.match(html,/data-variant="unknown"/);
   assert.match(html,/chatUi.toolResult.unknown/);
   assert.doesNotMatch(html,/data-variant="success"|data-variant="failed"/);
+});
+
+
+test('returned command displays completed with an exit-code note only in details', async () => {
+  const html = await renderExpandedResult({name:'Bash', args:{command:'ls'}, result:'directory entries', commandExitUnknown:true});
+  assert.match(html, /chatUi.toolGroup.completed/);
+  assert.match(html, /chatUi.toolResult.exitCodeUnavailable/);
+  assert.doesNotMatch(html, /chatUi.toolResult.unknown/);
+  assert.doesNotMatch(html, /data-variant="failed"/);
 });

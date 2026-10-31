@@ -23,6 +23,7 @@ class FakeClient:
         self.exit_code = None
         self.metadata = None
         self.tool_error = False
+        self.tool_name = "Bash"
         self.ask = False
         self.eof = False
         self.worker = None
@@ -47,11 +48,11 @@ class FakeClient:
         self.worker = asyncio.create_task(self.execute())
 
     async def execute(self):
-        await self.queue.put(sdk.AssistantMessage([sdk.ToolUseBlock('cmd', 'Bash', {'command': 'fixture'})], 'shared'))
+        await self.queue.put(sdk.AssistantMessage([sdk.ToolUseBlock('cmd', self.tool_name, {'command': 'fixture'})], 'shared'))
         if self.ask:
             self.decision = await self.options.can_use_tool('Bash', {'command': 'fixture'}, sdk.ToolPermissionContext(tool_use_id='cmd'))
         denied = isinstance(self.decision, sdk.PermissionResultDeny)
-        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', 'output', denied or self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
+        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', 'output', True if denied else self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
         if not self.eof:
             await self.queue.put(sdk.ResultMessage('success', 1, 1, self.interrupted, 1, self.sid, result='reply'))
         await self.queue.put(None)
@@ -243,3 +244,43 @@ async def test_facade_cancel_drains_producer_then_resumes_native_session(host):
         await asyncio.gather(producer, return_exceptions=True)
         await app.cleanup()
     assert not list((root / 'sessions/.claude-direct').iterdir())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tool_name,is_error', [('Bash', False), ('Read', None), ('Read', True)])
+async def test_facade_native_result_without_exit_code_keeps_tool_facts(host, tool_name, is_error):
+    app, config, clients, root, options = host
+    options.update(tool_name=tool_name, tool_error=is_error, metadata={'stdout': 'output', 'interrupted': False})
+    await app.create_instance(config)
+    try:
+        chunks = [item.payload async for item in app.process_message_stream(request())]
+        result = next(p for p in chunks if p.get('event_type') == 'chat.tool_result')
+        assert result['content'] == 'output'
+        assert result['status'] == ('error' if is_error else 'completed')
+        assert result['provider']['claude']['is_error'] is is_error
+        assert result['task_acceptance'] == 'unknown'
+        if tool_name == 'Bash':
+            assert result['success'] is True
+            assert result['exit_code'] is None and result['command_success'] is None
+        else:
+            assert 'exit_code' not in result and 'command_success' not in result
+        history = session_history.read_session_history_records('one')
+        saved = next(p for p in history if p.get('event_type') == 'chat.tool_result')
+        assert saved['provider']['claude']['is_error'] is is_error
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_facade_explicit_tool_error_is_not_overridden_by_zero_exit(host):
+    app, config, clients, root, options = host
+    options.update(metadata={'exit_code': 0}, tool_error=True)
+    await app.create_instance(config)
+    try:
+        chunks = [item.payload async for item in app.process_message_stream(request())]
+        result = next(p for p in chunks if p.get('event_type') == 'chat.tool_result')
+        assert result['provider']['claude']['is_error'] is True and result['success'] is False
+        assert result['exit_code'] == 0 and result['command_success'] is True
+        assert result['status'] == 'error'
+    finally:
+        await app.cleanup()

@@ -249,6 +249,11 @@ function ToolExecutionDetails({ execution }: { execution: ToolExecution }) {
                 {t('chatUi.toolResult.unknown')}
               </span>
             )}
+            {result.commandExitUnknown && (
+              <span className="tool-tree-item__detail-badge text-text-muted" data-testid="chat-panel-tool-execution-details-exit-code">
+                {t('chatUi.toolResult.exitCodeUnavailable')}
+              </span>
+            )}
             {resultSuccess && (
               <span className="tool-tree-item__detail-badge is-success" data-testid="chat-panel-tool-execution-details-badge" data-variant="success">
                 {t('chatUi.toolResult.success')}

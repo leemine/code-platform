@@ -147,6 +147,11 @@ export function ToolCallDisplay({ toolCall, toolResult }: ToolCallDisplayProps) 
         </div>
         {isExpanded && (
           <div className="mt-2 p-2 rounded-md bg-card border border-border" data-testid="chat-panel-tool-call-card-result">
+            {toolResult.commandExitUnknown && (
+              <div className="text-sm text-text-muted" data-testid="chat-panel-tool-call-card-exit-code">
+                {t('chatUi.toolResult.exitCodeUnavailable')}
+              </div>
+            )}
             {resultWordCount !== null && (
               <div className="mb-2 flex justify-end">
                 <span className="px-2 py-0.5 rounded-full border border-border text-xs text-text-muted">

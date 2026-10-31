@@ -239,8 +239,10 @@ export interface NormalizedToolResult {
   toolCallId?: string;
   result: string;
   success: boolean;
-  /** Invocation ended but the Provider did not return command exit evidence. */
+  /** No native tool result was received. */
   outcomeUnknown?: boolean;
+  /** The invocation returned without a native command exit code. */
+  commandExitUnknown?: boolean;
   /** status=pending 表示后台任务已接受，尚未进入终态。 */
   pending?: boolean;
   /** status=timeout / timed_out 时为 true，供 store 落成 timeout */
@@ -367,14 +369,15 @@ export function normalizeToolResultPayload(payload: UnknownPayload): NormalizedT
     : hasExplicitSuccess
       ? toolResultPayload.success === true && !timedOut
       : status ? !statusFailed : true;
-  const outcomeUnknown = toolResultPayload.command_success === null &&
-    toolResultPayload.invocation_status === 'completed' && !permissionFailure && !statusFailed;
-  const success = !outcomeUnknown && baseSuccess && !permissionFailure && !legacyMarkerFailure &&
-    !(reviewerStatus && !pending && isFailureStatus(status));
   const toolName =
     (typeof toolResultPayload.tool_name === 'string' && toolResultPayload.tool_name) ||
     (typeof toolResultPayload.name === 'string' && toolResultPayload.name) ||
     'unknown';
+  const commandExitUnknown = ['bash', 'shell'].includes(toolName.toLowerCase()) &&
+    toolResultPayload.command_success === null && toolResultPayload.invocation_status === 'completed';
+  // This boolean drives invocation display, not command exit or task acceptance.
+  const success = baseSuccess && !permissionFailure && !legacyMarkerFailure &&
+    !(reviewerStatus && !pending && isFailureStatus(status));
   const toolCallId = resolveToolCallId(toolResultPayload, payload);
   const summary =
     typeof toolResultPayload.summary === 'string'
@@ -398,7 +401,7 @@ export function normalizeToolResultPayload(payload: UnknownPayload): NormalizedT
     toolCallId,
     result,
     success,
-    ...(outcomeUnknown ? { outcomeUnknown: true } : {}),
+    ...(commandExitUnknown ? { commandExitUnknown: true } : {}),
     ...(effectivePending ? { pending: true } : {}),
     ...(timedOut ? { timedOut: true } : {}),
     summary,

@@ -62,6 +62,7 @@ function hasSameResultData(existing: ToolResult, incoming: ToolResult): boolean 
     existing.result === incoming.result &&
     existing.success === incoming.success &&
     Boolean(existing.outcomeUnknown) === Boolean(incoming.outcomeUnknown) &&
+    Boolean(existing.commandExitUnknown) === Boolean(incoming.commandExitUnknown) &&
     Boolean(existing.pending) === Boolean(incoming.pending) &&
     Boolean(existing.timedOut) === Boolean(incoming.timedOut) &&
     (existing.summary || '') === (incoming.summary || '') &&

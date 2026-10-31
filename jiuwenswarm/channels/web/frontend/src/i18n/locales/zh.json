@@ -4263,7 +4263,8 @@
       }
     },
     "toolResult": {
-      "unknown": "命令结果未知",
+      "exitCodeUnavailable": "退出码未提供",
+      "unknown": "工具结果未知",
       "answersInSummary": "请查看问题澄清卡片中的回答，敏感输入已隐藏。",
       "success": "完成",
       "failed": "失败",

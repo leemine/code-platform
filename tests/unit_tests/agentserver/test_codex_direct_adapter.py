@@ -585,3 +585,33 @@ async def test_stream_close_without_user_cancel_disposes_session(host):
         assert not app.has_session_runtime('one')
     finally:
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('verify_ssl', [True, False, None])
+async def test_facade_model_client_tls_flag_does_not_override_codex_transport(host, monkeypatch, verify_ssl):
+    from jiuwenswarm.common import codex_adapter_config, model_catalog
+    app, config, clients, root, model = host
+    client_options = {'client_provider': 'OpenAI', 'model_name': 'shared-model',
+                      'api_base': 'https://example.invalid/v1', 'api_key': 'private-test-key'}
+    if verify_ssl is not None:
+        client_options['verify_ssl'] = verify_ssl
+    saved = {'models': {'defaults': [{'model_id': 'tls-model', 'model_client_config': client_options}]}}
+    monkeypatch.setattr(model_catalog, 'get_config', lambda: saved)
+    monkeypatch.setattr(codex, 'resolve_model', codex_adapter_config.resolve_model)
+    await app.create_instance(config)
+    try:
+        chunks = [p.payload async for p in app.process_message_stream(request(model_selection={'type': 'model', 'id': 'tls-model'}))]
+        assert any(p.get('event_type') == 'chat.final' for p in chunks)
+        assert not any(p.get('event_type') == 'chat.error' for p in chunks)
+        options = clients[0].config
+        assert not any('verify_ssl' in value or 'insecure' in value for value in options.config_overrides)
+        assert options.env['SWARM_CODEX_MODEL_KEY'] == 'private-test-key'
+        assert not any('CERT' in key or 'TLS' in key or 'SSL' in key for key in options.env)
+        actual = saved['models']['defaults'][0]['model_client_config']
+        if verify_ssl is None:
+            assert 'verify_ssl' not in actual
+        else:
+            assert actual['verify_ssl'] is verify_ssl
+    finally:
+        await app.cleanup()

@@ -1312,5 +1312,19 @@ test('history preview preserves an explicitly unknown command outcome', () => {
       event_payload: { tool_result: { tool_call_id: 'unknown-exit', tool_name: 'shell',
         result: 'Returned without exit code', success: null, command_success: null, invocation_status: 'completed' } } },
   ], sessionId);
-  assert.equal(preview.executions[0].status, 'unknown');
+  assert.equal(preview.executions[0].status, 'completed');
+  assert.equal(preview.executions[0].result.commandExitUnknown, true);
+  assert.equal(preview.executions[0].result.outcomeUnknown, undefined);
+});
+
+
+test('legacy Claude Read history is completed without command-exit semantics', () => {
+  const preview = parseHistoryJsonFileToTimelinePreview([
+    {role:'assistant', event_type:'chat.tool_call', timestamp:'2026-10-31T00:00:01Z', event_payload:{tool_call:{tool_call_id:'read',name:'Read',arguments:{file_path:'fixture.txt'}}}},
+    {role:'assistant', event_type:'chat.tool_result', timestamp:'2026-10-31T00:00:02Z', event_payload:{tool_result:{tool_call_id:'read',tool_name:'Read',result:'fixture content',status:'completed',invocation_status:'completed',success:null,command_success:null,exit_code:null}}},
+  ], sessionId);
+  assert.equal(preview.executions[0].status, 'completed');
+  assert.equal(preview.executions[0].result.result, 'fixture content');
+  assert.equal(preview.executions[0].result.commandExitUnknown, undefined);
+  assert.equal(preview.executions[0].result.outcomeUnknown, undefined);
 });
