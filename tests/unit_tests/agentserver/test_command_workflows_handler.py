@@ -559,3 +559,22 @@ class TestCommandWorkflowsDispatch:
         send_lock = asyncio.Lock()
         await server._handle_command_workflows(ws, request, send_lock)
         server._handle_command_workflows.assert_called_once_with(ws, request, send_lock)
+
+@pytest.mark.asyncio
+async def test_external_only_workflow_query_uses_same_empty_snapshot_without_native(monkeypatch):
+    import builtins
+    from jiuwenswarm.common import native_integration
+    from jiuwenswarm.server.agent_ws_server import AgentWebSocketServer
+    monkeypatch.setattr(native_integration, 'native_available', lambda: False)
+    original_import = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        if name == 'openjiuwen' or name.startswith(('openjiuwen.', 'jiuwenswarm.agents.harness.team', 'jiuwenswarm.server.runtime.agent_adapter.team_helpers')):
+            raise AssertionError('External-only history must not load Native workflows')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', guarded)
+    ws = _FakeWS()
+    server = AgentWebSocketServer.__new__(AgentWebSocketServer)
+    await server._handle_command_workflows(ws, _make_request(), asyncio.Lock())
+    payload = _extract_payload(json.loads(ws.sent[-1]))
+    assert payload['workflows'] == []
+    assert payload['total'] == 0

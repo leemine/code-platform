@@ -188,6 +188,14 @@ jiuwenswarm-init
 
 ---
 
+### Q: 如何把 Claude Code 选为主 Agent？
+
+在现有 Third-party Agents 设置启用 Claude，安装 `claude-direct` 可选依赖，然后在新任务输入框的执行引擎中选择 Claude Code。模型仍从原模型服务选择，须为 Anthropic Messages 兼容协议；已有会话保持绑定。当前支持单 Agent／Code 文本、原授权和同生命周期续聊，装备、Team 和进程重启后的恢复仍未开放。
+
+无 Core 安装也可在原模型弹窗新增、编辑、测试和保存 OpenAI／Anthropic 模型。Native 推理目录不可用时使用默认设置；已有显式值不会被自动删除，不承诺各执行器支持相同推理参数。
+
+---
+
 ## 更多帮助
 
 - **文档导航**：[docs/README.md](../README.md)

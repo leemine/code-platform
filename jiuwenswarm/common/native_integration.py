@@ -14,8 +14,8 @@ def model_provider_values() -> list[str]:
     if native_available():
         from openjiuwen.core.foundation.llm import ProviderType
         return [provider.value for provider in ProviderType]
-    # External adapters currently support this shared catalog protocol only.
-    return ["OpenAI"]
+    # Protocols consumed by the installed external main-agent adapters.
+    return ["OpenAI", "Anthropic"]
 
 
 def is_openai_account_provider(value: str) -> bool:

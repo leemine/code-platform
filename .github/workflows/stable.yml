@@ -30,7 +30,7 @@ jobs:
         env:
           PROFILE: ${{ matrix.profile }}
         run: |
-          extras=(--extra codex-direct)
+          extras=(--extra codex-direct --extra claude-direct)
           if [ "$PROFILE" = native ]; then extras+=(--extra native --extra codex); fi
           uv sync --locked --no-default-groups --group test --no-editable --python 3.13 "${extras[@]}"
       - name: Verify installed sources
@@ -44,7 +44,7 @@ jobs:
           from pathlib import Path
           source = tomllib.loads(Path('pyproject.toml').read_text())['tool']['uv']['sources']['openjiuwen']
           lock = tomllib.loads(Path('uv.lock').read_text())
-          for name in ('openai-codex', 'openai-codex-cli-bin'):
+          for name in ('openai-codex', 'openai-codex-cli-bin', 'claude-agent-sdk'):
               package = next(p for p in lock['package'] if p['name'] == name)
               assert metadata.version(name) == package['version']
           dist = metadata.distribution('workswarm')
@@ -74,13 +74,21 @@ jobs:
           suites=(tests/unit_tests/common/test_external_cli_config_read.py
                   tests/unit_tests/common/test_external_cli_runtime.py
                   tests/unit_tests/agentserver/test_codex_direct_adapter.py
+                  tests/unit_tests/agentserver/test_claude_direct_adapter.py
                   tests/unit_tests/agentserver/test_opencode_direct_adapter.py
-                  tests/unit_tests/agentserver/test_provider_session_selection.py)
+                  tests/unit_tests/agentserver/test_provider_session_selection.py
+                  tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
             suites+=(tests/unit_tests/agentserver/test_adapter_host_contract.py
-                     tests/unit_tests/common/test_external_cli_catalog.py)
+                     tests/unit_tests/common/test_external_cli_catalog.py
+                     tests/unit_tests/agentserver/test_command_workflows_handler.py
+                     tests/unit_tests/test_reasoning_config.py
+                     tests/unit_tests/test_model_vendor_registry.py
+                     tests/unit_tests/test_model_resource_fixes.py)
+          else
+            suites+=(tests/unit_tests/agentserver/test_command_workflows_handler.py::test_external_only_workflow_query_uses_same_empty_snapshot_without_native)
           fi
-          .venv/bin/python -m pytest "${suites[@]}" -q --no-cov --tb=short -rs
+          .venv/bin/python -P -m pytest "${suites[@]}" --import-mode=importlib -o pythonpath= -q --no-cov --tb=short -rs
 
   web:
     runs-on: ubuntu-24.04
@@ -103,6 +111,8 @@ jobs:
           npm run test:settle-historical-tool-executions
           npm run test:auto-reviewer-events
           npm run test:chat-store-streaming
+          npm run test:model-reasoning
+          npm run test:session-input
       - run: npm run build
 
   stable:

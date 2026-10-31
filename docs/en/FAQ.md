@@ -190,6 +190,14 @@ With `codex-direct`, a confirmed stop ends the current turn and its background c
 
 ---
 
+### Q: How can I use Claude Code as the main agent?
+
+Enable Claude in the existing Third-party Agents settings, install the `claude-direct` optional dependency, and select Claude Code in the new-task execution-engine control. Choose an Anthropic Messages-compatible model from Swarm's existing model services. Existing conversations keep their bindings. Single Agent/Code text, original approvals and in-process continuation are supported; equipment, Team and recovery after process restart remain unavailable.
+
+Without Core, the original model dialog can still add, edit, test and save OpenAI/Anthropic models. Use default reasoning settings when the Native catalog is unavailable. Existing explicit values are not silently removed, and execution providers are not assumed to support identical reasoning options.
+
+---
+
 ## More Help
 
 - **Documentation**: [docs/README_EN.md](../README_EN.md)

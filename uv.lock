@@ -7027,6 +7027,9 @@ a2a = [
 claude = [
     { name = "openjiuwen", extra = ["claude"] },
 ]
+claude-direct = [
+    { name = "claude-agent-sdk" },
+]
 codex = [
     { name = "openjiuwen", extra = ["codex"] },
 ]
@@ -7161,6 +7164,7 @@ requires-dist = [
     { name = "asyncssh", marker = "extra == 'test'", specifier = ">=2.14.0,<2.24" },
     { name = "certifi", specifier = ">=2024.8.30,<2027" },
     { name = "chromadb", specifier = ">=1.5.0,<2" },
+    { name = "claude-agent-sdk", marker = "extra == 'claude-direct'" },
     { name = "coverage", marker = "extra == 'test'", specifier = ">=7.7.1" },
     { name = "croniter", specifier = ">=3.0.0,<7" },
     { name = "croniter", marker = "extra == 'harmony'", specifier = ">=3.0.0" },
@@ -7267,7 +7271,7 @@ requires-dist = [
     { name = "wecom-aibot-sdk", marker = "extra == 'harmony'", specifier = ">=1.0.5" },
     { name = "workswarm-tui", marker = "extra == 'tui'", directory = "packages/jiuwenswarm-tui" },
 ]
-provides-extras = ["native", "harmony", "a2a", "ssh", "desktop", "dev", "tui", "distribute", "claude", "codex", "codex-direct", "cua", "shell-ast", "test"]
+provides-extras = ["native", "harmony", "a2a", "ssh", "desktop", "dev", "tui", "distribute", "claude", "codex", "codex-direct", "claude-direct", "cua", "shell-ast", "test"]
 
 [package.metadata.requires-dev]
 dev = [

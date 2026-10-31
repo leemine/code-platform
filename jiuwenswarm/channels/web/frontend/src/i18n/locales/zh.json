@@ -692,6 +692,7 @@
         "vendorSelectionInvalid": "当前提供商套餐不在服务端目录中，请重新选择",
         "anthropicUnavailable": "当前提供商套餐不支持 Anthropic 协议，请切换为 OpenAI 协议或重新选择提供商",
         "reasoningUnsupported": "当前推理选项“{{value}}”不受支持，请重新选择或使用默认值",
+        "reasoningUnverified": "当前安装无法验证此推理设置；可明确选择默认值后继续，已保存的值尚未更改。",
         "reasoningUnavailable": "推理选项尚未加载，请重试后保存",
         "contextWindowInvalid": "请输入有效的正整数上下文窗口，例如 256K、1M 或 1310720",
         "aliasRequired": "模型展示名称为必填项",

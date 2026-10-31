@@ -946,23 +946,39 @@ def register_models_handlers(
 async def _validate_external_model(channel, ws, req_id, params, provider):
     """Probe the existing catalog endpoint without a Native model client."""
     import httpx
-    if provider != "OpenAI":
+    if provider not in {"OpenAI", "Anthropic"}:
         await channel.send_response(ws, req_id, ok=False, code="BAD_REQUEST",
-                                    error="This installation supports OpenAI-compatible model endpoints.")
+                                    error="This installation supports OpenAI- and Anthropic-compatible model endpoints.")
         return
 
     class EndpointProbe:
         async def invoke(self, *, messages, max_tokens):
+            base = str(params["api_base"]).rstrip("/")
+            body = {"model": params["model"], "messages": messages, "max_tokens": max_tokens}
+            if provider == "Anthropic":
+                # Accept both vendor prefixes and explicit /v1 base URLs.
+                url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
+                headers = {"x-api-key": str(params["api_key"]), "anthropic-version": "2023-06-01"}
+            else:
+                url = base + "/chat/completions"
+                headers = {"Authorization": "Bearer " + str(params["api_key"])}
+            # Keep certificate verification enabled, as in the existing external probe.
             async with httpx.AsyncClient(timeout=25.0) as client:
-                response = await client.post(
-                    str(params["api_base"]).rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + str(params["api_key"])},
-                    json={"model": params["model"], "messages": messages, "max_tokens": max_tokens},
-                )
+                response = await client.post(url, headers=headers, json=body)
                 response.raise_for_status()
-                body = response.json()
-                message = body["choices"][0]["message"]
-                return {**message, "usage_metadata": {"output_tokens": body.get("usage", {}).get("completion_tokens")}}
+                result = response.json()
+                if provider == "Anthropic":
+                    content = "".join(
+                        block.get("text", "") for block in result.get("content", [])
+                        if block.get("type") == "text"
+                    )
+                    return {"content": content, "usage_metadata": {
+                        "output_tokens": result.get("usage", {}).get("output_tokens"),
+                    }}
+                message = result["choices"][0]["message"]
+                return {**message, "usage_metadata": {
+                    "output_tokens": result.get("usage", {}).get("completion_tokens"),
+                }}
     try:
         await probe_model_connection(EndpointProbe(), timeout_seconds=25.0)
     except Exception:

@@ -75,7 +75,12 @@ export function parseVendorCatalog(value: unknown): VendorPresetMap {
   const payload = value as Record<string, unknown>;
   const result = {} as VendorPresetMap;
   try {
-    result.reasoning = parseReasoningCatalog(payload.reasoning);
+    if (payload.reasoning_available === false && payload.reasoning === null) {
+      result.reasoning_available = false;
+      result.reasoning = null;
+    } else {
+      result.reasoning = parseReasoningCatalog(payload.reasoning);
+    }
   } catch {
     throw new Error('INVALID_VENDOR_CATALOG');
   }

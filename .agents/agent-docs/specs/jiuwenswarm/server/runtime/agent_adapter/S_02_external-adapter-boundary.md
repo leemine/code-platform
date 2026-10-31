@@ -110,7 +110,7 @@ Linux 测试包：`bash scripts/build-electron-linux.sh external`。打包前先
 
 Windows 入口：`scripts/build-electron-exe.ps1 -BuildProfile external -NoSign -SkipInstaller`；macOS 入口：`JIUWENSWARM_BUILD_PROFILE=external bash scripts/build-electron-exe.sh --test`。默认 Native 入口保留；这两个外部组合尚未在对应系统实际构建或验收，不能作为可下载安装包声明。签名、公证和正式发布另行完成。
 
-外部组合目前面向 OpenCode 单 Agent/Code；Native Team、记忆/推荐/设计器及 OpenAI 账号 OAuth 等 Core 专属路径不可据此宣称可用。原生路径不可用时明确拒绝，不把历史会话自动改绑 OpenCode。设置页复用原模型目录，连接测试当前仅支持 OpenAI 兼容端点且保持 TLS 校验。插件基础 Hook 在现有 Registry 内执行；高级 Core 回调选项明确不支持，不静默丢弃。独立 Provider 分包、第二 Provider、全量功能对等和冷恢复仍未交付。
+外部组合面向已安装的 OpenCode/Codex/Claude 单 Agent/Code；Native Team、记忆/推荐/设计器及 OpenAI 账号 OAuth 等 Core 专属路径不可据此宣称可用。原生路径不可用时明确拒绝，不把历史会话自动改绑 OpenCode。设置页复用原模型目录，连接测试支持 OpenAI 与 Anthropic 兼容端点且保持 TLS 校验。插件基础 Hook 在现有 Registry 内执行；高级 Core 回调选项明确不支持，不静默丢弃。独立 Provider 分包、全量功能对等和冷恢复仍未交付。
 
 
 ## CLI 自动发现与 HTTP/SSE 边界（2026-10-30 候选）
@@ -172,3 +172,31 @@ Adapter 只记录原生控制所需的工具身份、启动/结束通知及取�
 后台终端 API 通过官方 SDK 的公开 request 调用，不修改 SDK/CLI；仅在本轮观察到命令时查询，不按 SDK/CLI 精确版本设白名单。接口缺失、无效响应或终端仍存活时失败关闭，不能降级成成功。命令真实退出码仍仅来自原生事件，不从取消结果补值。
 
 非用户取消的异常流退出继续原清理；显式关闭/驱逐关闭客户端、删除目录、移除 Session。原 Swarm Runtime/Facade 独占生产任务、调度、控制和历史，本次未修改。没有历史文本重放、额外恢复队列或持久化映射。
+
+
+## 无 Core 基础模型配置（2026-10-31 候选）
+
+厂商预设是Swarm静态数据，无Core时vendors.list仍返回预设，并明确reasoning_available=false及reasoning=null；不伪造推理选项。缺少标记的无效响应仍拒绝。前端基础配置默认推理可编辑、测试并保存，已有显式值保持原样，不能校验时提示，只有用户明确选默认才清空。有Core继续原规则与连接测试，内部导入错误不冒充可选依赖缺席。
+
+外部连接测试沿config.validate_model及原probe，OpenAI chat/completions与Anthropic Messages按协议请求；Anthropic基地址可为vendor前缀或/v1，TLS验证不关闭。沿原models.upsert/get、凭据合并和reload。配置可保存不代表各Agent支持同一推理参数；本次不统一能力、不增加UI或第二模型目录。旧前端不能解析新标记时应随本次前后端一起更新，不只部署后端。
+
+
+## Claude 主 Agent 候选契约（未发布）
+
+`claude-direct`通过既有entry point接入，复用Third-party Agents启用/路径与Swarm单模型选择。官方Claude SDK拥有CLI和协议；仅Anthropic Messages兼容模型，TLS保持，原Runtime拥有producer、调度、控制、历史。每会话私有配置，SDK上下文由同一producer打开/关闭；支持同生命周期续聊，释放后的冷恢复明确拒绝。
+
+Default沿官方default并通过原permission_interrupt/CHAT_ANSWER答复；Full Access沿官方bypassPermissions，Automatic明确拒绝。取消使用原Runtime.cancel_request，清理不能把流关闭判为完成。技能/MCP/模板/附件、Team等未支持装备明确拒绝，不静默丢弃。
+
+工具附加数据即使SDK注解为dict，也必须核对运行时类型；只有原生字典内的整数exit_code可以判命令成功。文本/列表/缺失字段保留未知，tool_result正文与is_error原样映射，不因工具保护拒绝而中断适配器，不猜退出码。调用结束、命令结果、任务验收保持分离。
+
+## 2026-10-31 P1 生命周期修复补充
+
+Claude取消结束当前Turn，已确认初始化的官方SDK会话保留到显式关闭/驱逐，下一Turn仍用原resume；取消不引入历史文本重放，冷重启恢复仍未实现。external-only历史查询不加载Native Team，保留现有workflow响应协议；Native安装继续原live/checkpoint路径。Web恢复快照不得覆盖请求期间已收到的同会话实时活动状态，历史重建期间仍维护活动状态。详见B_20261031_1418_session-recovery-lifecycle。
+
+
+### Web重放与活动授权
+
+session.get_metadata返回的Worker快照在原WebClient/RuntimeResume更新已完成dispatch边界；已有游标也必须更新，不能只在初次订阅时初始化。已完成dispatch的replayed事件不再进入实时交互队列；活跃dispatch的chat.final片段不能据此剔除。实际待审批仍通过原控制通道恢复/答复，不从历史问答构建可执行授权，不重发chat.send或Provider prompt。
+
+
+Worker事件日志可能比dispatch记录保留更久：快照cursor以前的重放提问，必须仍在该快照pending_interactions控制ID集合内，才能恢复活动交互。不能因为旧dispatch已被回收就把其审批重新激活；快照以后或实时的新事件不按旧快照丢弃。无完整权威快照时不伪造待答集合。
