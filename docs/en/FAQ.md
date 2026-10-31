@@ -184,6 +184,12 @@ When an execution error occurs or the user expresses dissatisfaction, the system
 
 ---
 
+### Q: Can I continue the same Codex main-agent conversation after stopping it?
+
+With `codex-direct`, a confirmed stop ends the current turn and its background commands while preserving the conversation and context. If cancellation cannot be confirmed, retry stopping before sending another message. Terminals belonging to earlier turns are preserved. Recovery after session closure, process restart, or a lost native connection is not guaranteed; the adapter does not silently create a replacement conversation.
+
+---
+
 ## More Help
 
 - **Documentation**: [docs/README_EN.md](../README_EN.md)

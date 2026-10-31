@@ -29,6 +29,19 @@ class FakeClient:
         self.interrupt_error = False
         self.decisions = []
         self.messages = [(None, "reply")]
+        self.terminals = []
+        self.terminated = []
+
+    def request(self, method, params, *, response_model):
+        assert params['threadId'] == self.thread_id
+        if method == 'thread/backgroundTerminals/list':
+            offset = int(params.get('cursor', 0))
+            next_cursor = str(offset + 1) if offset + 1 < len(self.terminals) else None
+            return response_model.model_validate({'data': self.terminals[offset:offset + 1], 'nextCursor': next_cursor})
+        assert method == 'thread/backgroundTerminals/terminate'
+        self.terminated.append(params['processId'])
+        self.terminals = [t for t in self.terminals if t['processId'] != params['processId']]
+        return response_model.model_validate({'terminated': True})
 
     def start(self):
         pass
@@ -71,12 +84,15 @@ class FakeClient:
         self.emit('turn/completed', turn={'status': status})
 
     def next_turn_notification(self, turn_id):
-        event = self.events.get(timeout=5)
+        events = self.events
+        event = events.get(timeout=5)
         if event == 'approval':
             decision = self.approval_handler('item/commandExecution/requestApproval', {'threadId': self.thread_id, 'turnId': self.turn_id, 'command': 'fixture command'})
             self.decisions.append(decision)
             self.finish('interrupted' if decision['decision'] == 'cancel' else 'completed')
-            event = self.events.get(timeout=5)
+            event = events.get(timeout=5)
+        if isinstance(event, Exception):
+            raise event
         return event
 
     def turn_interrupt(self, thread_id, turn_id):
@@ -84,10 +100,13 @@ class FakeClient:
             raise RuntimeError('interruption failed')
 
     def unregister_turn_notifications(self, turn_id):
-        pass
+        # Official SDK closes the turn subscription and wakes its reader.
+        self.events.put(RuntimeError('Turn subscription closed'))
+        self.events = queue.Queue()
 
     def close(self):
         self.closed = True
+        self.events.put(RuntimeError('Transport closed'))
 
 
 @pytest.fixture
@@ -185,7 +204,8 @@ async def test_cancel_pending_releases_sdk_reader(host):
 
 
 @pytest.mark.asyncio
-async def test_stream_close_cleans_even_interrupt_fails(host):
+@pytest.mark.parametrize('cancel_requested', [False, True])
+async def test_stream_close_fences_unconfirmed_cancel_and_cleans_other_exits(host, cancel_requested):
     app, config, clients, root, _ = host
     await app.create_instance(config)
     try:
@@ -195,9 +215,18 @@ async def test_stream_close_cleans_even_interrupt_fails(host):
         producer = app._adapter.process_message_stream_impl(request(), {'query': 'test'})
         chunk = await anext(producer)
         assert chunk.payload['event_type'] == 'chat.ask_user_question'
+        if cancel_requested:
+            with pytest.raises(RuntimeError, match='could not be confirmed'):
+                await app.process_message(request(method=ReqMethod.CHAT_CANCEL, intent='cancel'))
         await producer.aclose()
-        assert clients[0].closed
-        assert not app.has_session_runtime('one')
+        if cancel_requested:
+            assert not clients[0].closed
+            assert app.has_session_runtime('one')
+            with pytest.raises(RuntimeError, match='cancellation is not confirmed'):
+                await anext(app._adapter.process_message_stream_impl(request(), {'query': 'unsafe resume'}))
+        else:
+            assert clients[0].closed
+            assert not app.has_session_runtime('one')
     finally:
         await app.cleanup()
 
@@ -411,5 +440,148 @@ async def test_sdk_without_approval_interface_fails_without_fallback(host, monke
         assert any("required client/approval interface" in str(item) for item in chunks)
         assert not any(item.get("event_type") == "chat.final" for item in chunks)
         assert not clients
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stage', ['approval', 'running', 'startup'])
+@pytest.mark.parametrize('failure', [None, 'unsupported', 'still_running', 'missing_terminal', 'closed_stream'])
+async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, stage, failure):
+    from jiuwenswarm.runtime import AgentRuntime
+    from jiuwenswarm.common import config as config_module
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    _, _, clients, root, _ = host
+    settings = {'preferred_language': 'en', 'permissions': {'enabled': True},
+                'modes': {'team': {'jiuwen_team': {'external_cli_agents': ['codex']}}}}
+    monkeypatch.setenv('JIUWENSWARM_AGENT_SDK', 'codex-direct')
+    monkeypatch.setenv('JIUWENSWARM_DATA_DIR', str(root))
+    monkeypatch.setattr(config_module, 'get_config', lambda: settings)
+    monkeypatch.setattr(interface, 'get_config', lambda: settings)
+    monkeypatch.setattr(session_metadata, 'get_agent_sessions_dir', lambda: root / 'sessions')
+    runtime = AgentRuntime()
+    def req(method=ReqMethod.CHAT_SEND):
+        return request('resume-' + stage, method, project_dir=str(root),
+                       execution_provider='codex-direct', intent='cancel', work_mode='work')
+    async def drain():
+        return [item async for item in runtime.stream(req())]
+    producer = None
+    import threading
+    startup_release = threading.Event()
+    try:
+        assert any((x.payload or {}).get('event_type') == 'chat.final' for x in await drain())
+        client = clients[0]
+        original_thread = client.thread_id
+        waiting = asyncio.Event()
+        interrupts = []
+        loop = asyncio.get_running_loop()
+        def interrupt_once(thread_id, turn_id):
+            interrupts.append((thread_id, turn_id))
+            if len(interrupts) > 1:
+                raise RuntimeError('Turn already interrupted')
+            if failure == 'closed_stream':
+                client.events.put(RuntimeError('Connection lost before native terminal'))
+            elif failure != 'missing_terminal':
+                # ACK comes first; the only producer receives terminal later.
+                loop.call_soon_threadsafe(loop.call_later, .03,
+                    lambda: client.emit('turn/completed', turn={'status': 'interrupted'}))
+        monkeypatch.setattr(client, 'turn_interrupt', interrupt_once)
+        # ACK must not drain the producer before its delayed native terminal.
+        # The SDK fake has no alternate scheduler; only its transport is controlled.
+        if stage == 'approval':
+            client.approval = True
+            monkeypatch.setattr(client, 'finish', lambda *args: None)
+        else:
+            client.terminals = [{'itemId': 'older-turn', 'processId': 'old'},
+                                {'itemId': 'running', 'processId': 'current'}]
+            def start(thread_id, prompt):
+                assert thread_id == original_thread
+                client.turns += 1
+                client.turn_id = str(client.turns)
+                if stage == 'startup':
+                    loop.call_soon_threadsafe(waiting.set)
+                    assert startup_release.wait(5)
+                client.emit('item/started', item={'id': 'running', 'type': 'commandExecution', 'command': 'sleep 30'})
+                return SimpleNamespace(turn=SimpleNamespace(id=client.turn_id))
+            monkeypatch.setattr(client, 'turn_start', start)
+        async def consume():
+            async for item in runtime.stream(req()):
+                expected = 'chat.ask_user_question' if stage == 'approval' else 'chat.tool_call'
+                if (item.payload or {}).get('event_type') == expected:
+                    waiting.set()
+        producer = asyncio.create_task(consume())
+        await asyncio.wait_for(waiting.wait(), 5)
+        if failure == 'missing_terminal':
+            monkeypatch.setattr(codex, '_CANCEL_TIMEOUT', .15)
+        original_rpc = client.request
+        def failing_rpc(method, params, *, response_model):
+            if failure == 'unsupported':
+                raise RuntimeError('unsupported official API')
+            if method.endswith('/terminate'):
+                return response_model.model_validate({'terminated': False})
+            return original_rpc(method, params, response_model=response_model)
+        if stage != 'approval' and failure in {'unsupported', 'still_running'}:
+            monkeypatch.setattr(client, 'request', failing_rpc)
+        if stage == 'startup':
+            loop.call_later(.03, startup_release.set)
+        should_fail = failure in {'missing_terminal', 'closed_stream'} or (failure is not None and stage != 'approval')
+        if should_fail:
+            with pytest.raises(RuntimeError, match='could not be confirmed'):
+                await runtime.cancel_request(req(ReqMethod.CHAT_CANCEL))
+            assert client.turns == 2 and not client.closed
+            if failure == 'missing_terminal':
+                client.emit('turn/completed', turn={'status': 'interrupted'})
+                await asyncio.wait_for(producer, 5)
+                monkeypatch.setattr(codex, '_CANCEL_TIMEOUT', 5)
+            rejected = await drain()
+            assert not any((x.payload or {}).get('event_type') == 'chat.final' for x in rejected)
+            assert client.turns == 2
+            if failure == 'closed_stream':
+                with pytest.raises(RuntimeError, match='could not be confirmed'):
+                    await runtime.cancel_request(req(ReqMethod.CHAT_CANCEL))
+                assert client.turns == 2 and not client.closed
+                return
+            monkeypatch.setattr(client, 'request', original_rpc)
+        # Duplicate controls serialize locally; neither interrupts nor terminates twice.
+        reply, duplicate = await asyncio.gather(runtime.cancel_request(req(ReqMethod.CHAT_CANCEL)),
+                                                runtime.cancel_request(req(ReqMethod.CHAT_CANCEL)))
+        assert reply.ok
+        assert duplicate.ok
+        await asyncio.wait_for(asyncio.gather(producer, return_exceptions=True), 5)
+        assert not client.closed
+        assert interrupts == [(original_thread, '2')]
+        if stage != 'approval':
+            assert client.terminated == ['current']
+            assert client.terminals == [{'itemId': 'older-turn', 'processId': 'old'}]
+        client.approval = False
+        monkeypatch.setattr(client, 'finish', FakeClient.finish.__get__(client))
+        monkeypatch.setattr(client, 'turn_start', FakeClient.turn_start.__get__(client))
+        client.messages = [(None, 'SAME_THREAD_CONTEXT')]
+        result = await drain()
+        assert any((x.payload or {}).get('content') == 'SAME_THREAD_CONTEXT' for x in result)
+        assert len(clients) == 1 and client.thread_id == original_thread
+    finally:
+        startup_release.set()
+        if producer:
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+        await runtime.close()
+    assert clients[0].closed
+    assert not list((root / 'sessions/.codex-direct').iterdir())
+
+
+@pytest.mark.asyncio
+async def test_stream_close_without_user_cancel_disposes_session(host):
+    app, config, clients, _, _ = host
+    await app.create_instance(config)
+    try:
+        _ = [item async for item in app.process_message_stream(request())]
+        clients[0].approval = True
+        producer = app._adapter.process_message_stream_impl(request(), {'query': 'test'})
+        assert (await anext(producer)).payload['event_type'] == 'chat.ask_user_question'
+        await producer.aclose()
+        assert clients[0].closed
+        assert not app.has_session_runtime('one')
     finally:
         await app.cleanup()

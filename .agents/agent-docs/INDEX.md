@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 26 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 27 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -27,7 +27,7 @@ generated: true
 | [jiuwenswarm/channels/web/frontend](#module-10) | 1 |
 | [jiuwenswarm/gateway/channel_manager/web](#module-11) | 1 |
 | [jiuwenswarm/observability](#module-12) | 1 |
-| [jiuwenswarm/server/runtime/agent_adapter](#module-13) | 1 |
+| [jiuwenswarm/server/runtime/agent_adapter](#module-13) | 2 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-14) | 1 |
 | [runtime](#module-15) | 1 |
 | [scripts](#module-16) | 1 |
@@ -145,6 +145,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B_20261030_1646_opencode-tls-error-diagnostics](bugfix/agent_adapter/B_20261030_1646_opencode-tls-error-diagnostics.md) | B | OpenCode TLS 原生错误原因丢失与同环境复验 | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, tests/unit_tests/agentserver/test_opencode_direct_adapter.py | 无独立 D：用户授权定位并修复既有接入错误；不扩展执行框架或修改外部源码。 |
+| [B_20261031_1459_codex-cancel-session](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1459_codex-cancel-session.md) | B | Codex取消确认本轮终端停止并保留原生Thread | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py, docs/zh/FAQ.md, docs/en/FAQ.md | 无独立 D：用户确认继续修复已复现的取消后续聊问题，沿原Runtime和官方SDK，不扩展冷恢复或新执行流程。 |
 
 <a id="module-14"></a>
 
