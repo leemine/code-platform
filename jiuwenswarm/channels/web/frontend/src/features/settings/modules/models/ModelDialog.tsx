@@ -536,12 +536,12 @@ export function ModelDialog({
       />
     ),
   });
-  if (reasoning && reasoning.options.length > 0) {
+  if ((reasoning && reasoning.options.length > 0) || (catalog.reasoning_available === false && values.reasoning_level)) {
     formItems.push({
       name: 'reasoning_level',
       label: t('settingsPanel.fields.reasoning_level.title'),
       component: 'select',
-      options: buildReasoningOptions(reasoning, t('settingsPanel.models.reasoning.auto'), (value) =>
+      options: buildReasoningOptions(reasoning ?? { options: [values.reasoning_level], recommended: null }, t('settingsPanel.models.reasoning.auto'), (value) =>
         t(`settingsPanel.models.reasoning.options.${value}`, { defaultValue: value }),
       ),
       onChange: invalidateConnectionState,
@@ -562,7 +562,7 @@ export function ModelDialog({
           fetching ||
           catalogLoading ||
           Boolean(catalogError) ||
-          !catalog.reasoning ||
+          (!catalog.reasoning && catalog.reasoning_available !== false) ||
           (account && openAIAccount.busy)
         }
         confirmLabel={t(
@@ -610,7 +610,7 @@ export function ModelDialog({
         ) : null}
         <Form<ModelDraft>
           form={form}
-          disabled={testing || submitting || saving || !catalog.reasoning}
+          disabled={testing || submitting || saving || (!catalog.reasoning && catalog.reasoning_available !== false)}
           optionalText={t('common.optional')}
           showOptional={false}
           testIdPrefix="settings-model-dialog"

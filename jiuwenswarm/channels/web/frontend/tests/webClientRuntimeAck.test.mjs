@@ -615,3 +615,47 @@ test('fresh metadata replay leaves completed history out of the active reply and
     await fresh.disconnect();
   }
 });
+
+test('history metadata returns the recovered state instead of overwriting it with the initial busy snapshot', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  try {
+    const pending = fresh.request('session.get_metadata', { session_id: 'history-race' });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: {
+      session_id: 'history-race', is_processing: true,
+      runtime: { worker_instance: 'worker', is_processing: true, cursor: 1 },
+    } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: {
+      session_id: 'history-race', is_processing: false,
+      runtime: { worker_instance: 'worker', is_processing: false, cursor: 2 },
+    } });
+    assert.notEqual((await pending).is_processing, true);
+  } finally { await fresh.disconnect(); }
+});
+
+test('a live completion wins over a metadata response already in flight', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const statuses = [];
+  const off = fresh.on('chat.processing_status', ({ payload }) => statuses.push(payload.is_processing));
+  try {
+    const pending = fresh.request('session.get_metadata', { session_id: 'late-snapshot', runtime_resume: { after: 1 } });
+    await Promise.resolve();
+    const query = socket.lastRequest;
+    socket.receive({ type: 'event', event: 'chat.processing_status', payload: { session_id: 'late-snapshot', is_processing: false } });
+    socket.receive({ type: 'res', id: query.id, ok: true, payload: {
+      title: 'preserve metadata', is_processing: true,
+      runtime: { is_processing: true, permissions: { state: 'applied' } },
+    } });
+    const metadata = await pending;
+    assert.equal(metadata.is_processing, undefined);
+    assert.equal(metadata.runtime.is_processing, undefined);
+    assert.equal(metadata.title, 'preserve metadata');
+    assert.deepEqual(metadata.runtime.permissions, { state: 'applied' });
+    assert.deepEqual(statuses, [false]);
+  } finally { off(); await fresh.disconnect(); }
+});

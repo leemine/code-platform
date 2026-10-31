@@ -226,7 +226,9 @@ export interface VendorPreset {
 }
 
 export type VendorPresetMap = Record<ModelPlan, VendorPreset[]> & {
-  /** Null only while the server catalog has not loaded successfully. */
+  /** False means the server explicitly has no Native reasoning catalog. */
+  reasoning_available?: boolean;
+  /** Null while loading, or when reasoning_available is false. */
   reasoning: ModelReasoningCatalog | null;
 };
 

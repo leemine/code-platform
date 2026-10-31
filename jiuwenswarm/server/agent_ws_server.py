@@ -7993,7 +7993,7 @@ class AgentWebSocketServer:
 
     async def _handle_command_workflows(self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock) -> None:
         """Handle command.workflows RPC — list summaries or get one workflow detail."""
-        from jiuwenswarm.agents.harness.team import get_team_manager
+        from jiuwenswarm.common.native_integration import native_available
 
         session_id = request.session_id or ""
         channel_id = request.channel_id or "web"
@@ -8011,48 +8011,55 @@ class AgentWebSocketServer:
             wf_id_log,
         )
 
-        team_manager = get_team_manager(channel_id)
-        workflow_handler = team_manager.get_workflow_handler(session_id)
-        source = "live" if workflow_handler is not None else "checkpoint"
+        workflows = []
+        source = "unavailable"
+        # Native workflows are optional. Keep the same list/detail protocol in
+        # external-only installations without loading a Native implementation.
+        if native_available():
+            from jiuwenswarm.agents.harness.team import get_team_manager
 
-        if workflow_handler is None:
-            # No live handler (runtime not active / torn down by cancel-stop /
-            # process restarted). Fall back to the persisted checkpoint so
-            # historical / terminal runs stay queryable — but serve the same
-            # cold-start view the runtime would build: a run the old process
-            # left ``running`` gets no more events and must read as ``paused``
-            # + ``recovered`` (buttons grey, advisory lists it), not as live.
-            try:
-                from jiuwenswarm.server.runtime.agent_adapter.team_helpers import (
-                    _normalize_recovered_runs,
-                    restore_workflow_runs,
-                )
+            team_manager = get_team_manager(channel_id)
+            workflow_handler = team_manager.get_workflow_handler(session_id)
+            source = "live" if workflow_handler is not None else "checkpoint"
 
-                restored = _normalize_recovered_runs(
-                    restore_workflow_runs(session_id), session_id,
-                )
-                workflows = (
-                    [run.to_workflow_run_dict() for run in restored.values()]
-                    if restored
-                    else []
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[WF_DBG] command.workflows checkpoint_restore_failed session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-                workflows = []
-        else:
-            try:
-                workflows = workflow_handler.get_workflow_snapshot()
-            except Exception as e:
-                logger.warning(
-                    "[WF_DBG] command.workflows snapshot_failed session_id=%s error=%s",
-                    session_id,
-                    e,
-                )
-                workflows = []
+            if workflow_handler is None:
+                # No live handler (runtime not active / torn down by cancel-stop /
+                # process restarted). Fall back to the persisted checkpoint so
+                # historical / terminal runs stay queryable — but serve the same
+                # cold-start view the runtime would build: a run the old process
+                # left ``running`` gets no more events and must read as ``paused``
+                # + ``recovered`` (buttons grey, advisory lists it), not as live.
+                try:
+                    from jiuwenswarm.server.runtime.agent_adapter.team_helpers import (
+                        _normalize_recovered_runs,
+                        restore_workflow_runs,
+                    )
+
+                    restored = _normalize_recovered_runs(
+                        restore_workflow_runs(session_id), session_id,
+                    )
+                    workflows = (
+                        [run.to_workflow_run_dict() for run in restored.values()]
+                        if restored
+                        else []
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[WF_DBG] command.workflows checkpoint_restore_failed session_id=%s error=%s",
+                        session_id,
+                        exc,
+                    )
+                    workflows = []
+            else:
+                try:
+                    workflows = workflow_handler.get_workflow_snapshot()
+                except Exception as e:
+                    logger.warning(
+                        "[WF_DBG] command.workflows snapshot_failed session_id=%s error=%s",
+                        session_id,
+                        e,
+                    )
+                    workflows = []
 
         source_count = len(workflows)
         source_bytes = sum(_json_wire_size(item) for item in workflows if isinstance(item, dict))

@@ -44,11 +44,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from openjiuwen.core.foundation.llm import (
-    get_provider_reasoning_rules,
-    get_reasoning_capability,
-    get_reasoning_capability_catalog,
-)
+from jiuwenswarm.common.native_integration import native_available
+
+# Presets are Swarm data. Only Native reasoning enrichment requires Core.
+if native_available():
+    from openjiuwen.core.foundation.llm import (
+        get_provider_reasoning_rules,
+        get_reasoning_capability,
+        get_reasoning_capability_catalog,
+    )
 
 from gateway.common.volcengine_endpoints import (
     ARK_ANTHROPIC_BASE,
@@ -553,8 +557,10 @@ def _reasoning_capabilities(preset: VendorPreset) -> dict[str, dict[str, Any]]:
 
 def to_frontend_payload() -> dict[str, Any]:
     """Grouped payload for the ``vendors.list`` RPC (plan -> [vendor cards])."""
+    reasoning_available = native_available()
     out: dict[str, Any] = {
-        "reasoning": get_reasoning_capability_catalog(),
+        "reasoning_available": reasoning_available,
+        "reasoning": get_reasoning_capability_catalog() if reasoning_available else None,
     }
     for plan in PlanKind:
         out[plan.value] = [
@@ -572,7 +578,7 @@ def to_frontend_payload() -> dict[str, Any]:
                 "models_endpoint": p.models_endpoint,
                 "models_needs_key": p.models_needs_key,
                 "generation_only": p.generation_only,
-                "reasoning_capabilities": _reasoning_capabilities(p),
+                "reasoning_capabilities": _reasoning_capabilities(p) if reasoning_available else {},
                 # Provider-scoped pattern 规则：给 models_endpoint 拉取到的、
                 # 不在 model_options 精确表里的新模型用，避免前端退到跨厂商
                 # model_fallbacks 时与后端 provider 级校验产生漂移。
@@ -580,7 +586,7 @@ def to_frontend_payload() -> dict[str, Any]:
                     provider=p.client_provider,
                     api_base=p.api_base,
                     endpoint_profile=p.endpoint_profile,
-                ),
+                ) if reasoning_available else [],
                 # Anthropic 格式(可选切换): 仅当 anthropic_base 非空时可用,
                 # 切换后落库 client_provider=ANTHROPIC_CLIENT_PROVIDER、
                 # api_base=anthropic_base(core 用 AnthropicModelClient 走 /v1/messages)。

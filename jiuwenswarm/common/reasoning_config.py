@@ -143,6 +143,13 @@ def validate_reasoning_level_for_model(
         raise ValueError(
             f"reasoning_level is invalid; canonical values: {', '.join(SUPPORTED_REASONING_LEVELS)}"
         )
+    from jiuwenswarm.common.native_integration import native_available
+
+    if not native_available():
+        raise ValueError(
+            "Explicit reasoning settings cannot be validated in this installation; "
+            "choose the default setting or edit with the Native integration available."
+        )
     provider_name = getattr(model_provider, "value", model_provider)
     protocol = "anthropic" if str(provider_name or "").strip().lower() == "anthropic" else "openai"
     try:

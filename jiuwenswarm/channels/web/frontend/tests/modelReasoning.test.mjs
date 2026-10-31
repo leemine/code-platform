@@ -37,7 +37,7 @@ const vendor = {
   default_model: 'glm-5.2',
   model_options: ['glm-5.2', 'codegeex-4'],
   icon_key: 'baidu',
-  models_endpoint: null,
+  models_endpoint: 'https://qianfan.baidubce.com/v2/models',
   models_needs_key: false,
   supports_anthropic: true,
   anthropic_base: 'https://qianfan.baidubce.com/anthropic',
@@ -334,7 +334,7 @@ async function mountDialog(t, modelOverrides = {}, propOverrides = {}) {
   const request = async (method, params) => {
     requests.push({ method, params });
     if (method === 'config.validate_model') return {};
-    if (method === 'vendors.fetch_models') return { source: 'remote', models: ['glm-5.2', 'glm-new'] };
+    if (method === 'vendors.fetch_models') return { source: 'remote', models: ['glm-5.2', 'glm-new', 'codegeex-4', 'deepseek-v4-pro'] };
     if (method === 'openai_account.auth.pending_login') return { status: 'none', auth: { authenticated: true } };
     if (method === 'openai_account.models.list') return { models: ['glm-5.2'], auth: { authenticated: true } };
     throw new Error(`Unexpected request: ${method}`);
@@ -381,11 +381,45 @@ async function click(element) {
   await act(async () => element.click());
 }
 
+function selectByLabel(key) {
+  const label = [...document.querySelectorAll('.settings-model-dialog label')].find((node) => node.textContent.trim() === i18n.t(key));
+  return label ? document.getElementById(label.htmlFor) : null;
+}
+
+function openOptions(element) {
+  const panel = document.getElementById(element.getAttribute('aria-controls'));
+  return [...panel.querySelectorAll('[role="option"]')];
+}
+
+async function selectedValue(element) {
+  await click(element);
+  const value = openOptions(element).find((node) => node.getAttribute('aria-selected') === 'true')?.dataset.variant;
+  await click(element);
+  return value;
+}
+
+async function selectOptions(element) {
+  await click(element);
+  const values = openOptions(element).map((node) => node.dataset.variant);
+  await click(element);
+  return values;
+}
+
+async function selectModel(name) {
+  const input = document.querySelector('input[role="combobox"]');
+  await act(async () => input.focus());
+  if (input.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+  }
+  const option = [...document.querySelectorAll('[role="option"]')].find((node) => node.textContent.trim() === name);
+  assert.ok(option, JSON.stringify({ name, expanded: input.getAttribute('aria-expanded'), disabled: input.disabled, options: [...document.querySelectorAll('[role="option"]')].map((node) => node.textContent) }));
+  await click(option);
+}
+
 async function selectValue(element, value) {
-  await act(async () => {
-    element.value = value;
-    element.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-  });
+  await click(element);
+  const option = openOptions(element).find((node) => node.dataset.variant === value);
+  await click(option);
 }
 
 test('reopening model details retains the API key and fetches remote models without re-entry', async (t) => {
@@ -415,10 +449,10 @@ test('reopening model details retains the API key and fetches remote models with
 test('opening an unsupported saved value displays and submits default without changing the saved configuration', async (t) => {
   const ui = await mountDialog(t);
   assert.deepEqual(
-    [...reasoningSelect().options].map(({ value }) => value),
+    await selectOptions(reasoningSelect()),
     ['', 'off', 'on'],
   );
-  assert.equal(reasoningSelect().value, '');
+  assert.equal(await selectedValue(reasoningSelect()), '');
   assert.equal(ui.model.reasoning_level, 'high');
   assert.equal(ui.saved.length, 0);
   await click(dialogButton('common.confirm'));
@@ -443,9 +477,9 @@ test('catalog loading or failure preserves the old value; a successful response 
     },
     catalogError: '',
   });
-  assert.equal(reasoningSelect().value, 'high', 'a failed load must not clear the draft');
+  assert.equal(await selectedValue(reasoningSelect()), 'high', 'a failed load must not clear the draft');
   await ui.render({ catalog });
-  assert.equal(reasoningSelect().value, '');
+  assert.equal(await selectedValue(reasoningSelect()), '');
   assert.equal(dialogButton('common.confirm').disabled, false);
   await click(dialogButton('common.cancel'));
   const discardDialog = [...document.querySelectorAll('dialog[open]')].find((node) =>
@@ -459,15 +493,11 @@ test('catalog loading or failure preserves the old value; a successful response 
 
 test('model and protocol changes retain supported values and hide empty capabilities', async (t) => {
   const ui = await mountDialog(t, { reasoning_level: 'on' });
-  assert.equal(reasoningSelect().value, 'on');
-  const protocol = document.querySelector('.settings-model-dialog select');
+  assert.equal(await selectedValue(reasoningSelect()), 'on');
+  const protocol = selectByLabel('settingsPanel.models.protocol');
   await selectValue(protocol, 'anthropic');
-  assert.equal(reasoningSelect().value, 'on');
-  await click(document.querySelector('.settings-model-name-field__toggle'));
-  const modelOption = [...document.querySelectorAll('[role="option"]')].find(
-    (node) => node.textContent.trim() === 'codegeex-4',
-  );
-  await click(modelOption);
+  assert.equal(await selectedValue(reasoningSelect()), 'on');
+  await selectModel('codegeex-4');
   assert.equal(reasoningSelect(), null);
   await click(dialogButton('common.confirm'));
   assert.equal(ui.saved[0].reasoning_level, '');
@@ -480,9 +510,9 @@ test('switching protocol or provider resets a selection only when the new option
     custom_api: [{ ...preset, reasoning_capabilities: { 'glm-5.2': { openai: toggle, anthropic: strengths } } }],
   };
   const ui = await mountDialog(t, { model_provider: 'Anthropic' }, { catalog: protocolCatalog });
-  assert.equal(reasoningSelect().value, 'high');
-  await selectValue(document.querySelector('.settings-model-dialog select'), 'openai');
-  assert.equal(reasoningSelect().value, '');
+  assert.equal(await selectedValue(reasoningSelect()), 'high');
+  await selectValue(selectByLabel('settingsPanel.models.protocol'), 'openai');
+  assert.equal(await selectedValue(reasoningSelect()), '');
   await selectValue(reasoningSelect(), 'on');
   const anotherPreset = {
     ...preset,
@@ -492,27 +522,65 @@ test('switching protocol or provider resets a selection only when the new option
     reasoning_capabilities: { 'deepseek-v4-pro': both(strengths) },
   };
   await ui.render({ catalog: { ...protocolCatalog, custom_api: [...protocolCatalog.custom_api, anotherPreset] } });
-  assert.equal(reasoningSelect().value, 'on');
+  assert.equal(await selectedValue(reasoningSelect()), 'on');
   await click(document.querySelector('.settings-model-provider-select__trigger'));
   await click(
     [...document.querySelectorAll('[role="option"]')].find(
       (node) => node.textContent.trim() === i18n.t('settingsPanel.models.vendors.deepseek'),
     ),
   );
-  assert.equal(document.querySelector('input[role="combobox"]').value, 'deepseek-v4-pro');
+  assert.equal(document.querySelector('input[role="combobox"]').value, '');
+  await selectModel('deepseek-v4-pro');
   assert.deepEqual(
-    [...reasoningSelect().options].map(({ value }) => value),
+    await selectOptions(reasoningSelect()),
     ['', 'off', 'high', 'max'],
   );
-  assert.equal(reasoningSelect().value, '');
+  assert.equal(await selectedValue(reasoningSelect()), '');
 });
 
 test('account refresh preserves a supported selection and uses the same draft normalization', async (t) => {
   const ui = await mountDialog(t, { model_provider: 'OpenAIAccount', vendor_key: undefined, plan: undefined });
-  assert.equal(reasoningSelect().value, 'high');
+  assert.equal(await selectedValue(reasoningSelect()), 'high');
   await selectValue(reasoningSelect(), 'max');
   await click(document.querySelector('.settings-model-name-field__refresh'));
-  assert.equal(reasoningSelect().value, 'max');
+  assert.equal(await selectedValue(reasoningSelect()), 'max');
   await click(dialogButton('common.confirm'));
   assert.equal(ui.saved[0].reasoning_level, 'max');
+});
+
+const externalCatalog = parseVendorCatalog({
+  ...catalogPayload, reasoning_available: false, reasoning: null,
+  custom_api: [{ ...vendor, reasoning_capabilities: {}, reasoning_rules: [] }],
+});
+
+test('only an explicit unavailable capability marker permits a null reasoning catalog', () => {
+  assert.equal(externalCatalog.reasoning, null);
+  assert.equal(externalCatalog.reasoning_available, false);
+  assert.throws(() => parseVendorCatalog({ ...catalogPayload, reasoning: null }));
+  assert.throws(() => parseVendorCatalog({ ...catalogPayload, reasoning_available: true, reasoning: null }));
+});
+
+test('no-Core model dialog validates and saves basic configuration through existing RPC', async (t) => {
+  const ui = await mountDialog(t, { reasoning_level: '' }, { catalog: externalCatalog });
+  assert.equal(reasoningSelect(), null);
+  assert.equal(dialogButton('common.confirm').disabled, false);
+  await click(dialogButton('common.confirm'));
+  assert.equal(ui.requests.filter((entry) => entry.method === 'config.validate_model').length, 1);
+  assert.equal(ui.saved.length, 1);
+  assert.equal(ui.saved[0].api_key, 'test-key');
+  assert.equal(ui.saved[0].reasoning_level, '');
+});
+
+test('no-Core preserves explicit reasoning until the user chooses default', async (t) => {
+  const ui = await mountDialog(t, { reasoning_level: 'high' }, { catalog: externalCatalog });
+  assert.equal(await selectedValue(reasoningSelect()), 'high');
+  await click(dialogButton('common.confirm'));
+  assert.equal(ui.saved.length, 0);
+  assert.equal(ui.requests.length, 0);
+  assert.equal(ui.model.reasoning_level, 'high');
+  assert.ok(document.body.textContent.includes(i18n.t('settingsPanel.models.validation.reasoningUnverified')));
+  await selectValue(reasoningSelect(), '');
+  await click(dialogButton('common.confirm'));
+  assert.equal(ui.saved.length, 1);
+  assert.equal(ui.saved[0].reasoning_level, '');
 });

@@ -4666,9 +4666,16 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (isProactiveRecommendationPayload(payload)) return;
         // 切换模式时忽略处理状态更新
         if (useChatStore.getState().getRuntime(sessionId)?.switchingMode) return;
-        // 加载历史消息时忽略处理状态更新
-        if (useChatStore.getState().getRuntime(sessionId)?.isLoadingHistory) return;
         const isProcessingNow = Boolean(payload.is_processing);
+        // History owns message reconstruction, but live activity must not be
+        // discarded: a completion can arrive before that reconstruction ends.
+        if (useChatStore.getState().getRuntime(sessionId)?.isLoadingHistory) {
+          if (!(isProcessingNow && isOrganizationOwnerStopped(sessionId))) {
+            useChatStore.getState().setProcessing(sessionId, isProcessingNow);
+            if (!isProcessingNow) useChatStore.getState().setThinking(sessionId, false);
+          }
+          return;
+        }
         // Delayed foreground status must not relight an explicitly stopped Owner.
         if (isProcessingNow && isOrganizationOwnerStopped(sessionId)) return;
 

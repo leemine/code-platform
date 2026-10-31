@@ -692,6 +692,7 @@
         "vendorSelectionInvalid": "This provider plan is not in the server catalog. Select it again",
         "anthropicUnavailable": "This provider plan does not support the Anthropic protocol. Use OpenAI or select another provider",
         "reasoningUnsupported": "The reasoning option “{{value}}” is unsupported. Select another option or use the default",
+        "reasoningUnverified": "This installation cannot verify the saved reasoning setting. Choose the default explicitly to continue; the saved value has not been changed.",
         "reasoningUnavailable": "Reasoning options have not loaded. Retry before saving",
         "contextWindowInvalid": "Enter a valid positive context window, such as 256K, 1M, or 1310720",
         "aliasRequired": "Model display name is required",

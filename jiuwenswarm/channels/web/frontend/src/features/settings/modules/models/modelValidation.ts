@@ -84,7 +84,9 @@ export function validateModelDraft(
   }
 
   const reasoning = resolveModelReasoning(catalog, preset, modelName, value.protocol);
-  if (!catalog.reasoning) {
+  if (catalog.reasoning_available === false && value.reasoning_level) {
+    errors.reasoning_level = t('settingsPanel.models.validation.reasoningUnverified');
+  } else if (!catalog.reasoning && catalog.reasoning_available !== false) {
     errors.reasoning_level = t('settingsPanel.models.validation.reasoningUnavailable');
   } else if (reasoning && !isReasoningLevelSupported(value.reasoning_level, reasoning)) {
     errors.reasoning_level = t('settingsPanel.models.validation.reasoningUnsupported', {

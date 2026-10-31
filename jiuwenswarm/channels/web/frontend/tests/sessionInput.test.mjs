@@ -1553,3 +1553,13 @@ test('cross-session steering keeps its Agent source and the original task runnin
     await c.dispose();
   }
 });
+
+test('live completion updates activity while history content is still loading', async (t) => {
+  const c = await mount(t);
+  try {
+    act(() => c.store.setLoadingHistory(c.sid, true));
+    c.receive('chat.processing_status', { request_id: 'original', is_processing: false });
+    assert.equal(c.runtime().isProcessing, false);
+    assert.equal(c.runtime().isLoadingHistory, true);
+  } finally { await c.dispose(); }
+});

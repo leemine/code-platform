@@ -298,6 +298,22 @@ class WebClient {
       ...(options.isStream ? { is_stream: true } : {}),
     };
 
+    // Metadata is a snapshot. A newer session activity event received while
+    // awaiting it owns the UI state, including during replay subscription.
+    let activityChanged = false;
+    const stopObserving = method === 'session.get_metadata' && typeof params?.session_id === 'string'
+      ? this.on('chat.processing_status', ({ payload }) => {
+          if (payload.session_id === params.session_id) activityChanged = true;
+        })
+      : () => {};
+    const currentMetadata = (value: T): T => {
+      if (!activityChanged || !value || typeof value !== 'object') return value;
+      const metadata = value as { runtime?: Record<string, unknown> };
+      return { ...metadata, is_processing: undefined,
+        ...(metadata.runtime ? { runtime: { ...metadata.runtime, is_processing: undefined } } : {}),
+      } as T;
+    };
+
     return new Promise<T>((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.pending.delete(id);
@@ -342,6 +358,7 @@ class WebClient {
         reject(error);
       }
     }).then(async (value) => {
+      value = currentMetadata(value);
       if (method === 'session.get_metadata' && !params?.runtime_resume && typeof params?.session_id === 'string') {
         const runtime = (value as { runtime?: Record<string, unknown> } | null)?.runtime;
         if (
@@ -350,13 +367,16 @@ class WebClient {
         ) {
           // A freshly loaded page has no stream cursor yet. Reattach to the
           // existing execution through its snapshot, never by sending input.
-          await this.resumeExecutions([
+          const recovered = await this.resumeExecution(
             this.runtimeResume.queryFromSnapshot(params.session_id, runtime),
-          ]);
+          );
+          // Recovery may finish the turn while this request is awaiting it.
+          // Return that same authoritative metadata to the history caller.
+          if (recovered) return currentMetadata({ ...(value as object), ...recovered } as T);
         }
       }
-      return value;
-    });
+      return currentMetadata(value);
+    }).finally(stopObserving);
   }
 
   /**
@@ -495,7 +515,7 @@ class WebClient {
     await Promise.all(queries.map((query) => this.resumeExecution(query)));
   }
 
-  private async resumeExecution(query: ReturnType<RuntimeResume['queries']>[number]): Promise<void> {
+  private async resumeExecution(query: ReturnType<RuntimeResume['queries']>[number]): Promise<{ runtime?: Record<string, unknown> } | undefined> {
     const socket = this.ws;
     const owner = this.resumeOwner;
     for (let attempt = 0; attempt < MAX_RECOVERY_ATTEMPTS; attempt += 1) {
@@ -564,7 +584,7 @@ class WebClient {
             payload: { session_id: query.session_id },
           });
         }
-        return;
+        return metadata;
       } catch {
         // The next reconnect/history query reconciles state. Never retry chat.send.
         return;
