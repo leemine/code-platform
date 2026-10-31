@@ -4265,7 +4265,7 @@
       }
     },
     "toolResult": {
-      "unknown": "Invocation ended; command outcome unknown",
+      "unknown": "Command outcome unknown",
       "answersInSummary": "See the answers in the clarification card. Sensitive input is hidden.",
       "success": "done",
       "failed": "failed",

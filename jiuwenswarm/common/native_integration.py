@@ -1,9 +1,13 @@
 """Availability of the optional Native implementation (never import it to probe)."""
-from importlib.util import find_spec
+from importlib.metadata import PackageNotFoundError, distribution
 
 
 def native_available() -> bool:
-    return find_spec("openjiuwen") is not None
+    try:
+        distribution("openjiuwen")
+    except PackageNotFoundError:
+        return False
+    return True
 
 
 def model_provider_values() -> list[str]:

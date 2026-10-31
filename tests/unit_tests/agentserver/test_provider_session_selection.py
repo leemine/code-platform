@@ -13,7 +13,7 @@ from jiuwenswarm.common.config_panel import execution_provider_settings as setti
 
 @pytest.fixture
 def registered(monkeypatch):
-    monkeypatch.setattr(agent_adapters, 'entry_points', lambda **kw: (SimpleNamespace(),) if kw['name'] == 'opencode-direct' else ())
+    monkeypatch.setattr(agent_adapters, 'entry_points', lambda **kw: (SimpleNamespace(load=lambda: __import__('jiuwenswarm.common.external_adapter_factories', fromlist=['create_opencode']).create_opencode),) if kw['name'] == 'opencode-direct' else ())
 
 
 def test_binding_survives_defaults_and_stale_metadata_updates(registered):

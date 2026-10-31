@@ -34,6 +34,18 @@ def _installed_adapter_factory(sdk: str):
     return matches[0]
 
 
+def adapter_config_snapshot(sdk: str, config: dict) -> dict:
+    """Resolve installed adapter configuration without starting its runtime."""
+    from copy import deepcopy
+    entry = _installed_adapter_factory(sdk)
+    factory = entry.load() if entry is not None else None
+    resolve = getattr(factory, "config_snapshot", None)
+    value = resolve(config) if resolve is not None else {}
+    if not isinstance(value, dict):
+        raise TypeError("Adapter configuration snapshot must be a mapping")
+    return deepcopy(value)
+
+
 @runtime_checkable
 class AgentAdapter(Protocol):
     """Minimal capability set every SDK adapter must satisfy.

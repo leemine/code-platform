@@ -3374,6 +3374,10 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           return;
         }
 
+        const replayMarker = payload.runtime_event as Record<string, unknown> | undefined;
+        if (replayMarker?.replayed === true && typeof payload.request_id === 'string' && !payload.output_phase_id) {
+          useChatStore.getState().resumeHistoricalStream(sessionId, payload.request_id);
+        }
         let currentStreamId = useChatStore.getState().getRuntime(sessionId)?.currentStreamId;
         if (!isProactiveRecommendationPayload(payload)) {
           clearThinkingForVisibleOutput(sessionId);

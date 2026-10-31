@@ -572,3 +572,46 @@ test('team attachment is fire-and-forget and resets only for reconnect', async (
   await attachTeamSession('team-session-1', 'team.work.normal');
   assert.equal(socket.sentRequests.length, initialCount + 2);
 });
+
+
+test('fresh metadata replay leaves completed history out of the active reply and reuses observed cursors', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const originalSend = socket.send;
+  const rendered = [];
+  const sent = [];
+  const off = fresh.on('chat.delta', ({ payload }) => rendered.push(payload.content));
+  const runtime = { worker_instance: 'replay-worker', is_processing: true, dispatches: [
+    { dispatch_id: 'finished', active: false, terminal: { event_type: 'chat.final' } },
+    { dispatch_id: 'active', active: true, terminal: null },
+  ] };
+  socket.send = function (raw) {
+    originalSend.call(this, raw);
+    const query = JSON.parse(raw);
+    sent.push(query);
+    queueMicrotask(() => {
+      this.receive({ type: 'res', id: query.id, ok: true, payload: { runtime } });
+      if (query.params.runtime_resume) {
+        for (const [sequence, dispatch_id, content] of [[1, 'finished', 'OLD'], [2, 'active', 'CURRENT']]) {
+          this.receive({ type: 'event', event: 'chat.delta', payload: {
+            session_id: 'replay-session', content,
+            runtime_event: { worker_instance: 'replay-worker', sequence, dispatch_id, replayed: true },
+          } });
+        }
+      }
+    });
+  };
+  try {
+    await fresh.request('session.get_metadata', { session_id: 'replay-session' });
+    assert.deepEqual(rendered, ['CURRENT']);
+    await fresh.request('session.get_metadata', { session_id: 'replay-session' });
+    assert.equal(sent.at(-1).params.runtime_resume.after, 2);
+    assert.deepEqual(rendered, ['CURRENT']);
+    assert.ok(sent.every((item) => item.method === 'session.get_metadata'));
+  } finally {
+    socket.send = originalSend;
+    off();
+    await fresh.disconnect();
+  }
+});

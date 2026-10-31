@@ -35,7 +35,7 @@ test('settleHistoricalToolExecutions settles pending tools when isProcessing is 
     assert.equal(getToolStatus('call-1'), 'pending');
 
     useChatStore.getState().settleHistoricalToolExecutions(SID);
-    assert.equal(getToolStatus('call-1'), 'completed');
+    assert.equal(getToolStatus('call-1'), 'unknown');
   } finally {
     teardown();
   }
@@ -66,7 +66,7 @@ test('settleHistoricalToolExecutions settles after setProcessing false', () => {
 
     useChatStore.getState().setProcessing(SID, false);
     useChatStore.getState().settleHistoricalToolExecutions(SID);
-    assert.equal(getToolStatus('call-3'), 'completed');
+    assert.equal(getToolStatus('call-3'), 'unknown');
   } finally {
     teardown();
   }
@@ -148,4 +148,54 @@ test('addToolCall then addToolResult yields completed status', () => {
   } finally {
     teardown();
   }
+});
+
+
+test('a real result replaces an unknown restored call without inventing success', () => {
+  setup();
+  try {
+    addToolCall('late-result', 'shell');
+    useChatStore.getState().settleHistoricalToolExecutions(SID);
+    const result = useChatStore.getState().getRuntime(SID).toolExecutions.get('late-result').result;
+    assert.equal(result.success, false);
+    assert.equal(result.outcomeUnknown, true);
+    useChatStore.getState().addToolResult(SID, {
+      toolCallId: 'late-result', toolName: 'shell', result: 'permission declined', success: false,
+    });
+    assert.equal(getToolStatus('late-result'), 'error');
+  } finally {
+    teardown();
+  }
+});
+
+
+test('replayed live reply replaces its own history snapshot only once', () => {
+  setup();
+  try {
+    const store = useChatStore.getState();
+    store.addMessage(SID, { id: 'old:assistant', role: 'assistant', content: 'old', timestamp: '2026-10-31T00:00:00Z', historyBatchSeq: 1 });
+    store.addMessage(SID, { id: 'current:assistant', role: 'assistant', content: 'partial', timestamp: '2026-10-31T00:00:01Z', historyBatchSeq: 1 });
+    store.resumeHistoricalStream(SID, 'current');
+    store.appendStreamContent(SID, 'partial');
+    store.stopStreaming(SID);
+    store.resumeHistoricalStream(SID, 'current');
+    const runtime = store.getRuntime(SID);
+    assert.equal(runtime.currentStreamId, null);
+    assert.deepEqual(runtime.messages.map(m => m.content), ['old', 'partial']);
+    assert.equal(runtime.messages.length, 2);
+  } finally { teardown(); }
+});
+
+test('history replay cannot take over another active stream or an unrelated request', () => {
+  setup();
+  try {
+    const store = useChatStore.getState();
+    store.addMessage(SID, { id: 'current:assistant', role: 'assistant', content: 'partial', timestamp: '2026-10-31T00:00:01Z', historyBatchSeq: 1 });
+    store.resumeHistoricalStream(SID, 'different');
+    assert.equal(store.getRuntime(SID).currentStreamId, null);
+    store.startStreaming(SID, 'other-live');
+    store.resumeHistoricalStream(SID, 'current');
+    assert.equal(store.getRuntime(SID).currentStreamId, 'other-live');
+    assert.equal(store.getRuntime(SID).messages[0].content, 'partial');
+  } finally { teardown(); }
 });

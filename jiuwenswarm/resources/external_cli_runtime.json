@@ -2,7 +2,9 @@
   "schema_version": 1,
   "agents": {
     "claude": {
-      "required_modules": ["claude_agent_sdk"],
+      "required_modules": [
+        "claude_agent_sdk"
+      ],
       "executables": {
         "windows-x86_64": "claude_agent_sdk/_bundled/claude.exe",
         "macos-arm64": "claude_agent_sdk/_bundled/claude",
@@ -10,40 +12,177 @@
       },
       "platforms": {
         "windows-x86_64": [
-          {"name": "claude-agent-sdk", "version": "0.2.115", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl", "url": "https://files.pythonhosted.org/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl", "sha256": "9bff5ef9932747ce41982a7c955fb144220ada80e6931bd5f5ee5da74f454990"}
+          {
+            "name": "claude-agent-sdk",
+            "version": "0.2.115",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl",
+            "url": "https://files.pythonhosted.org/packages/c0/64/efe0f2ad2e1ae39690c7345d6da651be6af1350ef25bc20209171896a4bf/claude_agent_sdk-0.2.115-py3-none-win_amd64.whl",
+            "sha256": "9bff5ef9932747ce41982a7c955fb144220ada80e6931bd5f5ee5da74f454990"
+          }
         ],
         "macos-arm64": [
-          {"name": "claude-agent-sdk", "version": "0.2.115", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl", "url": "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl", "sha256": "8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80"}
+          {
+            "name": "claude-agent-sdk",
+            "version": "0.2.115",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl",
+            "url": "https://files.pythonhosted.org/packages/a4/43/609755e7ec7c8031c05f89442154d86f55856a64d234f90845b8035c7ffb/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_arm64.whl",
+            "sha256": "8ca9eea21ed6b1b7d6b35c5bac368210214b36028c68046231ca4ea545854e80"
+          }
         ],
         "macos-x86_64": [
-          {"name": "claude-agent-sdk", "version": "0.2.115", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl", "url": "https://files.pythonhosted.org/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl", "sha256": "23fc46eadafbf9315c63a6959a7677c4e2325339e09f6caf820e81ef905b51da"}
+          {
+            "name": "claude-agent-sdk",
+            "version": "0.2.115",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl",
+            "sha256": "23fc46eadafbf9315c63a6959a7677c4e2325339e09f6caf820e81ef905b51da"
+          }
         ]
       }
     },
     "codex": {
-      "required_modules": ["openai_codex", "codex_cli_bin"],
+      "required_modules": [
+        "openai_codex",
+        "codex_cli_bin"
+      ],
       "executables": {
         "windows-x86_64": "codex_cli_bin/bin/codex.exe",
         "windows-arm64": "codex_cli_bin/bin/codex.exe",
         "macos-arm64": "codex_cli_bin/bin/codex",
-        "macos-x86_64": "codex_cli_bin/bin/codex"
+        "macos-x86_64": "codex_cli_bin/bin/codex",
+        "linux-x86_64": "codex_cli_bin/bin/codex",
+        "linux-arm64": "codex_cli_bin/bin/codex",
+        "linux-musl-x86_64": "codex_cli_bin/bin/codex",
+        "linux-musl-arm64": "codex_cli_bin/bin/codex"
       },
       "platforms": {
         "windows-x86_64": [
-          {"name": "openai-codex", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5"},
-          {"name": "openai-codex-cli-bin", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/e3/8a/3ab5fc97352e8f780d472c8dd6d7504d6a670cd7dede106d461ac1171999/openai_codex_cli_bin-0.144.4-py3-none-win_amd64.whl", "url": "https://files.pythonhosted.org/packages/e3/8a/3ab5fc97352e8f780d472c8dd6d7504d6a670cd7dede106d461ac1171999/openai_codex_cli_bin-0.144.4-py3-none-win_amd64.whl", "sha256": "56e142974467332f1f669b89f2636e06b3ada09413512abb2f24c33b4a4f59fc"}
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/a3/0e/ac903da78d517bb0c4f83ad52dd44a7eefddf23c806e147adc123e4e1d3c/openai_codex_cli_bin-0.163.0-py3-none-win_amd64.whl",
+            "url": "https://files.pythonhosted.org/packages/a3/0e/ac903da78d517bb0c4f83ad52dd44a7eefddf23c806e147adc123e4e1d3c/openai_codex_cli_bin-0.163.0-py3-none-win_amd64.whl",
+            "sha256": "b759f212cc0deec6da9f297800797232c73d3f0d963842deaa02df965ee0b8b6"
+          }
         ],
         "windows-arm64": [
-          {"name": "openai-codex", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5"},
-          {"name": "openai-codex-cli-bin", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/70/1a/3aa52ab8f89e0f596b6eea835e3f3494697da51917d3231f5f48f92e2bcb/openai_codex_cli_bin-0.144.4-py3-none-win_arm64.whl", "url": "https://files.pythonhosted.org/packages/70/1a/3aa52ab8f89e0f596b6eea835e3f3494697da51917d3231f5f48f92e2bcb/openai_codex_cli_bin-0.144.4-py3-none-win_arm64.whl", "sha256": "2ad01058db7181323ae7c6217e560702e38c4f107595b99ab1d0abc9f184890a"}
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/f3/e8/acbc8fdf8a0160a807b0e8be249ab7d4077bd00679e8ee825c4afdafc82d/openai_codex_cli_bin-0.163.0-py3-none-win_arm64.whl",
+            "url": "https://files.pythonhosted.org/packages/f3/e8/acbc8fdf8a0160a807b0e8be249ab7d4077bd00679e8ee825c4afdafc82d/openai_codex_cli_bin-0.163.0-py3-none-win_arm64.whl",
+            "sha256": "64c7d113e1bf6cefa87159c1d21115654a716e1b505295d8520aa91e399ad115"
+          }
         ],
         "macos-arm64": [
-          {"name": "openai-codex", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5"},
-          {"name": "openai-codex-cli-bin", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl", "url": "https://files.pythonhosted.org/packages/65/eb/64c180514a2cc3e2500e486813f5a8d7f7e349342e9bebd78d99ddd9791a/openai_codex_cli_bin-0.144.4-py3-none-macosx_11_0_arm64.whl", "sha256": "05db505a9c7f020f58b70837a94e00d32a50086986c267bcc44ea97b573d4a05"}
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d1/c2/a26dc89782bb9fd94d6efeee1d22677084aba89c28fcb34c4699e490dfb1/openai_codex_cli_bin-0.163.0-py3-none-macosx_11_0_arm64.whl",
+            "url": "https://files.pythonhosted.org/packages/d1/c2/a26dc89782bb9fd94d6efeee1d22677084aba89c28fcb34c4699e490dfb1/openai_codex_cli_bin-0.163.0-py3-none-macosx_11_0_arm64.whl",
+            "sha256": "dd0e6570930167f0e15ec94c5fb494a4a5a9dceb0a97113176c7b47c826cda05"
+          }
         ],
         "macos-x86_64": [
-          {"name": "openai-codex", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "url": "https://files.pythonhosted.org/packages/17/35/5d2a13e38d91278019f18757ac10426d2649b7ec6f031818c792f64559e9/openai_codex-0.144.4-py3-none-any.whl", "sha256": "de1513a6e94b9a8d7728a3b74298bc1469428ade10ba0ef2d5db47dd1cb606f5"},
-          {"name": "openai-codex-cli-bin", "version": "0.144.4", "mirror_url": "https://mirrors.aliyun.com/pypi/packages/79/30/7e457c007a32aa7333a78438a9f532504c3b77a1ea57e7808855712c2c0f/openai_codex_cli_bin-0.144.4-py3-none-macosx_10_9_x86_64.whl", "url": "https://files.pythonhosted.org/packages/79/30/7e457c007a32aa7333a78438a9f532504c3b77a1ea57e7808855712c2c0f/openai_codex_cli_bin-0.144.4-py3-none-macosx_10_9_x86_64.whl", "sha256": "4d587d152d5f0aa25f21ded4d08aac5150da48639b29fc3e57b2a8b413d06903"}
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/da/15/d83ddbe97e5eb691e77afed6772c01fc8878fedd68aac129d56c312048fa/openai_codex_cli_bin-0.163.0-py3-none-macosx_10_9_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/da/15/d83ddbe97e5eb691e77afed6772c01fc8878fedd68aac129d56c312048fa/openai_codex_cli_bin-0.163.0-py3-none-macosx_10_9_x86_64.whl",
+            "sha256": "6b4a9e614e30442f9c2b804604b7fba12f218627f709fe5ba1960c01dac15ca1"
+          }
+        ],
+        "linux-x86_64": [
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/5f/64/eb70467d717510b78da54e2ae604a1b5348c17f535086e2825a283e540e2/openai_codex_cli_bin-0.163.0-py3-none-manylinux_2_17_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/5f/64/eb70467d717510b78da54e2ae604a1b5348c17f535086e2825a283e540e2/openai_codex_cli_bin-0.163.0-py3-none-manylinux_2_17_x86_64.whl",
+            "sha256": "76db41fb07fdf9ddacbe892b48d21dfde270031ec0f5666b5e558114355f006d"
+          }
+        ],
+        "linux-arm64": [
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/ed/50/5d60d97ebfa2f238fcc209d1764077a11d24eebd028f8a80bd0a180e1125/openai_codex_cli_bin-0.163.0-py3-none-manylinux_2_17_aarch64.whl",
+            "url": "https://files.pythonhosted.org/packages/ed/50/5d60d97ebfa2f238fcc209d1764077a11d24eebd028f8a80bd0a180e1125/openai_codex_cli_bin-0.163.0-py3-none-manylinux_2_17_aarch64.whl",
+            "sha256": "bb2b0d117eeb02608738cf2bcdf51f6a036343d0028272e11a94e72b0d23b141"
+          }
+        ],
+        "linux-musl-x86_64": [
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/5c/c0/d7075139c0791ecc38df00e31c343e3434bc0852b49ac344a67804385e48/openai_codex_cli_bin-0.163.0-py3-none-musllinux_1_1_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/5c/c0/d7075139c0791ecc38df00e31c343e3434bc0852b49ac344a67804385e48/openai_codex_cli_bin-0.163.0-py3-none-musllinux_1_1_x86_64.whl",
+            "sha256": "0e2984865a16661eddf431ff26d5effd24fa00175b9e8b7a7e2c889276707cca"
+          }
+        ],
+        "linux-musl-arm64": [
+          {
+            "name": "openai-codex",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
+            "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e"
+          },
+          {
+            "name": "openai-codex-cli-bin",
+            "version": "0.163.0",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/bb/45/19ae331c0a84e1e98f1297dcd35df487042bb3d2e2d1cdbd16036f440d79/openai_codex_cli_bin-0.163.0-py3-none-musllinux_1_1_aarch64.whl",
+            "url": "https://files.pythonhosted.org/packages/bb/45/19ae331c0a84e1e98f1297dcd35df487042bb3d2e2d1cdbd16036f440d79/openai_codex_cli_bin-0.163.0-py3-none-musllinux_1_1_aarch64.whl",
+            "sha256": "64eca5277cf5158e43f78a231e51d7650d42071d5555b86de29cfffc86b700e1"
+          }
         ]
       }
     }

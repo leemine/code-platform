@@ -86,3 +86,29 @@ Python274通过、无Core26通过；前端Provider3、模型22、入口4、草�
 ## 2026-10-30 动态执行引擎目录与原控件
 
 复用主工程ExecutionPicker展示替换试点Select，移到权限后、模型前；后端使用原entry point和工厂公开元数据，保留旧字段。删除store的两个名称白名单而不破坏创建/恢复。12项Python、4项前端行为测试和独立Vite构建通过；受限环境异步测试超时单列，宿主同测试通过。真实Code模式创建项目/选择OpenCode/持久绑定成功；首轮原生TLS失败准确显示，第二次人工同会话读取测试文件成功。未关闭校验、未修改外部源码，TLS底层诱因仍未闭合。详细命令、来源、失败和证据见管理仓PROVIDER_MENU_CODE_VALIDATION_20261030.md。无新Provider实现或发布。
+
+## 2026-10-31 Codex 独立主 Agent 实施
+
+用户批准按计划继续。独立 `codex/codex-main-agent` 基线 code-platform `747c9ef`，不替换旧桌面。新增官方 SDK 适配器和共享模型投影；宿主仅补插件配置快照、可用性查询；自定义 Team 模型发现延后 Core 导入到确有消费者时。保留原 UI、Third-party Agents、模型服务、Runtime/Facade；未修改外部源码。
+
+验证：最终免Core Codex/OpenCode 范围100通过（Codex16、OpenCode84）；带固定Core的扩大回归116通过/1失败/3跳过，Front导入边界失败在干净main同环境复现，不白名单、不称stable通过。真实Runtime读取/exit7、审批允许/拒绝/取消，以及按锁非editable审批三项和Full Access通过；Web/Code真实控件、命令执行、刷新绑定和拒绝已验。首次CODEX_HOME缺目录、额外600秒上限、declined被UI视为成功已在本层修正；首轮验收脚本误用stream取消单独保留。
+
+仍未完成：Claude主Agent、完整装备/冷恢复/用量、三平台发布。首次Web刷新后旧请求事件曾再次显示在后续结果区，原请求历史没有重复工具执行；尚未闭合，不称完整渠道验收。安装SDK extra已支持，冻结runtime manifest仍为旧版本，不称已有安装包可用。完整命令、版本和证据在管理仓 `CODEX_MAIN_AGENT_20261031.md`。
+
+
+## 2026-10-31 Codex 渠道收尾
+
+原 Front 配置目录移至轻量工厂发现；创建实例才加载执行模块，兼容旧 factory 导出。Web 刷新时按 Worker dispatch 快照过滤已完成历史重放，活动请求、审批、游标继续复用原恢复通道。真实刷新待审批暴露历史孤儿工具被推断成功，现改为已有 unknown 展示并允许真实结果更新。Codex Goal 轮询返回空快照，变更明确不支持。
+
+已完成最终免Core124项回归，固定Core组合141通过/3项Windows专属跳过；历史预览50、历史工具/快照恢复10、审批展示13、Web恢复15及流式store8项通过。真实按锁非editable无Core Runtime重新验证读取/exit7、允许/拒绝/取消、Full Access；原Code UI验证刷新后续聊、执行中刷新、审批刷新及拒绝。最终来源、固定Core扩大回归和UI截图以管理仓CODEX_MAIN_AGENT_20261031.md的收尾节为准，旧统计按历史保留。仍为未提交候选；完整装备/冷恢复/用量、Native-backed Codex SDK真实兼容、Claude和三平台安装包另行验收。
+
+收尾复查还按官方SDK的final_answer／最后未分类消息语义修正最终回复，避免把commentary再次拼入chat.final。三项真实Facade/历史回归覆盖有phase、无phase和尾部commentary；不调用SDK私有收集函数，不修改SDK。
+
+
+### 2026-10-31 P0 版本边界与兼容收尾
+
+用户明确要求Swarm不绑定Provider精确版本。本次删除新增菜单/实例SDK精确判断和extra精确声明，保留SDK缺失、显式路径、公开审批接口及权限读回失败。对照官方Swarm88fbdd2：原Third-party Agents会展示CLI版本并对低于SDK参考值给warning，没有新增主Agent菜单的等值硬拦截；上游托管下载清单固定版本及Windows缓存校验属于独立安装流程，仍保留。
+
+默认桌面Codex清单从0.144.4对齐当前验证锁0.163.0，补Linux架构下载；原Linux冻结路径不支持、Gateway读取不存在的自有resources路径也已修正，沿用现有安装器，不建第二下载流程。默认清单的SHA校验不撤销。
+
+确定性回归165通过；固定Core组合182通过、3项Windows专属跳过。版本测试仅模拟metadata变化验证无硬拦截，不代表真实旧/未来SDK通过。按锁非editable无Core的真实Runtime读取/exit7与允许/拒绝/取消通过。固定Core e089198与SDK0.163.0的原Harness读取/exit7/取消、公开Team成员工厂读取与续聊通过；Team成员验证inject_mcp=False，不扩大为完整Team协作/MCP验收。具体来源、证据和发布状态以管理仓CODEX_MAIN_AGENT_20261031.md为准。

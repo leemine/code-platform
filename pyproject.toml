@@ -132,6 +132,7 @@ tui = ["workswarm-tui==0.2.5.beta1"]  # build-config: tui-dependency
 distribute = ["openjiuwen[postgres,zmq]"]
 claude = ["openjiuwen[claude]"]
 codex = ["openjiuwen[codex]"]
+codex-direct = ["openai-codex"]
 cua = ["openjiuwen[cua]"]
 shell-ast = []
 # Same packages as dependency-groups.test (pip install -e ".[test]")
@@ -149,7 +150,8 @@ test = [
 ]
 
 [project.entry-points."jiuwenswarm.agent_adapters"]
-opencode-direct = "jiuwenswarm.server.runtime.agent_adapter.providers.opencode:create"
+opencode-direct = "jiuwenswarm.common.external_adapter_factories:create_opencode"
+codex-direct = "jiuwenswarm.common.external_adapter_factories:create_codex"
 
 [project.scripts]
 jiuwenswarm = "jiuwenswarm.channels.cli.main:main"

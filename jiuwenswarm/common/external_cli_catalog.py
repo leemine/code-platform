@@ -126,12 +126,12 @@ def _discoverable_custom_agents(entries: list[Any]) -> dict[str, str | None]:
     Maps each agent to its configured CLI path.
     """
     from jiuwenswarm.common.custom_agent_runtime import activate_custom_agent_paths, custom_agent_names
-    from openjiuwen.harness_protocol import HarnessCapability
-    from openjiuwen.harness_providers import resolve_provider
-
     custom_names = set(custom_agent_names())
     if not custom_names:
         return {}
+    from openjiuwen.harness_protocol import HarnessCapability
+    from openjiuwen.harness_providers import resolve_provider
+
     activate_custom_agent_paths()
     targets: dict[str, str | None] = {}
     for entry in entries:

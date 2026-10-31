@@ -351,13 +351,7 @@ class WebClient {
           // A freshly loaded page has no stream cursor yet. Reattach to the
           // existing execution through its snapshot, never by sending input.
           await this.resumeExecutions([
-            {
-              session_id: params.session_id,
-              runtime_resume: {
-                worker_instance: typeof runtime.worker_instance === 'string' ? runtime.worker_instance : '',
-                after: 0,
-              },
-            },
+            this.runtimeResume.queryFromSnapshot(params.session_id, runtime),
           ]);
         }
       }
