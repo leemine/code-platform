@@ -17,6 +17,23 @@ import pytest
 from jiuwenswarm.common import external_cli_runtime as runtime
 
 
+def test_linux_claude_desktop_artifacts_match_locked_official_wheels() -> None:
+    root = Path(__file__).resolve().parents[3]
+    manifest = json.loads((root / "jiuwenswarm/resources/external_cli_runtime.json").read_text())
+    package = next(item for item in tomllib.loads((root / "uv.lock").read_text())["package"]
+                   if item["name"] == "claude-agent-sdk")
+    wheels = {item["url"]: item["hash"].removeprefix("sha256:") for item in package["wheels"]}
+    entry = manifest["agents"]["claude"]
+    for platform_key, wheel_arch in (("linux-x86_64", "x86_64"), ("linux-arm64", "aarch64")):
+        assert entry["executables"][platform_key] == "claude_agent_sdk/_bundled/claude"
+        artifacts = entry["platforms"][platform_key]
+        assert len(artifacts) == 1
+        artifact = artifacts[0]
+        assert artifact["version"] == package["version"]
+        assert artifact["url"].endswith(f"manylinux_2_17_{wheel_arch}.whl")
+        assert artifact["sha256"] == wheels[artifact["url"]]
+
+
 @pytest.mark.parametrize("module_name", ["jiuwenswarm.common.external_cli_runtime", "gateway.common.external_cli_runtime"])
 def test_frozen_linux_runtime_uses_shared_manifest_and_data_directory(monkeypatch, tmp_path, module_name) -> None:
     import importlib

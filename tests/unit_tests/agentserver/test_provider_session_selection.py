@@ -140,3 +140,46 @@ async def test_config_catalog_supports_new_plugins_and_rejects_broken_or_duplica
     assert rows['duplicate']['reason'] == 'ambiguous'
     assert 'probe-only' not in rows
     assert 'PRIVATE' not in str(response.payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('platform_name', ['linux', 'win32', 'darwin'])
+async def test_front_catalog_sees_sdk_installed_after_front_started(monkeypatch, tmp_path, platform_name):
+    """Gateway installs SDKs after Front startup; config.get must discover them."""
+    import sys
+    import importlib
+    from jiuwenswarm.common import external_cli_runtime as runtimes
+    from jiuwenswarm.common import external_adapter_factories as factories
+    from jiuwenswarm.server.control import config_service
+    from jiuwenswarm.common.schema.agent import AgentRequest
+    from jiuwenswarm.common.schema.message import ReqMethod
+
+    enabled = {'modes': {'team': {'jiuwen_team': {'external_cli_agents': ['claude', 'codex']}}}}
+    monkeypatch.setattr(config_service, '_read_raw_config', lambda: enabled)
+    monkeypatch.setattr(settings, 'native_available', lambda: False)
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(runtimes, '_is_frozen_linux', lambda: platform_name == 'linux')
+    monkeypatch.setattr(runtimes, '_is_frozen_windows', lambda: platform_name == 'win32')
+    monkeypatch.setattr(runtimes, '_is_frozen_macos', lambda: platform_name == 'darwin')
+    monkeypatch.setattr(sys, 'path', [str(tmp_path)])
+    monkeypatch.setattr(runtimes, 'external_cli_runtime_names', lambda: ('claude', 'codex'))
+    monkeypatch.setattr(runtimes, '_runtime_site_packages', lambda agent: tmp_path / agent)
+    monkeypatch.setattr(runtimes, 'get_external_cli_runtime_status', lambda agent: {
+        'runtime_state': 'current' if (tmp_path / agent).exists() else 'not_installed',
+    })
+    monkeypatch.setattr(settings, 'entry_points', lambda **kw: tuple(
+        SimpleNamespace(name=name, load=lambda factory=factory: factory)
+        for name, factory in [('claude-direct', factories.create_claude), ('codex-direct', factories.create_codex)]
+    ))
+    request = AgentRequest(request_id='late-sdk', channel_id='web', req_method=ReqMethod.CONFIG_GET)
+    before = await config_service.handle_config_request(request)
+    assert {row['reason'] for row in json.loads(before.payload['execution_provider_catalog'])} == {'sdk_not_installed'}
+    for agent, dist in [('claude', 'claude_agent_sdk'), ('codex', 'openai_codex')]:
+        info = tmp_path / agent / f'{dist}-1.2.3.dist-info'
+        info.mkdir(parents=True)
+        (info / 'METADATA').write_text(f'Name: {dist.replace("_", "-")}\nVersion: 1.2.3\n')
+    importlib.invalidate_caches()
+    after = await config_service.handle_config_request(request)
+    catalog = json.loads(after.payload['execution_provider_catalog'])
+    assert all(row['available'] and row['reason'] is None for row in catalog)
+    assert not any(name == 'openjiuwen' or name.startswith('openjiuwen.') for name in sys.modules)

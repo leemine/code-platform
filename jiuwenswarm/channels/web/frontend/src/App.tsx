@@ -38,6 +38,10 @@ import CronPanel from './components/CronPanel';
 import HeartbeatPanel from './components/HeartbeatPanel';
 import { ToolPanel } from './components/ToolPanel';
 import { UpdatePanel } from './components/UpdatePanel';
+import { useInstallStatusPolling } from './components/ExternalCliInstallProgress';
+import { useExternalCliInstallCompletion } from './features/settings/modules/agent/useExternalCliInstallCompletion';
+import { buildConfigSavePayload } from './features/settings/services/settingsContract';
+import type { ExternalCliConfigSaveResult } from './components/ExternalCliAgentsSection';
 import type { ExternalCliInstallStatuses } from './components/ExternalCliInstallDialog';
 import { PersonalContextPanel } from './components/PersonalContext';
 import { LoadingSpinner, ToastStack, toast } from './components/ui';
@@ -2341,6 +2345,32 @@ function AppContent({
     },
     [],
   );
+
+  // Optional SDK installs outlive the Settings page; retain the existing
+  // polling and deferred config.save_all at the App lifetime.
+  useInstallStatusPolling(
+    isConnected ? EXTERNAL_CLI_AGENT_KINDS.filter((agent) => externalCliInstallStatuses[agent]?.status === 'running') : [],
+    getExternalCliDependencyInstallStatus,
+    updateExternalCliInstallStatus,
+  );
+  const saveExternalCliChoice = useCallback(
+    (updates: Record<string, string>) => settingsRequest<ExternalCliConfigSaveResult>(
+      'config.save_all', buildConfigSavePayload(updates), { timeoutMs: 600_000 },
+    ),
+    [settingsRequest],
+  );
+  const externalCliSaveError = useCallback((message: string) => {
+    toast.open({ content: message || t('settingsPanel.feedback.saveFailed'), variant: 'error' });
+  }, [t]);
+  useExternalCliInstallCompletion({
+    connected: isConnected,
+    choices: externalCliPendingChoices,
+    statuses: externalCliInstallStatuses,
+    setChoices: setExternalCliPendingChoices,
+    save: saveExternalCliChoice,
+    onSaved: handleConfigChanged,
+    onError: externalCliSaveError,
+  });
 
   const [pendingPermissionProfile, setPendingPermissionProfile] = useState<Permission | null>(null);
   const [permissionSnapshot, setPermissionSnapshot] = useState<{

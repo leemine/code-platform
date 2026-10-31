@@ -8,7 +8,9 @@
       "executables": {
         "windows-x86_64": "claude_agent_sdk/_bundled/claude.exe",
         "macos-arm64": "claude_agent_sdk/_bundled/claude",
-        "macos-x86_64": "claude_agent_sdk/_bundled/claude"
+        "macos-x86_64": "claude_agent_sdk/_bundled/claude",
+        "linux-x86_64": "claude_agent_sdk/_bundled/claude",
+        "linux-arm64": "claude_agent_sdk/_bundled/claude"
       },
       "platforms": {
         "windows-x86_64": [
@@ -36,6 +38,24 @@
             "mirror_url": "https://mirrors.aliyun.com/pypi/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl",
             "url": "https://files.pythonhosted.org/packages/f9/e7/8a3b68f30fdebb0fa59dd96be142443a5fffbed2f2a16a6fbd7259b49b9b/claude_agent_sdk-0.2.115-py3-none-macosx_11_0_x86_64.whl",
             "sha256": "23fc46eadafbf9315c63a6959a7677c4e2325339e09f6caf820e81ef905b51da"
+          }
+        ],
+        "linux-x86_64": [
+          {
+            "name": "claude-agent-sdk",
+            "version": "0.2.115",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/b8/2c/63c9545875abb4ed1563fcf7bd52277b3556fc894816d42bb2e723f17b6b/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_x86_64.whl",
+            "url": "https://files.pythonhosted.org/packages/b8/2c/63c9545875abb4ed1563fcf7bd52277b3556fc894816d42bb2e723f17b6b/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_x86_64.whl",
+            "sha256": "946f8b3240e9c0e79a7f87bab14eb079d283ab564a0503923aa81648351b8c6f"
+          }
+        ],
+        "linux-arm64": [
+          {
+            "name": "claude-agent-sdk",
+            "version": "0.2.115",
+            "mirror_url": "https://mirrors.aliyun.com/pypi/packages/ba/92/0cb1e45004a2f3738c77bb33281ad919beb203e1f49353c120ae75f79e55/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_aarch64.whl",
+            "url": "https://files.pythonhosted.org/packages/ba/92/0cb1e45004a2f3738c77bb33281ad919beb203e1f49353c120ae75f79e55/claude_agent_sdk-0.2.115-py3-none-manylinux_2_17_aarch64.whl",
+            "sha256": "c662fe2f618aa19e9ea1c161b490b2f67ec0c8e15a75d96b5b14cbb8a7301e86"
           }
         ]
       }
