@@ -30,3 +30,6 @@ design_note: 沿原 Third-party Agents 配置/安装和 Front 执行器目录职
 用户授权任务1提交合并，并明确忽略 GitHub Actions。先合入工具结果/Codex TLS PR4（main 5fc40e2fb098ff3ac6836800cf198f7ac70f6d76），再在独立 desktop-tool-result-release 候选恢复已备份的原桌面按需安装/菜单修复。原候选文件、补丁、未跟踪文件清单及 SHA256 均保留，没有清理或改写用户数据。新版本0.2.5.beta2由原build_config同步，uv.lock只更新workswarm及TUI本项目版本；Core/协议/SDK锁未升级。
 
 联合候选201项后端回归、6个前端测试入口及Electron生产前端构建通过；新建uv sync --locked --no-default-groups --extra dev --no-editable环境实际从site-packages导入0.2.5b2，无Core和Provider SDK。冻结产物与当前用户配置组合待完成验收，本节不是已安装桌面升级结论。用户豁免远端Actions/stable，不把其记为通过。
+
+
+补充打包契约：原69项中2项旧断言仍要求Electron单安装命令/固定连续参数，未识别现有Native与external分支。产品打包脚本未改；更新测试覆盖两条分支归属、external不带Core/CUA、所有Windows分支仍限定x86_64目标，CLI SDK排除不变；最终69项通过。初次2失败/67通过日志保留，不跳过或新增白名单。本测试为源码契约，不代表Windows/macOS实机运行通过。
