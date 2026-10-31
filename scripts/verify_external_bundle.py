@@ -20,9 +20,16 @@ def main():
     from jiuwenswarm.agents.harness.common.rails.interrupt.contract import is_interrupt_resume_payload
 
     preload_shared_execution_code()
-    adapter = create_adapter('opencode-direct')
+    expected = {
+        'claude-direct': 'ClaudeAdapter',
+        'codex-direct': 'CodexAdapter',
+        'opencode-direct': 'OpenCodeAdapter',
+    }
+    adapters = {name: type(create_adapter(name)).__name__ for name in expected}
+    assert adapters == expected, adapters
     providers = json.loads(public_fields({})['execution_provider_catalog'])
-    assert [item['id'] for item in providers] == ['opencode-direct'], providers
+    assert {item['id'] for item in providers} == set(expected), providers
+    assert len(providers) == len(expected), providers
     assert is_interrupt_resume_payload({'request_id': 'test', 'source': 'permission_interrupt', 'answers': [{}]})
     assert not is_interrupt_resume_payload({'query': 'hello'})
     registry = ExtensionRegistry(None, {}, logging.getLogger(__name__))
@@ -36,7 +43,7 @@ def main():
     print(json.dumps({
         'ok': True, 'core_present': False, 'frozen': bool(getattr(sys, 'frozen', False)),
         'executable': sys.executable, 'module': native_integration.__file__,
-        'adapter': type(adapter).__name__, 'server': AgentWebSocketServer.__name__,
+        'adapters': adapters, 'server': AgentWebSocketServer.__name__,
         'workswarm_version': importlib.metadata.version('workswarm'),
         'providers': [item['id'] for item in providers],
     }, indent=2))

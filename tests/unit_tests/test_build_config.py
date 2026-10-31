@@ -232,29 +232,38 @@ def test_electron_build_config_sync_precedes_dependency_installation(
 
 
 def test_desktop_release_builds_exclude_optional_cli_dependencies() -> None:
-    # The Windows builds bundle the cua extra: unlike the CLI runtimes there is
-    # no on-demand installer for it, so a bundle without it cannot drive the
-    # desktop at all. The macOS builds leave it out: cua has no macOS backend.
+    # Native Windows retains CUA. External Electron profiles intentionally
+    # omit Core/CUA while keeping optional CLI SDKs out of both profiles.
     expected_sync_commands = {
-        "scripts/build-macos.sh": "uv sync --extra dev",
-        "scripts/build-exe.ps1": "uv sync --extra dev --extra cua",
-        "scripts/build-exe.bat": "uv sync --extra dev --extra cua",
-        "scripts/build-electron-exe.sh": "uv sync --locked --extra dev",
-        "scripts/build-electron-exe.ps1": (
-            "uv sync --locked --extra dev --extra cua --python-platform x86_64-pc-windows-msvc"
-        ),
+        "scripts/build-macos.sh": ["uv sync --extra dev"],
+        "scripts/build-exe.ps1": ["uv sync --extra dev --extra cua"],
+        "scripts/build-exe.bat": ["uv sync --extra dev --extra cua"],
+        "scripts/build-electron-exe.sh": [
+            "uv sync --locked --no-default-groups --extra dev --no-editable",
+            "uv sync --locked --extra dev --no-editable",
+        ],
+        "scripts/build-electron-exe.ps1": [
+            "uv sync --locked --no-default-groups --extra dev --no-editable --python-platform x86_64-pc-windows-msvc",
+            "uv sync --locked --extra dev --extra cua --no-editable --python-platform x86_64-pc-windows-msvc",
+        ],
     }
-    for relative_path, expected_sync_command in expected_sync_commands.items():
+    for relative_path, expected in expected_sync_commands.items():
         script = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
         sync_commands = [
             line.strip().removeprefix("call ")
             for line in script.splitlines()
             if line.strip().removeprefix("call ").startswith("uv sync")
         ]
-
-        assert sync_commands == [expected_sync_command]
+        assert sync_commands == expected
         assert "--extra claude" not in script
         assert "--extra codex" not in script
+        if len(expected) == 2:
+            # Verify which branch owns each command, not merely their presence.
+            marker = 'if ($BuildProfile -eq "external") {' if relative_path.endswith('.ps1') else 'if [ "$BUILD_PROFILE" = external ]; then'
+            external_branch = script.split(marker, 1)[1].split('} else {' if relative_path.endswith('.ps1') else '\n    else', 1)[0]
+            assert expected[0] in external_branch
+            assert '--extra cua' not in external_branch
+            assert expected[1] not in external_branch
 
     spec = (PROJECT_ROOT / "scripts/jiuwenswarm.spec").read_text(encoding="utf-8")
     # Optional CLI runtimes are not installed by the desktop build wrappers.

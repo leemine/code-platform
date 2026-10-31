@@ -6,6 +6,13 @@ from importlib.metadata import entry_points
 
 
 def public_fields(config):
+    # A desktop Front survives optional SDK installs performed by Gateway.
+    # Refresh the existing managed paths before probing distribution metadata;
+    # installation and provider execution remain owned by their original roles.
+    import sys
+    if getattr(sys, "frozen", False):
+        from jiuwenswarm.common.external_cli_runtime import activate_external_cli_runtime_paths
+        activate_external_cli_runtime_paths()
     entries = tuple(entry_points(group="jiuwenswarm.agent_adapters"))
     counts = Counter(entry.name for entry in entries)
     profiles = {}

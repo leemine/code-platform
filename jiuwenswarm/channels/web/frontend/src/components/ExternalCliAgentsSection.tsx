@@ -1,6 +1,6 @@
 // Copyright (c) Huawei Technologies Co., Ltd. 2025-2026. All rights reserved.
 
-import { ExternalCliInstallProgress, useInstallStatusPolling } from './ExternalCliInstallProgress';
+import { ExternalCliInstallProgress } from './ExternalCliInstallProgress';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy, Download, FileSearch, FolderOpen, Loader2, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Button } from './ui/Button/Button';
@@ -88,12 +88,6 @@ export const EXTERNAL_CLI_AGENT_KINDS: ExternalCliAgentKind[] = ['claude', 'code
 
 export const EXTERNAL_CLI_CUSTOM_AGENTS_CONFIG_KEY = 'external_cli_custom_agents';
 
-// Stable fallbacks for the safety-net install polling below, so the hook's
-// effect does not restart on every render when the callbacks are absent.
-const unavailableInstallStatusGet = async () => {
-  throw new Error('install status polling unavailable');
-};
-const noopInstallStatusChange = () => {};
 
 /** Parse the JSON-string list of custom agents carried in the settings config. */
 export function parseExternalCliCustomAgents(value: unknown): ExternalCliCustomAgent[] {
@@ -409,22 +403,6 @@ export function ExternalCliAgentsSection({
       hintTimerRef.current = null;
     }, 3000);
   }, []);
-
-  // Safety net: keep polling every running install even when its inline
-  // progress UI is unmounted (e.g. the card already swapped to the installed
-  // layout after a quick install). Without this a stale 'running' status
-  // would never settle and the card would stay busy forever. The inline
-  // progress component runs its own polling while mounted; overlap is
-  // harmless (both just read status and report it upward).
-  const installStatusPollingAgents =
-    onInstallStatusGet && onInstallStatusChange
-      ? EXTERNAL_CLI_AGENT_KINDS.filter((agent) => installStatuses?.[agent]?.status === 'running')
-      : [];
-  useInstallStatusPolling(
-    installStatusPollingAgents,
-    onInstallStatusGet ?? unavailableInstallStatusGet,
-    onInstallStatusChange ?? noopInstallStatusChange,
-  );
 
   const setAgentError = useCallback((cliAgent: ExternalCliAgentKind, message: string) => {
     setAgentErrors((prev) => ({ ...prev, [cliAgent]: message }));

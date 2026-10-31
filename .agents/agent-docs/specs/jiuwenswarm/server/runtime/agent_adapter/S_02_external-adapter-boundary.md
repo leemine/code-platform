@@ -207,3 +207,8 @@ Worker事件日志可能比dispatch记录保留更久：快照cursor以前的重
 Claude 工具原生 is_error 保留在 provider.claude 命名空间，显式错误不被退出码0覆盖；Bash 只认原生整数退出码，缺失仍为 null，Read 等非命令工具不带命令字段。工具调用已返回/未报错、命令成功、任务验收分别保留，不由 completed 补退出码。Web commandExitUnknown 仅投影已返回 Bash/shell 的缺码事实到详情；outcomeUnknown 继续用于无原生结果的调用，旧 Read 历史兼容。
 
 Codex 模型配置中的 verify_ssl 是 Swarm HTTP-client 选项，不控制官方 CLI 传输；不因其 false 阻止选择模型，也不投影为 CLI 的关闭校验参数。实际 TLS/信任链仍由官方 SDK/CLI 校验；远程 HTTPS、协议和地址准入要求保持。连接受限/证书错误仍经原错误通道返回，不修改用户模型配置，不建立另一模型访问路径。
+
+
+## 冻结桌面安装完成后的目录刷新（2026-10-31）
+
+Gateway 仍拥有官方 SDK 按需安装；App 生命周期复用原 install_status 轮询和 config.save_all 延迟保存，离开设置页不丢失用户选择，不重复安装或静默改路径。Front 在目录查询前复用经过清单校验的托管 SDK 路径激活，安装回执不代替保存成功或执行验收；失败保留意图，重连和显式操作沿原流程处理。

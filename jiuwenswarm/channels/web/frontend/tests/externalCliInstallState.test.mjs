@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { act, createElement } from 'react';
+import { act, createElement, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
@@ -358,23 +358,6 @@ test('a saved cli_path change appends the previous path to the local history', (
   assert.match(settingsSource, /for \(const \[key, value\] of Object\.entries\(historyPatch\)\) \{\s*next\[key\] = value;\s*\}/);
 });
 
-test('the replay save hands its pre-save path to the server-side prune cleanup', () => {
-  const settingsSource = readFileSync(
-    new URL('../src/features/settings/modules/agent/ExternalCliAgentsSettings.tsx', import.meta.url),
-    'utf8',
-  );
-
-  // The replay flow hands the pre-save path to the cleanup so the just
-  // appended old path is treated as known-good, never pruned away.
-  assert.match(settingsSource, /options\?: \{ effectivePath\?: string \}/);
-  assert.match(settingsSource, /effectivePath: pending\.cliPath,/);
-  // Cleanup must not overwrite the whole history key from a React snapshot:
-  // the backend prune is the only writer, so entries appended by a
-  // concurrent save between the snapshot and the prune survive.
-  assert.doesNotMatch(settingsSource, /replacedPath/);
-  assert.doesNotMatch(settingsSource, /const cleanupPersistedPathHistories = useCallback\((?:[^{}]|\{[^{}]*\})*?onSave\(updates\)/);
-});
-
 test('install-now bypasses the no-change short circuit so a deleted built-in CLI can be repaired', () => {
   const sectionSource = readFileSync(
     new URL('../src/components/ExternalCliAgentsSection.tsx', import.meta.url),
@@ -606,4 +589,90 @@ test('custom agent switches are accepted settings keys', async () => {
     { external_cli_agent_opencode_enabled: 'true', external_cli_agent_opencode_cli_path: '/opt/opencode' },
   );
   assert.throws(() => contract.normalizeSettingsConfigUpdates({ external_cli_agent_opencode_bogus: 'x' }));
+});
+
+test('App completes installs after Settings navigation without losing choices or spinning retries', async () => {
+  const { useExternalCliInstallCompletion } = await import('../node_modules/.cache/external-cli-install-state/useExternalCliInstallCompletion.mjs');
+  const dom = new JSDOM('<div id="root"></div>');
+  const previous = new Map();
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true })) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  }
+  const root = createRoot(document.getElementById('root'));
+  const initial = {
+    codex: { enabled: 'true', useBuiltin: 'false', cliPath: '/user/bin/codex' },
+    claude: { enabled: 'true', useBuiltin: 'true', cliPath: '' },
+  };
+  const saves = [], errors = [];
+  let choices, setChoices, props = { connected: true, statuses: {}, settings: true };
+  let fail = false, defer = false, refreshed = 0, held = null;
+  const save = async (updates) => {
+    saves.push(updates);
+    if (held) await held;
+    if (fail) throw new Error('save unavailable');
+    if (defer) return { external_cli_dependency_installs: { codex: { status: 'running' } } };
+    return { updated: Object.keys(updates) };
+  };
+  const onSaved = () => { refreshed++; };
+  const onError = (message) => { errors.push(message); };
+  function Shell() {
+    [choices, setChoices] = useState(initial);
+    useExternalCliInstallCompletion({ ...props, choices, setChoices, save, onSaved, onError });
+    return props.settings ? createElement('section', { id: 'settings' }) : createElement('main', { id: 'chat' });
+  }
+  const render = async (next) => {
+    props = { ...props, ...next };
+    await act(async () => { root.render(createElement(Shell)); });
+  };
+  try {
+    await render({ statuses: { codex: { status: 'running' }, claude: { status: 'running' } } });
+    assert.equal(saves.length, 0);
+    await render({ settings: false });
+    assert.ok(document.querySelector('#chat'));
+    await render({ statuses: { codex: { status: 'succeeded' }, claude: { status: 'succeeded' } } });
+    assert.equal(saves.length, 2);
+    assert.ok(saves.some((s) => s.external_cli_agent_codex_cli_path === '/user/bin/codex' && s.external_cli_agent_codex_use_builtin === 'false'));
+    assert.ok(saves.some((s) => s.external_cli_agent_claude_use_builtin === 'true'));
+    assert.deepEqual(choices, {});
+    assert.equal(refreshed, 2);
+    await render({ statuses: { codex: { status: 'succeeded' }, claude: { status: 'succeeded' } } });
+    assert.equal(saves.length, 2, 'old status does not re-enable an agent');
+    fail = true;
+    await act(async () => { setChoices({ codex: initial.codex }); });
+    assert.equal(saves.length, 3);
+    assert.equal(choices.codex, initial.codex);
+    await render({ settings: true });
+    assert.equal(saves.length, 3, 'navigation must not spin save retries');
+    fail = false;
+    await render({ connected: false });
+    await render({ connected: true });
+    assert.equal(saves.length, 4);
+    assert.deepEqual(choices, {});
+    assert.equal(errors[0], 'save unavailable');
+    defer = true;
+    await act(async () => { setChoices({ codex: { ...initial.codex } }); });
+    assert.ok(choices.codex, 'install-only acknowledgement is not persistence');
+    assert.equal(refreshed, 3);
+    await render({ statuses: { codex: { status: 'failed', error: 'download failed' } } });
+    assert.deepEqual(choices, {}, 'failed install must drop its pending intent');
+    assert.equal(errors.at(-1), 'download failed');
+    defer = false;
+    let release;
+    held = new Promise((resolve) => { release = resolve; });
+    await render({ statuses: { codex: { status: 'succeeded' } } });
+    await act(async () => { setChoices({ codex: { ...initial.codex, cliPath: '/first/codex' } }); });
+    await act(async () => { setChoices({ codex: { ...initial.codex, cliPath: '/new/codex' } }); });
+    held = null;
+    await act(async () => { release(); });
+    assert.equal(saves.at(-1).external_cli_agent_codex_cli_path, '/new/codex');
+    assert.deepEqual(choices, {}, 'old save must not clear the replacement choice before it is saved');
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
 });

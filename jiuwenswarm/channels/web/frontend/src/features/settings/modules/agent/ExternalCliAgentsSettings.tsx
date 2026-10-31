@@ -13,7 +13,6 @@ import {
   type ExternalCliAgentChoice,
   type ExternalCliAgentKind,
   type ExternalCliConfigSaveResult,
-  type ExternalCliPendingChoice,
 } from '../../../../components/ExternalCliAgentsSection';
 import type { SettingsCustomItemProps } from '../../registry/types';
 import { parseConfigBoolean } from '../../services/settingsContract';
@@ -38,16 +37,6 @@ const NOTICE_AUTO_DISMISS_MS = 8000;
 
 /** Mirrors EXTERNAL_CLI_PATH_HISTORY_LIMIT on the backend (config.py). */
 const EXTERNAL_CLI_PATH_HISTORY_LIMIT = 10;
-
-/**
- * Module-scope registry of deferred-choice replays whose async save is still
- * running. Module scope (not a per-component ref) so remounting the Settings
- * page while a replay is in flight cannot fire a duplicate save for the same
- * agent: the marker lives until that save settles. Pending choices themselves
- * are only consumed after a save succeeds, so an interrupted or failed replay
- * is picked up again the next time this component mounts.
- */
-const externalCliReplayInFlight = new Set<ExternalCliAgentKind>();
 
 function ExternalCliSettings({
   config,
@@ -97,13 +86,13 @@ function ExternalCliSettings({
   const [savedValues, setSavedValues] = useState(sourceValues);
   const [draftValues, setDraftValues] = useState(restoredDraftValues);
   const [saveError, setSaveError] = useState('');
+  const [autoSavedAgents, setAutoSavedAgents] = useState<string[]>([]);
   // Latest CLI detect results, held at the App layer (via services) so they
   // survive unmounting the Settings page; the save flow pre-validates them to
   // surface a localized error instead of the backend's raw English message.
   // Memoized so identity only changes when the App-layer result object does.
   const detectResults = useMemo(() => externalCliDetectResults ?? {}, [externalCliDetectResults]);
   const setDetectResults = onExternalCliDetectResultsChange;
-  const [autoSavedAgents, setAutoSavedAgents] = useState<string[]>([]);
   const changed = hasUnsavedExternalCliChanges(
     savedValues,
     draftValues,
@@ -115,12 +104,6 @@ function ExternalCliSettings({
     const timer = window.setTimeout(() => setSaveError(''), NOTICE_AUTO_DISMISS_MS);
     return () => window.clearTimeout(timer);
   }, [saveError]);
-  // Auto-save success notices fade out like the error banner does.
-  useEffect(() => {
-    if (!autoSavedAgents.length) return undefined;
-    const timer = window.setTimeout(() => setAutoSavedAgents([]), NOTICE_AUTO_DISMISS_MS);
-    return () => window.clearTimeout(timer);
-  }, [autoSavedAgents]);
   // Installs are per-agent: only the installing agent's card is disabled (the
   // section disables it), so the other agent stays installable in parallel.
   // Card-level saves do not lock the panel either: the saving card shows its
@@ -207,132 +190,37 @@ function ExternalCliSettings({
     }
   }, [cleanupPersistedPathHistories, onPruneExternalCliPathHistories, onValidateExternalCliPaths, savedValues]);
 
-  // When a dependency install finishes, replay the user's deferred choices:
-  // save on success, drop on failure (user retries manually as before).
+  // App completes the deferred save even while this page is unmounted.
+  // Adopt confirmed drafts, and roll back a failed install's optimistic choice.
   useEffect(() => {
-    const replays = EXTERNAL_CLI_AGENT_KINDS.filter((agent) => {
-      const pending = pendingChoices[agent];
-      if (!pending) return false;
-      const status = externalCliInstallStatuses?.[agent]?.status;
-      return status === 'succeeded' || status === 'failed';
+    const confirmed = EXTERNAL_CLI_AGENT_KINDS.filter((agent) => {
+      const keys = (['enabled', 'use_builtin', 'cli_path'] as const).map((suffix) => externalCliKey(agent, suffix));
+      return keys.every((key) => sourceValues[key] === draftValues[key])
+        && keys.some((key) => sourceValues[key] !== savedValues[key]);
     });
-    if (!replays.length) return;
-    // Guard against StrictMode double-invoke and against remounting the page
-    // while a replay save is still running: the in-flight marker is module
-    // scoped. Entries are only consumed (deleted from pendingChoices) after
-    // their save succeeds, so an interrupted or failed replay is picked up
-    // again the next time this component mounts.
-    const fresh = replays.filter((agent) => !externalCliReplayInFlight.has(agent));
-    const consumed: Record<string, ExternalCliPendingChoice> = {};
-    for (const agent of fresh) {
-      consumed[agent] = pendingChoices[agent]!;
-      externalCliReplayInFlight.add(agent);
-    }
-    if (!fresh.length) return;
-    // Failed installs are not retried: consume their entries immediately.
-    const failed = fresh.filter(
-      (agent) => externalCliInstallStatuses?.[agent]?.status !== 'succeeded',
+    const failed = EXTERNAL_CLI_AGENT_KINDS.filter((agent) =>
+      !pendingChoices[agent] && externalCliInstallStatuses?.[agent]?.status === 'failed'
+      && (['enabled', 'use_builtin', 'cli_path'] as const).some((suffix) => {
+        const key = externalCliKey(agent, suffix);
+        return draftValues[key] !== sourceValues[key];
+      }),
     );
-    if (failed.length) {
-      setPendingChoices?.((current) => {
-        const next: typeof current = { ...current };
-        for (const agent of failed) {
-          delete next[agent];
-        }
-        return next;
-      });
-      // Release the in-flight marker for failed installs; otherwise it leaks
-      // and blocks future replay saves after the user retries successfully.
-      for (const agent of failed) {
-        externalCliReplayInFlight.delete(agent);
-      }
-      // The install failed, so the deferred choice must not linger as unsaved
-      // work: roll the drafts back to the persisted values so `changed` clears
-      // (the cards commit instantly and there is no global save button that
-      // could flush them otherwise).
-      setDraftValues((current) => {
-        const next = { ...current };
-        for (const agent of failed) {
-          for (const suffix of ['enabled', 'use_builtin', 'cli_path', 'path_histories'] as const) {
-            const key = externalCliKey(agent, suffix);
-            next[key] = savedValues[key];
-          }
-        }
-        return next;
-      });
-    }
-    const succeeded = fresh.filter(
-      (agent) => externalCliInstallStatuses?.[agent]?.status === 'succeeded',
-    );
-    if (!succeeded.length) return;
-    setSaveError('');
-    void (async () => {
-      await Promise.allSettled(
-          succeeded.map(async (agent) => {
-            const pending = consumed[agent];
-            const clearPending = (choice: ExternalCliPendingChoice) => {
-              setPendingChoices?.((current) => {
-                const next: typeof current = { ...current };
-                if (next[agent] && next[agent] === choice) delete next[agent];
-                return next;
-              });
-            };
-            try {
-              await onSave({
-                [externalCliKey(agent, 'enabled')]: pending.enabled,
-                [externalCliKey(agent, 'use_builtin')]: pending.useBuiltin,
-                [externalCliKey(agent, 'cli_path')]: pending.cliPath,
-              });
-              clearPending(pending);
-              // The install flow never re-runs the card's auto-detection: the
-              // replayed choice usually equals the drafts already on screen, so
-              // the card's cliPath/useBuiltin effect does not fire. Probe the
-              // CLI once here and publish the fresh result at the App layer,
-              // where the card merges it via initialResults — otherwise the
-              // card keeps showing the stale "not installed" hint until the
-              // next manual detect or a full page reload.
-              try {
-                const probe = await onDetectExternalCli?.(agent, pending.cliPath, pending.useBuiltin === 'true');
-                if (probe) {
-                  setDetectResults?.((current) => ({ ...current, [agent]: probe }));
-                  if (probe.status === 'ok' || probe.status === 'warning') {
-                    void cleanupPersistedPathHistories(agent, probe.path || '', {
-                      effectivePath: pending.cliPath,
-                    }).catch(() => {});
-                  }
-                }
-              } catch {
-                // Keep the stale result; the user can re-run detect manually.
-              }
-              setSavedValues((current) => ({
-                ...current,
-                [externalCliKey(agent, 'enabled')]: pending.enabled,
-                [externalCliKey(agent, 'use_builtin')]: pending.useBuiltin,
-                [externalCliKey(agent, 'cli_path')]: pending.cliPath,
-              }));
-              setDraftValues((current) => ({
-                ...current,
-                [externalCliKey(agent, 'enabled')]: pending.enabled,
-                [externalCliKey(agent, 'use_builtin')]: pending.useBuiltin,
-                [externalCliKey(agent, 'cli_path')]: pending.cliPath,
-              }));
-              onConfigPatch({
-                [externalCliKey(agent, 'enabled')]: pending.enabled,
-                [externalCliKey(agent, 'use_builtin')]: pending.useBuiltin,
-                [externalCliKey(agent, 'cli_path')]: pending.cliPath,
-              });
-              setAutoSavedAgents((current) => [...current, agent]);
-            } catch (error) {
-              setSaveError(
-                error instanceof Error ? error.message : t('settingsPanel.feedback.saveFailed'),
-              );
-            } finally {
-              externalCliReplayInFlight.delete(agent);
-            }
-          }),
-        );
-    })();
-  }, [cleanupPersistedPathHistories, externalCliInstallStatuses, onConfigPatch, onDetectExternalCli, onSave, pendingChoices, savedValues, setDetectResults, setPendingChoices, t]);
+    if (!confirmed.length && !failed.length) return;
+    const patch = Object.fromEntries([...confirmed, ...failed].flatMap((agent) =>
+      (['enabled', 'use_builtin', 'cli_path'] as const).map((suffix) => {
+        const key = externalCliKey(agent, suffix);
+        return [key, sourceValues[key]];
+      }),
+    ));
+    setSavedValues((current) => ({ ...current, ...patch }));
+    if (failed.length) setDraftValues((current) => ({ ...current, ...patch }));
+    if (confirmed.length) setAutoSavedAgents(confirmed);
+  }, [draftValues, externalCliInstallStatuses, pendingChoices, savedValues, sourceValues]);
+  useEffect(() => {
+    if (!autoSavedAgents.length) return undefined;
+    const timer = window.setTimeout(() => setAutoSavedAgents([]), NOTICE_AUTO_DISMISS_MS);
+    return () => window.clearTimeout(timer);
+  }, [autoSavedAgents]);
 
   // Persists one batch of agent updates on behalf of a card-level commit.
   // Errors are rethrown so the calling card can surface them in its own
@@ -355,6 +243,16 @@ function ExternalCliSettings({
       const deferredAgents = EXTERNAL_CLI_AGENT_KINDS.filter(
         (agent) => installs[agent]?.status === 'running',
       );
+      // An explicit, confirmed card save supersedes any older deferred choice.
+      // Retaining it would replay the old path after the next reconnect.
+      const confirmedAgents = EXTERNAL_CLI_AGENT_KINDS.filter((agent) =>
+        !installs[agent] && Object.keys(updates).some((key) => key.startsWith(`external_cli_agent_${agent}_`)),
+      );
+      if (confirmedAgents.length) setPendingChoices?.((current) => {
+        const next = { ...current };
+        for (const agent of confirmedAgents) delete next[agent];
+        return next;
+      });
       // The backend skips persisting agents whose dependency is still
       // installing. Keep the user's choices in the form (so the cards stay as
       // chosen) and remember them for an automatic re-save once it succeeds.
@@ -494,9 +392,7 @@ function ExternalCliSettings({
       {autoSavedAgents.length ? (
         <div className="settings-experimental-cli__install-running settings-experimental-cli__install-running--success" role="status">
           {t('config.externalCli.autoSaved', {
-            agents: autoSavedAgents
-              .map((agent) => (agent === 'claude' ? 'Claude' : 'Codex'))
-              .join(' / '),
+            agents: autoSavedAgents.map((agent) => agent === 'claude' ? 'Claude' : 'Codex').join(' / '),
           })}
         </div>
       ) : null}

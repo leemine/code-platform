@@ -607,7 +607,9 @@ def test_windows_electron_sets_amd64_before_any_preflight() -> None:
     assert architecture_override < project_root < machine_check < runtime_resolution < dependency_sync
     assert '$DetectedMachine -cne "AMD64"' in source
     assert "Windows Electron packaging requires platform.machine() == AMD64" in source
-    assert "uv sync --locked --extra dev --extra cua --python-platform x86_64-pc-windows-msvc" in source
+    sync_commands = [line.strip() for line in source.splitlines() if line.strip().startswith("uv sync ")]
+    assert sync_commands
+    assert all("--python-platform x86_64-pc-windows-msvc" in command for command in sync_commands)
     assert "--extra claude" not in source
     assert "--extra codex" not in source
 

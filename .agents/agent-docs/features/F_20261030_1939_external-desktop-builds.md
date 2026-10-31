@@ -28,3 +28,19 @@ design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实
 首次GitHub校验拒绝工作流：job级env不允许引用runner.temp；未分配runner或运行打包。修正为步骤内从RUNNER_TEMP写入GITHUB_ENV，保持运行数据隔离，随后重新触发；不将本地YAML解析通过当作Actions执行通过。
 
 Windows运行41078652890（提交3fc8f997）成功dispatch，但GitHub在分配runner前终止：账户近期付款失败或消费额度需要提高。job124141593919无runner、无步骤执行，不属于源码/安装器构建失败，未产出exe。官方运行链接：https://github.com/leemine/code-platform/actions/runs/41078652890 。待账户Billing & plans解除限制或提供Windows自托管runner后再运行；本任务未修改账户支付设置。
+
+## 2026-10-31 PR #3 后 Linux 安装候选
+
+基线为 code-platform main bc3f188（PR #3 合入）。外部组合仍不含 agent-core、Provider SDK/CLI 和私有模型配置；SDK 经原 Third-party Agents 按需安装。补齐原清单缺失的 Claude Linux x86_64/aarch64 官方 wheel，与现有 uv.lock URL/摘要一致；冻结验证器覆盖三个已注册适配器，不能再假定只有 OpenCode。
+
+真实桌面安装后发现两处接缝：离开设置页会卸载安装状态轮询与延迟保存 Effect；Front 在启动后安装 SDK 时未刷新其 sys.path，使 config.get 错报 sdk_not_installed。将原轮询与延迟 config.save_all 移到 App 生命周期，仍用原 pending-choice/sessionStorage、设置 RPC 和配置变更刷新；删除设置页的重复保存与兜底轮询。Front 菜单投影复用现有受校验的 managed-runtime activation，既不安装 SDK，也不启动 Provider。Worker 原来每轮刷新路径的行为保留，不新增执行状态机/队列，不修改外部 SDK。
+
+离开设置页、精确保留用户 CLI 路径、安装失败、保存失败/重连、历史状态不重复启用、安装回执不等于保存等在 React 回归中核对。Front 真实 CONFIG_GET 入口补 Linux/Windows/macOS 激活分支回归；跨系统单元测试不是 Windows/macOS 实机验收。本轮 Linux 候选不覆盖仍在读取的旧 bundle，配置与用户桌面窗口保留。最终包与验证状态见管理仓 EXTERNAL_DESKTOP_RELEASE_20261031。
+
+
+## 2026-10-31 beta2 交付候选
+
+在已合入工具结果与Codex TLS修复的main 5fc40e2上，保留原Linux官方SDK按需安装清单、Front目录刷新与App延迟保存修复。版本由原同步工具更新0.2.5.beta2，锁只改本项目/TUI版本；新建按锁非editable免Core环境，无官方Provider SDK预装。联合201项后端、6个前端入口和Electron前端构建通过；冻结验收/产物摘要待补。用户明确豁免本次GitHub Actions，未修改工作流或自动关闭实际TLS校验。
+
+
+beta2候选验收闭合：201项联合后端、69项打包契约、6个前端入口；按锁非editable免Core冻结；正常Gateway下载/Front热发现；原用户模型选项的三Provider真实Runtime及实际Electron Code UI/刷新历史通过。QA12个进程正常退出、私有配置已删除，模板/私钥零匹配与tar/deb关键内容一致审计通过。具体摘要和截图见B_20261031_1930_optional-provider-menu；本次用户豁免Actions，未实际安装系统deb或运行Windows/macOS。
