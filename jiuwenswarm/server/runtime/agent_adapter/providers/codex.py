@@ -14,9 +14,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
+
+
+_CANCEL_TIMEOUT = 15
+
+
+class _Terminal(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+    itemId: str
+    processId: str
+
+
+class _Terminals(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+    data: list[_Terminal]
+    nextCursor: str | None
+
+
+class _Terminated(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+    terminated: bool
 
 
 @dataclass
@@ -30,6 +52,12 @@ class Session:
     active: bool = False
     cancelled: bool = False
     cancel_acknowledged: bool = False
+    cancel_confirmed: bool = False
+    command_ids: set[str] = field(default_factory=set)
+    turn_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    turn_ended: asyncio.Event = field(default_factory=asyncio.Event)
+    native_terminal: bool = False
+    cancel_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     effective_permission: str | None = None
     desired_permission: str = "default"
     pending: dict = field(default_factory=dict)
@@ -254,6 +282,8 @@ class CodexAdapter:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Codex model timeout must be positive and finite")
         async with session.lock:
+            if session.cancelled and not session.cancel_confirmed:
+                raise RuntimeError("Codex cancellation is not confirmed; retry cancel before continuing this session")
             if session.active:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
             await self._connect(session, model)
@@ -273,6 +303,10 @@ class CodexAdapter:
                     raise ValueError("Codex permission update was not confirmed")
                 session.effective_permission = session.desired_permission
             session.turn_id = ""
+            session.command_ids.clear()
+            session.turn_ready.clear()
+            session.turn_ended.clear()
+            session.native_terminal = session.cancel_confirmed = False
             session.control_ready.clear()
             session.active, session.cancelled, session.cancel_acknowledged = True, False, False
         reader = None
@@ -282,9 +316,7 @@ class CodexAdapter:
             async with asyncio.timeout(timeout):
                 response = await asyncio.to_thread(session.client.turn_start, session.thread_id, inputs["query"])
                 session.turn_id = response.turn.id
-                if session.cancelled:
-                    await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
-                    session.cancel_acknowledged = True
+                session.turn_ready.set()
                 while True:
                     if reader is None:
                         reader = asyncio.create_task(asyncio.to_thread(session.client.next_turn_notification, session.turn_id))
@@ -313,9 +345,11 @@ class CodexAdapter:
                     if method == "item/agentMessage/delta":
                         yield self._chunk(request, {"event_type": "chat.delta", "content": payload.get("delta", "")})
                     elif method == "item/started" and item.get("type") == "commandExecution":
+                        session.command_ids.add(item["id"])
                         yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": item["id"], "name": "shell", "arguments": {"command": item.get("command", ""), "cwd": item.get("cwd")}}})
                     elif method == "item/completed":
                         if item.get("type") == "commandExecution":
+                            session.command_ids.add(item["id"])
                             yield self._chunk(request, command_result(item))
                         elif item.get("type") == "agentMessage":
                             text_parts[item["id"]] = (item.get("phase"), item.get("text", ""))
@@ -324,6 +358,8 @@ class CodexAdapter:
                             yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": item["id"], "tool_name": "file_change", "content": json.dumps(item.get("changes", [])), "success": item.get("status") == "completed", "task_acceptance": "unknown"})
                     elif method == "turn/completed":
                         terminal = True
+                        session.native_terminal = True
+                        session.turn_ended.set()
                         status = payload["turn"]["status"]
                         if status == "completed":
                             yield self._chunk(request, {"event_type": "chat.final", "content": self._final_response(text_parts), "invocation_status": status, "task_acceptance": "unknown"}, complete=True, outcome="completed")
@@ -337,13 +373,11 @@ class CodexAdapter:
             yield self._chunk(request, {"event_type": "chat.error", "code": "codex_transport_failed", "error": "Codex runtime connection failed or an unsupported interaction was requested"}, complete=True, outcome="error")
         finally:
             self._release_controls(session)
-            cancelled_turn_stopped = session.cancelled and session.cancel_acknowledged
             try:
-                if not terminal and not cancelled_turn_stopped and session.client and session.turn_id:
+                if not terminal and not session.cancelled and session.client and session.turn_id:
                     # The callback is released above before any reader-dependent RPC.
                     with contextlib.suppress(Exception):
                         await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
-                        cancelled_turn_stopped = session.cancelled
             finally:
                 if reader is not None:
                     reader.cancel()
@@ -351,9 +385,11 @@ class CodexAdapter:
                 if session.turn_id and session.client:
                     session.client.unregister_turn_notifications(session.turn_id)
                 session.active = False
-                # A confirmed user interrupt ends the Turn, not its Thread.
-                # Failed interrupts and other nonterminal exits still dispose it.
-                if not terminal and not cancelled_turn_stopped:
+                session.turn_ready.set()
+                session.turn_ended.set()
+                # User cancellation keeps its evidence until the native stop is
+                # confirmed. EOF/ACK alone cannot admit another Turn.
+                if not terminal and not session.cancelled:
                     await self.cleanup_session_adapter(sid)
 
     @staticmethod
@@ -393,17 +429,61 @@ class CodexAdapter:
         if request.params.get("intent", "cancel") != "cancel":
             raise ValueError("Codex supports cancel only")
         session = self._sessions.get(request.session_id or "default")
-        if session and session.active:
+        if session and (session.active or session.cancelled):
             session.cancelled = True
             self._release_controls(session)
-            if session.turn_id:
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
-                    session.cancel_acknowledged = True
-                except Exception:
-                    await asyncio.to_thread(session.client.close)
-                    raise
+            async with session.cancel_lock:
+                if not session.cancel_confirmed:
+                    try:
+                        async with asyncio.timeout(_CANCEL_TIMEOUT):
+                            await session.turn_ready.wait()
+                            if not session.turn_id:
+                                raise RuntimeError("Codex did not return a Turn identity")
+                            if not session.native_terminal and not session.cancel_acknowledged:
+                                await asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id)
+                                session.cancel_acknowledged = True
+                            await session.turn_ended.wait()
+                            if not session.native_terminal:
+                                raise RuntimeError("Codex stream closed without a native terminal event")
+                            await self._stop_turn_terminals(session)
+                            session.cancel_confirmed = True
+                    except Exception as exc:
+                        # Preserve the Thread and ownership evidence for retry;
+                        # never report success or silently start a replacement.
+                        raise RuntimeError("Codex cancellation could not be confirmed; retry cancel before continuing this session") from exc
         return AgentResponse(request.request_id, request.channel_id, payload={"event_type": "chat.interrupt_result", "intent": "cancel", "success": True})
+
+    @staticmethod
+    async def _stop_turn_terminals(session):
+        if not session.command_ids:
+            return
+
+        async def owned_terminals():
+            cursor = None
+            seen = set()
+            owned = []
+            while True:
+                params = {"threadId": session.thread_id}
+                if cursor is not None:
+                    params["cursor"] = cursor
+                page = await asyncio.to_thread(session.client.request, "thread/backgroundTerminals/list",
+                                               params, response_model=_Terminals)
+                owned.extend(t for t in page.data if t.itemId in session.command_ids)
+                cursor = page.nextCursor
+                if cursor is None:
+                    return owned
+                if cursor in seen:
+                    raise RuntimeError("Codex repeated a terminal-list cursor")
+                seen.add(cursor)
+
+        for terminal in await owned_terminals():
+            # itemId came from this Turn's sole event consumer; processId is
+            # resolved by the official API, never guessed from OS processes.
+            await asyncio.to_thread(session.client.request, "thread/backgroundTerminals/terminate",
+                                    {"threadId": session.thread_id, "processId": terminal.processId},
+                                    response_model=_Terminated)
+        if await owned_terminals():
+            raise RuntimeError("Codex still reports terminals belonging to the cancelled Turn")
 
     async def cleanup_session_adapter(self, session_id):
         session = self._sessions.get(session_id)

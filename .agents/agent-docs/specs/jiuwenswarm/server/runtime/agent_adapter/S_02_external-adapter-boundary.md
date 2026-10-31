@@ -165,6 +165,10 @@ Codex chat.final优先使用原生final_answer项，否则取最后一个phase�
 
 ## Codex 取消与会话关闭边界（候选）
 
-用户取消只结束本Turn。已初始化Thread在原生turn_interrupt回执确认后保留SDK客户端、thread_id及原私有目录，下一轮继续同一Thread。cancel_acknowledged仅记录本轮中断回执，每轮重置；清理不重复发送已经确认的中断，不因重复中断失败销毁可续聊Session。本轮reader、通知订阅和pending审批仍释放。
+用户取消只结束本 Turn。`turn_interrupt` 的 ACK 仅表示请求返回；只有原有唯一事件读者收到原生 `turn/completed`，并通过官方 `thread/backgroundTerminals/list` / `terminate` 确认本轮终端已不存在，才返回取消成功并允许原 Thread 下一轮。列表遍历分页，以本轮 commandExecution 的 itemId 匹配官方返回的 processId；不清空整个 Thread 的后台终端，不按 OS 进程名杀进程。前轮后台终端保留。
 
-未确认中断、非用户取消的异常流退出继续原清理保护；显式关闭/驱逐依然关闭客户端、删除目录、移除Session。原Runtime仍独占生产任务与取消收敛。没有历史文本重放、额外恢复队列或冷重启持久化映射。
+Adapter 只记录原生控制所需的工具身份、启动/结束通知及取消确认，不新增业务队列或 Turn 状态机。启动中的取消等待实际 Turn ID；重复取消串行复用已返回的中断 ACK，待审批 callback 仍通过原通道释放。总确认预算 15 秒。流关闭、ACK、停止接口响应不能单独作为成功依据；未确认时明确失败并拒绝下一轮，保留 Thread 与本轮身份供再次取消核验，不静默换会话。原生连接已丢失时重试仍可能失败，应明确关闭该会话；不承诺冷恢复。
+
+后台终端 API 通过官方 SDK 的公开 request 调用，不修改 SDK/CLI；仅在本轮观察到命令时查询，不按 SDK/CLI 精确版本设白名单。接口缺失、无效响应或终端仍存活时失败关闭，不能降级成成功。命令真实退出码仍仅来自原生事件，不从取消结果补值。
+
+非用户取消的异常流退出继续原清理；显式关闭/驱逐关闭客户端、删除目录、移除 Session。原 Swarm Runtime/Facade 独占生产任务、调度、控制和历史，本次未修改。没有历史文本重放、额外恢复队列或持久化映射。

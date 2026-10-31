@@ -1,6 +1,6 @@
 ---
 id: B_20261031_1459_codex-cancel-session
-title: Codex用户取消保留原生Thread并复用中断回执
+title: Codex取消确认本轮终端停止并保留原生Thread
 type: B
 author: leemine
 author_email: leewanlong@gmail.com
@@ -39,3 +39,13 @@ AgentRuntime.cancel_request先发送原生turn_interrupt，随后原coordinator�
 本次从远端前置PR#1的8910f059提取独立发布候选，不含Claude/模型配置等P1改动。重新真实验收44ef5401：两场景原Thread续聊成功，待授权目标未写；但工具已运行取消后late_write_absent=false，命令在取消后仍完成迟到写入。当前不能证明中断回执足以保证底层命令停止；先前516e1165通过不能推广到所有时序。此问题尚待定位和修复，不应合入或发布当前候选。
 
 前置PR#1 stable重跑也受GitHub付款/Actions额度阻塞，steps=0。独立PR保持draft，不绕过CI、不混入未发布P1、不将本地测试当作发布门禁通过。
+
+# 2026-10-31 迟到写入修复（当前候选，以本节覆盖前述 ACK 足够的旧结论）
+
+真实诊断确认：即使 sole reader 消费到原生 interrupted，unifiedExecStartup 后台终端仍可能存活。SDK 的中断 API 使用正确，但原适配器遗漏了独立后台终端的停止与核验，不是 TLS 或模型调用失败。旧测试把 ACK 当作足够条件，且真实验证取消过早，未稳定覆盖终端已登记的时序。
+
+仅 codex.py 改动：原生事件保存本轮 command itemId；原取消入口等待 Turn ID/原生终态，官方 backgroundTerminals 分页查找本轮 processId、terminate 后复查，才确认停止。前轮终端保留。重复取消复用 ACK；接口不兼容、停止失败、超时/EOF 均明确失败且拒绝下一轮，保留证据可重试；异常非用户关流仍清理。无新 Runtime/调度/审批流程，无外部源码或版本锁更改。
+
+旧实现执行新增生产入口回归为 1 passed/1 failed，失败在本轮终端未终止；新候选 182 项通过，按锁非 editable 182 项通过。覆盖原 Runtime 入口的启动中/待审批/工具运行取消、延迟终态、分页、重复取消、前轮终端保留、API 不支持/仍运行/终态超时/流丢失及拒绝续聊、重试后同 Thread 续聊。不是仅对私有 helper 的断言。
+
+真实官方 SDK/CLI 0.163.0、无 Core、TLS 开启：首轮 b33501a6 两场景通过；按锁最终 f40c27dd 两场景通过：先观察官方 processId 48639 已登记，再走原 Runtime 取消，列表为空、32 秒无迟到写入、原 Thread 随机口令续聊；进程/原生目录/私有配置全部清理。中间 5cf79cd6 待审批场景因诊断脚本在释放审批前查询 RPC 超时，未到达产品取消入口；修正观察顺序后复验，保留失败。完整记录见管理仓 CODEX_CANCEL_SESSION_FIX_20261031.md。用户原 UI/桌面尚未升级，不把 Runtime 的 web channel_id 验证称为浏览器点击验收。发布仍须处理前置 PR#1 与 stable 状态。
