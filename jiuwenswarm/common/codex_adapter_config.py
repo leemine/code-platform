@@ -61,8 +61,8 @@ def resolve_model(request):
     unsupported = set(model.client_options) - {"verify_ssl", "timeout"}
     if unsupported or model.request_defaults:
         raise ValueError("Codex does not support the selected model's request options")
-    if model.client_options.get("verify_ssl") is False:
-        raise ValueError("Codex requires TLS verification")
+    # Swarm HTTP-client options do not control the official CLI transport.
+    # Leave TLS verification and CA trust to Codex; never project an insecure override.
     return model
 
 

@@ -4503,6 +4503,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             result: toolResult.result,
             success: toolResult.success,
             ...(toolResult.outcomeUnknown ? { outcomeUnknown: true } : {}),
+            ...(toolResult.commandExitUnknown ? { commandExitUnknown: true } : {}),
             ...(toolResult.pending ? { pending: true } : {}),
             toolCallId: toolResult.toolCallId,
             summary: toolResult.summary,

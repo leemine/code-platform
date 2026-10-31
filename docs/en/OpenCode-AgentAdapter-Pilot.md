@@ -86,3 +86,10 @@ Models come from Swarm's shared single-model selection and must expose an OpenAI
 This candidate is unpublished. Linux Runtime, Code commands and native approval controls have been exercised. Codex equipment, cold recovery, complete usage accounting, Claude, Windows/macOS and desktop runtime packaging remain pending. The closure fixes stale completed-request replay after Web refresh and the Front configuration import boundary. Active execution and approvals use the existing recovery channel. Historical calls without a result remain unknown rather than successful. Existing OpenCode and Native paths are preserved.
 
 Codex availability does not require an exact SDK or CLI version. The official SDK owns CLI selection and compatibility; the `codex-direct` extra has no exact SDK pin. The lock and default desktop downloads currently record the tested 0.163.0 combination. Invalid explicit paths never fall back, and unsupported approval APIs or unconfirmed native permission policies fail explicitly. Upstream older-CLI warnings and managed-install manifest checks remain; the default download version is not a custom-CLI allowlist. Linux managed paths and the Gateway manifest location are covered; Windows/macOS and rebuilt installers still require native acceptance.
+
+
+## Tool results and Codex certificate settings (2026-10-31 candidate)
+
+A completed tool invocation does not imply exit code zero or task acceptance. Bash details show “Exit code not provided” when native exit evidence is absent; non-command tools such as Read have no command-exit warning. Native tool errors and explicit nonzero exits remain failures. Calls with no native result remain unknown. Existing Read history is supported without rewriting stored records.
+
+Codex no longer rejects a model merely because Swarm saved verify_ssl:false. This Swarm HTTP-client option does not control the official CLI transport: certificate verification stays with the official SDK/CLI, with no insecure override or automatic model-config rewrite. Use the official trust configuration for private CAs. These source changes do not update an already installed desktop application.

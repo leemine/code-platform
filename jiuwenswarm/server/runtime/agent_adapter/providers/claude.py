@@ -250,11 +250,16 @@ class ClaudeAdapter:
                                 native = message.tool_use_result if isinstance(message.tool_use_result, dict) else {}
                                 code = native.get("exit_code") if name == "Bash" else None
                                 code = code if type(code) is int else None
-                                success = (code == 0 if code is not None else None) if name == "Bash" else (not block.is_error if block.is_error is not None else None)
+                                success = not block.is_error if block.is_error is not None else None
+                                if code is not None and not block.is_error:
+                                    success = code == 0
                                 content = block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False)
-                                yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
+                                result = {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
                                     "content": content, "result": content, "status": "error" if block.is_error else "completed", "invocation_status": "completed",
-                                    "exit_code": code, "command_success": code == 0 if code is not None else None, "success": success, "task_acceptance": "unknown"})
+                                    "provider": {"claude": {"is_error": block.is_error}}, "success": success, "task_acceptance": "unknown"}
+                                if name == "Bash":
+                                    result.update(exit_code=code, command_success=code == 0 if code is not None else None)
+                                yield self._chunk(request, result)
                         elif isinstance(message, ResultMessage):
                             if message.session_id != session.native_id:
                                 raise ValueError("Claude completed a different session")

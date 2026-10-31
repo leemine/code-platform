@@ -2171,6 +2171,7 @@ function buildToolExecutionsFromReplay(toolReplay: HistoryToolReplayItem[]): Too
       result: n.result,
       success: n.success,
       ...(n.outcomeUnknown ? { outcomeUnknown: true } : {}),
+      ...(n.commandExitUnknown ? { commandExitUnknown: true } : {}),
       ...(n.pending ? { pending: true as const } : {}),
       toolCallId: n.toolCallId,
       summary: n.summary,

@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 31 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 32 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -26,14 +26,14 @@ generated: true
 | [gateway/message_handler](#module-9) | 1 |
 | [jiuwenswarm](#module-10) | 3 |
 | [jiuwenswarm/channels/web](#module-11) | 1 |
-| [jiuwenswarm/channels/web/frontend](#module-12) | 2 |
+| [jiuwenswarm/channels/web/frontend](#module-12) | 3 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-13) | 1 |
-| [jiuwenswarm/common](#module-14) | 1 |
+| [jiuwenswarm/common](#module-14) | 2 |
 | [jiuwenswarm/common/config_panel](#module-15) | 1 |
 | [jiuwenswarm/gateway/channel_manager/web](#module-16) | 1 |
 | [jiuwenswarm/observability](#module-17) | 1 |
 | [jiuwenswarm/server](#module-18) | 2 |
-| [jiuwenswarm/server/runtime/agent_adapter](#module-19) | 5 |
+| [jiuwenswarm/server/runtime/agent_adapter](#module-19) | 6 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-20) | 1 |
 | [runtime](#module-21) | 1 |
 | [scripts](#module-22) | 1 |
@@ -145,6 +145,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [SDD-0026](designs/proposals/SDD-0026-trajectory-observability-web-ui/design.md) | D | 轨迹观测前端：单 Agent、Subagent 与 Team 多 Agent 轨迹 UI | @alan_cheng | jiuwenswarm/channels/web/frontend | — | — |
 | [F_20261031_1714_claude-main-agent-and-model-settings](features/F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 
 <a id="module-13"></a>
 
@@ -161,6 +162,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](features/F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 
 <a id="module-15"></a>
 
@@ -206,6 +208,7 @@ generated: true
 | [B_20261031_1142_claude-tool-result-metadata](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1142_claude-tool-result-metadata.md) | B | Claude 工具保护错误的非结构化结果兼容 | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py | 无独立 D：用户授权真实Runtime验收发现的适配缺陷，最小修复不改变已确认架构。 |
 | [B_20261031_1418_session-recovery-lifecycle](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
 | [B_20261031_1459_codex-cancel-session](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1459_codex-cancel-session.md) | B | Codex取消确认本轮终端停止并保留原生Thread | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py, docs/zh/FAQ.md, docs/en/FAQ.md | 无独立 D：用户确认继续修复已复现的取消后续聊问题，沿原Runtime和官方SDK，不扩展冷恢复或新执行流程。 |
+| [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 
 <a id="module-20"></a>
 

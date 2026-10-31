@@ -188,10 +188,11 @@ test('normalizeToolCallPayload reads call_goal and callGoal without inventing fr
   assert.equal(legacyDisplay.display_name, '读取 foo.py');
 });
 
-test('completed command without native exit evidence remains unknown', () => {
+test('completed command keeps missing exit evidence separate from invocation display', () => {
   const result = normalizeToolResultPayload({event_type:'chat.tool_result',tool_name:'bash',tool_call_id:'native-call',status:'completed',invocation_status:'completed',command_success:null,exit_code:null,success:null,result:'command returned'});
-  assert.equal(result.outcomeUnknown,true);
-  assert.equal(result.success,false);
+  assert.equal(result.outcomeUnknown,undefined);
+  assert.equal(result.commandExitUnknown,true);
+  assert.equal(result.success,true);
   assert.equal(result.pending,undefined);
 });
 
@@ -200,5 +201,21 @@ test('native exit 0 and 7 preserve distinct command outcomes', () => {
     const result=normalizeToolResultPayload({tool_name:'bash',invocation_status:'completed',exit_code:code,command_success:code===0,success:code===0,result:''});
     assert.equal(result.success,code===0);
     assert.equal(result.outcomeUnknown,undefined);
+  }
+});
+
+
+test('legacy Read null command fields do not imply a command or missing tool result', () => {
+  const result = normalizeToolResultPayload({tool_name:'Read', status:'completed', invocation_status:'completed', command_success:null, exit_code:null, success:null, result:'file content'});
+  assert.equal(result.success, true);
+  assert.equal(result.outcomeUnknown, undefined);
+  assert.equal(result.commandExitUnknown, undefined);
+});
+
+test('explicit tool failures remain failures even without an exit code', () => {
+  for (const tool_name of ['Bash', 'Read']) {
+    const result = normalizeToolResultPayload({tool_name, status:'error', invocation_status:'completed', command_success:null, success:false, result:'error'});
+    assert.equal(result.success, false);
+    assert.equal(result.outcomeUnknown, undefined);
   }
 });

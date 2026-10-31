@@ -209,8 +209,10 @@ export interface ToolResult {
   toolName: string;
   result: string;
   success: boolean;
-  /** Invocation ended but the Provider did not return command exit evidence. */
+  /** No native tool result was received. */
   outcomeUnknown?: boolean;
+  /** The invocation returned, but its command exit code was not supplied. */
+  commandExitUnknown?: boolean;
   toolCallId?: string;
   summary?: string;  // 结果摘要
   /** 后台任务已接受但仍在运行，不应被渲染为成功或失败终态。 */
