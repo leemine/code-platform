@@ -37,7 +37,8 @@ jobs:
         env:
           PROFILE: ${{ matrix.profile }}
         run: |
-          .venv/bin/python - <<'PY'
+          # Ignore checkout-local egg-info; inspect the installed distribution.
+          .venv/bin/python -I - <<'PY'
           import importlib.metadata as metadata
           import importlib.util
           import json, os, subprocess, sys, tomllib
@@ -61,7 +62,7 @@ jobs:
           else:
               assert importlib.util.find_spec('openjiuwen') is None
           probe = "import sys,jiuwenswarm; from pathlib import Path; assert Path(jiuwenswarm.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()); print(jiuwenswarm.__file__)"
-          subprocess.run([sys.executable, '-c', probe], cwd=os.environ['RUNNER_TEMP'], check=True)
+          subprocess.run([sys.executable, '-I', '-c', probe], cwd=os.environ['RUNNER_TEMP'], check=True)
           print('Verified non-editable candidate and locked SDK/CLI')
           PY
       - name: Test production boundaries
