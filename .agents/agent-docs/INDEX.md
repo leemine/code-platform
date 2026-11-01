@@ -50,7 +50,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
-| [B_20261101_2056_missing-lfs-demo-videos](bugfix/docs/B_20261101_2056_missing-lfs-demo-videos.md) | B | Remove unavailable LFS demo video references | leemine | docs, .github/workflows | .github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md | 无独立 D：User-approved documentation asset cleanup; no independent architecture design. |
+| [B_20261101_2056_missing-lfs-demo-videos](bugfix/docs/B_20261101_2056_missing-lfs-demo-videos.md) | B | Remove unavailable LFS demo video references | leemine | docs, .github/workflows | tests/unit_tests/agentserver/test_provider_session_selection.py, .github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md | 无独立 D：User-approved documentation asset cleanup; no independent architecture design. |
 
 <a id="module-2"></a>
 
@@ -113,7 +113,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
-| [B_20261101_2056_missing-lfs-demo-videos](bugfix/docs/B_20261101_2056_missing-lfs-demo-videos.md) | B | Remove unavailable LFS demo video references | leemine | docs, .github/workflows | .github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md | 无独立 D：User-approved documentation asset cleanup; no independent architecture design. |
+| [B_20261101_2056_missing-lfs-demo-videos](bugfix/docs/B_20261101_2056_missing-lfs-demo-videos.md) | B | Remove unavailable LFS demo video references | leemine | docs, .github/workflows | tests/unit_tests/agentserver/test_provider_session_selection.py, .github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md | 无独立 D：User-approved documentation asset cleanup; no independent architecture design. |
 
 <a id="module-9"></a>
 

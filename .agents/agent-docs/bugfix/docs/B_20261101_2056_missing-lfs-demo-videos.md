@@ -5,7 +5,7 @@ type: B
 author: leemine
 author_email: leewanlong@gmail.com
 modules: [docs, .github/workflows]
-files: [.github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md]
+files: [tests/unit_tests/agentserver/test_provider_session_selection.py, .github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md]
 designs: []
 design_note: User-approved documentation asset cleanup; no independent architecture design.
 ---
@@ -34,3 +34,6 @@ Historical commits still reference missing LFS objects. This cleanup removes the
 The first PR run failed in both Python profiles before tests: metadata.distribution('workswarm') selected the checkout's build-generated workswarm.egg-info, which has no direct_url.json. In the existing non-editable release environment, ordinary Python reproduces this lookup while isolated Python selects the actual site-packages dist-info and its direct URL. This is not an invalid installed artifact or a video-deletion regression.
 
 Run the existing source-verification Python block and its installed-import probe with -I, preserving every original SDK/version/Core URL/SHA/non-editable/import-location assertion. No missing metadata is ignored, no fallback is added, and no test is skipped. The actual CI rerun remains authoritative for both installation profiles.
+
+
+The next Native-profile CI run passed provenance but found three platform-parameter cases assuming that no previous test had imported Core. Capture the Core module set before the catalog operation and require it to stay unchanged. This preserves the no-new-Core-import boundary in both clean external and already-loaded Native processes, without clearing modules, skipping cases, or modifying runtime behavior.

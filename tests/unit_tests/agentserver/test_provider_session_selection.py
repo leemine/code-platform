@@ -148,6 +148,7 @@ async def test_front_catalog_sees_sdk_installed_after_front_started(monkeypatch,
     """Gateway installs SDKs after Front startup; config.get must discover them."""
     import sys
     import importlib
+    native_modules_before = {name for name in sys.modules if name == 'openjiuwen' or name.startswith('openjiuwen.')}
     from jiuwenswarm.common import external_cli_runtime as runtimes
     from jiuwenswarm.common import external_adapter_factories as factories
     from jiuwenswarm.server.control import config_service
@@ -182,4 +183,4 @@ async def test_front_catalog_sees_sdk_installed_after_front_started(monkeypatch,
     after = await config_service.handle_config_request(request)
     catalog = json.loads(after.payload['execution_provider_catalog'])
     assert all(row['available'] and row['reason'] is None for row in catalog)
-    assert not any(name == 'openjiuwen' or name.startswith('openjiuwen.') for name in sys.modules)
+    assert {name for name in sys.modules if name == 'openjiuwen' or name.startswith('openjiuwen.')} == native_modules_before
