@@ -4,8 +4,8 @@ title: Remove unavailable LFS demo video references
 type: B
 author: leemine
 author_email: leewanlong@gmail.com
-modules: [docs]
-files: [.gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md]
+modules: [docs, .github/workflows]
+files: [.github/workflows/stable.yml, .gitattributes, README.md, docs/assets/videos, docs/en/ChinaChannels.md, docs/en/TaskPlanning.md, docs/zh/国内频道.md, docs/zh/任务规划.md]
 designs: []
 design_note: User-approved documentation asset cleanup; no independent architecture design.
 ---
@@ -27,3 +27,10 @@ Local validation does not run model, desktop, platform-build or stable suites fo
 ## Retained limitation
 
 Historical commits still reference missing LFS objects. This cleanup removes their references only from the candidate branch. Any future restored video must include actual content and verified object availability before adding a link. No new global upload gate or runtime restriction is introduced.
+
+
+## PR CI provenance check repair
+
+The first PR run failed in both Python profiles before tests: metadata.distribution('workswarm') selected the checkout's build-generated workswarm.egg-info, which has no direct_url.json. In the existing non-editable release environment, ordinary Python reproduces this lookup while isolated Python selects the actual site-packages dist-info and its direct URL. This is not an invalid installed artifact or a video-deletion regression.
+
+Run the existing source-verification Python block and its installed-import probe with -I, preserving every original SDK/version/Core URL/SHA/non-editable/import-location assertion. No missing metadata is ignored, no fallback is added, and no test is skipped. The actual CI rerun remains authoritative for both installation profiles.
