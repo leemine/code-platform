@@ -5,7 +5,7 @@ type: F
 author: leemine
 author_email: leewanlong@gmail.com
 modules: [agent_adapter, desktop, gateway]
-files: [pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py]
+files: [pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml]
 designs: []
 design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实施范围；管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 第24节及 EXTERNAL_DESKTOP_BUILD_20261030 记录来源与验证。
 ---
@@ -44,3 +44,13 @@ Windows运行41078652890（提交3fc8f997）成功dispatch，但GitHub在分配r
 
 
 beta2候选验收闭合：201项联合后端、69项打包契约、6个前端入口；按锁非editable免Core冻结；正常Gateway下载/Front热发现；原用户模型选项的三Provider真实Runtime及实际Electron Code UI/刷新历史通过。QA12个进程正常退出、私有配置已删除，模板/私钥零匹配与tar/deb关键内容一致审计通过。具体摘要和截图见B_20261031_1930_optional-provider-menu；本次用户豁免Actions，未实际安装系统deb或运行Windows/macOS。
+
+## 2026-11-02 beta4 Windows / macOS Actions 原生构建
+
+用户确认通过 GitHub Actions 构建 Windows x64 与 macOS arm64 测试安装包；沿本记录续写，不改变 Provider/Runtime、Core/SDK 锁或已有构建器。产品基线 main cf07852397f3b7547ba6b52a54628b89e4aacd4e，隔离分支 codex/desktop-actions-build-20261102。Windows 先用该 main 的原入口运行 41467786074，实际已进入构建步骤；旧运行 41078652890 的账单拒绝结论保留，不能外推为本次仍无法启动。
+
+为不把未验工作流先合入 main，扩展原已注册 windows-external.yml 的手动 platform 选项（默认 windows，可选 macos/both），保留 Windows 原构建/诊断入口。macOS 使用标准 macos-14 runner 并检查真实 uname=arm64，固定 Node/uv/Bun 构建工具，完整调用原 build-electron-exe.sh，包含 TUI、冻结后端、架构和 external 无 Core 自检及 DMG 校验。NOSIGN=1/NOTARIZE=0 表示不使用 Developer ID 签名/公证；不改系统安全策略，也不冒称可通过正式分发 Gatekeeper 验收。
+
+可选 product_base_sha 输入只接受完整提交 ID，并在构建前核验产品/脚本/依赖树相等；未提供时以当前 GITHUB_SHA 为基线，不把本次 cf07852 写成未来版本的永久门禁。任务分支将显式传入 beta4 SHA。依赖仍按原 uv.lock 安装，构建后检查锁未改变；来源、架构和摘要进入仅供下载的 Actions Artifact（14天），无 Release 发布或本机模型凭据注入。
+
+本地工作流结构/内嵌 Python 解析及产品树等价核对通过，既有桌面契约44项通过（0.69秒）。首次误用构建 venv 缺 pytest、第二次缺隔离数据目录导致用户日志只读，均未运行测试；改为既有测试环境和本任务私有 HOME/DATA_DIR 后执行，失败准备记录保留于管理仓 artifacts/desktop-actions-build-20261102/evidence。本地结果不是 Windows/macOS 原生构建成功或真实 Provider/Electron 聊天通过。最终运行与产物状态由管理任务台账及对应 Actions 记录，不在本节假定结果。
