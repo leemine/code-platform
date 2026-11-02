@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: Native platform to build; installers stay in Actions Artifacts
+        description: Build a native installer or transfer verified beta4 artifacts to a draft
         required: true
         default: windows
         type: choice
@@ -12,8 +12,14 @@ on:
           - windows
           - macos
           - both
+          - release-assets
       product_base_sha:
         description: Optional full product commit to verify before the macOS build
+        required: false
+        default: ''
+        type: string
+      release_id:
+        description: Existing beta4 draft ID; used only by release-assets
         required: false
         default: ''
         type: string
@@ -27,7 +33,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.platform != 'macos' }}
+    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == '' }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -105,6 +111,78 @@ jobs:
           path: ci-evidence/
           if-no-files-found: warn
           retention-days: 14
+
+  release-assets:
+    if: ${{ inputs.platform == 'release-assets' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: leemine/code-platform
+      RELEASE_ID: ${{ inputs.release_id }}
+    steps:
+      - name: Verify and transfer beta4 Windows and macOS installers
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+
+          repo = os.environ['GH_REPO']
+          release_id = os.environ['RELEASE_ID']
+          if not release_id.isdigit():
+              raise ValueError('An existing numeric draft release ID is required')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}'], text=True))
+          release = api(f'releases/{release_id}')
+          assert release['tag_name'] == 'v0.2.5.beta4' and release['draft']
+          assert release['prerelease']
+          assert release['target_commitish'] == 'cf07852397f3b7547ba6b52a54628b89e4aacd4e'
+          packages = [
+              (41467786074, 'cf07852397f3b7547ba6b52a54628b89e4aacd4e',
+               'windows-external-installer-cf07852397f3b7547ba6b52a54628b89e4aacd4e',
+               'WorkSwarm-0.2.5.beta4-windows.exe',
+               '33481c6204ae1463260e8b69827429cafb6aa3c6369c4c8d7538f8eadbae3128'),
+              (41468736696, '63f04d37507aade08c70b5d433efd4a447812368',
+               'macos-arm64-external-installer-63f04d37507aade08c70b5d433efd4a447812368',
+               'WorkSwarm-0.2.5.beta4-macos.dmg',
+               '48f341dd8730aee248d7dc90b64b39690ed7c93d40399014e177e9c114865169'),
+          ]
+          for run_id, sha, artifact, name, expected in packages:
+              run = api(f'actions/runs/{run_id}')
+              assert run['conclusion'] == 'success' and run['head_sha'] == sha
+              root = Path('release-assets') / str(run_id)
+              subprocess.run(['gh', 'run', 'download', str(run_id), '--repo', repo,
+                  '--name', artifact, '--dir', str(root)], check=True)
+              sources = list(root.rglob('source.json'))
+              assert len(sources) == 1
+              source = json.loads(sources[0].read_text(encoding='utf-8-sig'))
+              assert source['source_sha'] == sha and source['profile'] == 'external'
+              files = list(root.rglob(name))
+              assert len(files) == 1
+              file = files[0]
+              digest = hashlib.sha256()
+              with file.open('rb') as stream:
+                  for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+                      digest.update(block)
+              assert digest.hexdigest() == expected
+              existing = [a for a in api(f'releases/{release_id}')['assets'] if a['name'] == name]
+              if existing:
+                  assert len(existing) == 1 and existing[0]['state'] == 'uploaded'
+                  assert existing[0]['digest'] == 'sha256:' + expected
+              else:
+                  subprocess.run(['gh', 'release', 'upload', 'v0.2.5.beta4',
+                      '--repo', repo, str(file)], check=True)
+              uploaded = [a for a in api(f'releases/{release_id}')['assets'] if a['name'] == name]
+              assert len(uploaded) == 1 and uploaded[0]['size'] == file.stat().st_size
+              assert uploaded[0]['state'] == 'uploaded' and uploaded[0]['digest'] == 'sha256:' + expected
+              print(json.dumps({'asset': name, 'bytes': file.stat().st_size,
+                  'sha256': expected, 'source_run': run_id}))
+          print('Verified artifacts transferred to draft; publication remains a separate step.')
+          PY
 
   macos:
     if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' }}

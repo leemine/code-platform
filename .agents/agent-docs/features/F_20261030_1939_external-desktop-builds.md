@@ -56,3 +56,9 @@ beta2候选验收闭合：201项联合后端、69项打包契约、6个前端入
 本地工作流结构/内嵌 Python 解析及产品树等价核对通过，既有桌面契约44项通过（0.69秒）。首次误用构建 venv 缺 pytest、第二次缺隔离数据目录导致用户日志只读，均未运行测试；改为既有测试环境和本任务私有 HOME/DATA_DIR 后执行，失败准备记录保留于管理仓 artifacts/desktop-actions-build-20261102/evidence。本地结果不是 Windows/macOS 原生构建成功或真实 Provider/Electron 聊天通过。最终运行与产物状态由管理任务台账及对应 Actions 记录，不在本节假定结果。
 
 macOS 首次运行41468422605已通过arm64和工具准备，但checkout默认浅克隆没有产品基线cf07852对象，来源核验返回bad object，构建尚未执行；属本工程新增CI准备缺陷。仅macOS checkout改为fetch-depth:0以保留明确的产品树比较，不删除来源断言、不改原打包脚本；Windows既有步骤保留。修复后在原隔离分支新提交并重跑，首次失败日志保留。
+
+## 2026-11-02 三平台预发布资产交付
+
+用户随后明确要求发布Linux/Windows/macOS安装包，替代此前本轮“仅Artifact、不发布Release”的限制。复用同一隔离CI分支，为原手动工作流增加release-assets模式；仅该job授予actions:read/contents:write，默认构建仍只读且Windows/Mac原步骤保持。该job只接受已存在且tag/产品SHA匹配的beta4草稿，检查固定成功运行的SHA、下载Artifact的source.json及实际EXE/DMG SHA256，再上传并核对服务端digest。只转存、不重建、不自动发布、不覆盖不匹配资产。
+
+实际Windows41467786074与macOS41468736696已成功生成beta4；macOS仅CI/文档差异，产品树等于main cf07852。云端转存避免本机往返约850MB。Linux使用已完成冻结真实验证的原DEB从本机上传；三平台SHA256/来源/验证边界与Release说明单独汇总，所有资产核验后由本次发布任务完成公开草稿，保留预发布/未签名/平台真实安装聊天待验限制。正式状态与运行证据见管理任务台账DESKTOP-RELEASE-01；此处不预记上传或发布成功。产品、锁、原构建脚本、Provider外部实现与用户安装版未变。
