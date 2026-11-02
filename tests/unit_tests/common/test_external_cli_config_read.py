@@ -181,3 +181,49 @@ print(json.dumps({"forbidden": loaded, "custom_agent": "acme"}))
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout.splitlines()[-1])["forbidden"] == []
+
+
+def test_native_timeout_options_remain_provider_specific():
+    from gateway.common.model_selection import ResolvedModel
+    from jiuwenswarm.common import claude_adapter_config as cc, codex_adapter_config as cx
+    from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import provider_config
+    raw = {'modes': {'team': {'jiuwen_team': {'external_cli_agents': [
+        {'cli_agent':'claude', 'stream_first_byte_timeout_ms':90000, 'stream_idle_timeout_ms':600000},
+        {'cli_agent':'codex', 'stream_idle_timeout_ms':45000},
+    ]}}}}
+    model = ResolvedModel(model_id='fixture', source='defaults', model_name='fixture', provider='OpenAI', api_base='https://example.invalid/v1', api_key='fixture', client_options={'timeout':1.25})
+    env = cc.native_timeout_env(cc.config_snapshot(raw)['claude'], model)
+    assert env == {'API_TIMEOUT_MS':'1250', 'CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS':'90000', 'CLAUDE_STREAM_IDLE_TIMEOUT_MS':'600000'}
+    options = cx.model_overrides(model, cx.config_snapshot(raw)['codex'])
+    assert 'model_providers.swarm.stream_idle_timeout_ms=45000' in options
+    assert not any('1250' in x for x in options)  # Request time is not SSE idle time.
+    oc = provider_config(model, {'header_timeout_ms':70000, 'chunk_timeout_ms':80000})['options']
+    assert oc['timeout'] == 1250
+    assert oc['headerTimeout'] == 70000
+    assert oc['chunkTimeout'] == 80000
+
+
+@pytest.mark.parametrize('value', [False, 0, -1, float('inf'), '5000'])
+@pytest.mark.parametrize('provider', ['claude', 'codex'])
+def test_invalid_native_timeout_never_disables_protection(provider, value):
+    from jiuwenswarm.common import claude_adapter_config, codex_adapter_config
+    raw = {'modes': {'team': {'jiuwen_team': {'external_cli_agents': [
+        {'cli_agent':provider, 'stream_idle_timeout_ms':value},
+    ]}}}}
+    module = claude_adapter_config if provider == 'claude' else codex_adapter_config
+    with pytest.raises(ValueError, match='positive integer'):
+        module.config_snapshot(raw)
+
+
+def test_saving_existing_agent_card_preserves_native_timeout_options(monkeypatch):
+    from jiuwenswarm.common.config_panel import config_set_handlers as handlers
+    raw = {'modes': {'team': {'jiuwen_team': {'external_cli_agents': [
+        {'cli_agent':'claude', 'stream_first_byte_timeout_ms':60000, 'stream_idle_timeout_ms':300000},
+        {'cli_agent':'codex', 'stream_idle_timeout_ms':90000},
+    ]}}}}
+    monkeypatch.setattr(handlers, '_uploaded_cli_path', lambda agent: '')
+    entries = handlers.external_cli_agents_from_switches(raw, {
+        'external_cli_agent_claude_enabled':'true', 'external_cli_agent_claude_use_builtin':'true',
+        'external_cli_agent_codex_enabled':'true', 'external_cli_agent_codex_use_builtin':'true',
+    })
+    assert entries == raw['modes']['team']['jiuwen_team']['external_cli_agents']

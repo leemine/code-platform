@@ -93,3 +93,13 @@ Codex availability does not require an exact SDK or CLI version. The official SD
 A completed tool invocation does not imply exit code zero or task acceptance. Bash details show “Exit code not provided” when native exit evidence is absent; non-command tools such as Read have no command-exit warning. Native tool errors and explicit nonzero exits remain failures. Calls with no native result remain unknown. Existing Read history is supported without rewriting stored records.
 
 Codex no longer rejects a model merely because Swarm saved verify_ssl:false. This Swarm HTTP-client option does not control the official CLI transport: certificate verification stays with the official SDK/CLI, with no insecure override or automatic model-config rewrite. Use the official trust configuration for private CAs. These source changes do not update an already installed desktop application.
+
+
+## External execution timeouts (2026-11-02 candidate)
+
+A model request timeout is not a whole-turn deadline. OpenCode no longer supplies an implicit 120-second turn limit. An explicit positive finite opencode.turn_timeout retains its existing meaning; absent/null means no turn deadline. Startup and API operation limits remain separate. Model timeout seconds still map to native request milliseconds. Owned services accept opencode.header_timeout_ms and chunk_timeout_ms; borrowed services remain configured by their owner.
+
+Claude maps model timeout to API_TIMEOUT_MS rather than a 180-second turn deadline. Its Third-party Agents YAML entry accepts stream_first_byte_timeout_ms and stream_idle_timeout_ms; Codex accepts stream_idle_timeout_ms. Values are positive integer milliseconds and preserve native protections and limits. Saving existing cards preserves these advanced fields without new UI controls. Request, first-byte and stream-idle semantics are distinct. Unconfirmed execution termination or SDK shutdown keeps ownership fenced rather than admitting a replacement execution. Candidate source validation does not update an installed desktop application.
+
+
+For the tested Claude CLI 2.1.274, the independent first-byte deadline is not active on the custom model endpoint route, although its setting reaches the CLI. The native request timeout remains effective. A supervised 300-second stalled-stream probe closed both connections and exited cleanly with code 0; the earlier unexplained 143 remains historical evidence, not a confirmed adapter defect.

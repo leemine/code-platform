@@ -6,7 +6,8 @@ import concurrent.futures
 import contextlib
 import hashlib
 import json
-import math
+import logging
+import time
 import shutil
 import tempfile
 import uuid
@@ -234,7 +235,9 @@ class CodexAdapter:
                "LOCALAPPDATA": str(session.root / "localappdata"), "OPENAI_API_KEY": "", "CODEX_API_KEY": "",
                "SWARM_CODEX_MODEL_KEY": model.api_key}
         config = CodexConfig(codex_bin=self._settings.get("cli_path"), cwd=session.directory, env=env,
-                             config_overrides=model_overrides(model), client_name="swarm_agent_adapter")
+                             config_overrides=model_overrides(model, self._settings), client_name="swarm_agent_adapter")
+        if model.client_options.get("timeout") is not None:
+            logging.getLogger(__name__).info("Codex model HTTP timeout is not mapped to a Turn deadline; native stream idle policy applies")
         try:
             client = CodexClient(config, approval_handler=lambda method, params: self._approval(session, loop, method, params))
         except TypeError:
@@ -278,9 +281,6 @@ class CodexAdapter:
                                    project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
         session = self._sessions[sid]
         model = resolve_model(request)
-        timeout = float(model.client_options.get("timeout", 180))
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("Codex model timeout must be positive and finite")
         async with session.lock:
             if session.cancelled and not session.cancel_confirmed:
                 raise RuntimeError("Codex cancellation is not confirmed; retry cancel before continuing this session")
@@ -312,72 +312,83 @@ class CodexAdapter:
         reader = None
         terminal = False
         text_parts = {}
+        started = time.monotonic()
+        last_event = "none"
         try:
-            async with asyncio.timeout(timeout):
-                response = await asyncio.to_thread(session.client.turn_start, session.thread_id, inputs["query"])
-                session.turn_id = response.turn.id
-                session.turn_ready.set()
-                while True:
-                    if reader is None:
-                        reader = asyncio.create_task(asyncio.to_thread(session.client.next_turn_notification, session.turn_id))
-                    control = asyncio.create_task(session.control_ready.wait())
-                    try:
-                        done, _ = await asyncio.wait({reader, control}, return_when=asyncio.FIRST_COMPLETED)
-                    finally:
-                        control.cancel()
-                        await asyncio.gather(control, return_exceptions=True)
-                    if session.control_ready.is_set():
-                        session.control_ready.clear()
-                        for identity, (future, method, params) in list(session.pending.items()):
-                            if future.done():
-                                continue
-                            description = params.get("command") or params.get("reason") or "file change"
-                            yield self._chunk(request, {"event_type": "chat.ask_user_question", "request_id": identity,
-                                "source": "permission_interrupt", "questions": [{"question": "Codex: " + str(description),
-                                "options": [{"label": "允许一次", "value": "allow_once"}, {"label": "拒绝", "value": "reject"}], "multiSelect": False}]})
-                    if reader not in done:
-                        continue
-                    notification = reader.result()
-                    reader = None
-                    method = notification.method
-                    payload = notification.payload.model_dump(mode="json", by_alias=True)
-                    item = payload.get("item", {})
-                    if method == "item/agentMessage/delta":
-                        yield self._chunk(request, {"event_type": "chat.delta", "content": payload.get("delta", "")})
-                    elif method == "item/started" and item.get("type") == "commandExecution":
+            response = await asyncio.to_thread(session.client.turn_start, session.thread_id, inputs["query"])
+            session.turn_id = response.turn.id
+            session.turn_ready.set()
+            while True:
+                if reader is None:
+                    reader = asyncio.create_task(asyncio.to_thread(session.client.next_turn_notification, session.turn_id))
+                control = asyncio.create_task(session.control_ready.wait())
+                try:
+                    done, _ = await asyncio.wait({reader, control}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    control.cancel()
+                    await asyncio.gather(control, return_exceptions=True)
+                if session.control_ready.is_set():
+                    session.control_ready.clear()
+                    for identity, (future, method, params) in list(session.pending.items()):
+                        if future.done():
+                            continue
+                        description = params.get("command") or params.get("reason") or "file change"
+                        yield self._chunk(request, {"event_type": "chat.ask_user_question", "request_id": identity,
+                            "source": "permission_interrupt", "questions": [{"question": "Codex: " + str(description),
+                            "options": [{"label": "允许一次", "value": "allow_once"}, {"label": "拒绝", "value": "reject"}], "multiSelect": False}]})
+                if reader not in done:
+                    continue
+                notification = reader.result()
+                reader = None
+                method = notification.method
+                last_event = method
+                payload = notification.payload.model_dump(mode="json", by_alias=True)
+                item = payload.get("item", {})
+                if method == "error":
+                    # Native retries remain owned by Codex. Do not turn a
+                    # retry notification into a second terminal event.
+                    logging.getLogger(__name__).warning("Codex native error request=%s will_retry=%s elapsed=%.3fs", request.request_id, payload.get("willRetry"), time.monotonic() - started)
+                if method == "item/agentMessage/delta":
+                    yield self._chunk(request, {"event_type": "chat.delta", "content": payload.get("delta", "")})
+                elif method == "item/started" and item.get("type") == "commandExecution":
+                    session.command_ids.add(item["id"])
+                    yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": item["id"], "name": "shell", "arguments": {"command": item.get("command", ""), "cwd": item.get("cwd")}}})
+                elif method == "item/completed":
+                    if item.get("type") == "commandExecution":
                         session.command_ids.add(item["id"])
-                        yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": item["id"], "name": "shell", "arguments": {"command": item.get("command", ""), "cwd": item.get("cwd")}}})
-                    elif method == "item/completed":
-                        if item.get("type") == "commandExecution":
-                            session.command_ids.add(item["id"])
-                            yield self._chunk(request, command_result(item))
-                        elif item.get("type") == "agentMessage":
-                            text_parts[item["id"]] = (item.get("phase"), item.get("text", ""))
-                        elif item.get("type") == "fileChange":
-                            yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": item["id"], "name": "file_change", "arguments": {"changes": item.get("changes", [])}}})
-                            yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": item["id"], "tool_name": "file_change", "content": json.dumps(item.get("changes", [])), "success": item.get("status") == "completed", "task_acceptance": "unknown"})
-                    elif method == "turn/completed":
-                        terminal = True
-                        session.native_terminal = True
-                        session.turn_ended.set()
-                        status = payload["turn"]["status"]
-                        if status == "completed":
-                            yield self._chunk(request, {"event_type": "chat.final", "content": self._final_response(text_parts), "invocation_status": status, "task_acceptance": "unknown"}, complete=True, outcome="completed")
-                        else:
-                            cancelled = status == "interrupted"
-                            yield self._chunk(request, {"event_type": "chat.error", "code": "cancelled" if cancelled else "codex_turn_failed", "error": "Codex execution cancelled" if cancelled else "Codex model request failed; check model endpoint compatibility and authentication"}, complete=True, outcome="cancelled" if cancelled else "error")
-                        return
+                        yield self._chunk(request, command_result(item))
+                    elif item.get("type") == "agentMessage":
+                        text_parts[item["id"]] = (item.get("phase"), item.get("text", ""))
+                    elif item.get("type") == "fileChange":
+                        yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": item["id"], "name": "file_change", "arguments": {"changes": item.get("changes", [])}}})
+                        yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": item["id"], "tool_name": "file_change", "content": json.dumps(item.get("changes", [])), "success": item.get("status") == "completed", "task_acceptance": "unknown"})
+                elif method == "turn/completed":
+                    terminal = True
+                    session.native_terminal = True
+                    session.turn_ended.set()
+                    status = payload["turn"]["status"]
+                    if status == "completed":
+                        yield self._chunk(request, {"event_type": "chat.final", "content": self._final_response(text_parts), "invocation_status": status, "task_acceptance": "unknown"}, complete=True, outcome="completed")
+                    else:
+                        cancelled = status == "interrupted"
+                        yield self._chunk(request, {"event_type": "chat.error", "code": "cancelled" if cancelled else "codex_turn_failed", "error": "Codex execution cancelled" if cancelled else "Codex model request failed; check model endpoint compatibility and authentication"}, complete=True, outcome="cancelled" if cancelled else "error")
+                    return
         except TimeoutError:
-            yield self._chunk(request, {"event_type": "chat.error", "code": "codex_timeout", "error": "Codex execution exceeded the configured model timeout"}, complete=True, outcome="error")
+            logging.getLogger(__name__).warning("Codex timeout request=%s last_event=%s elapsed=%.3fs source=native_sdk", request.request_id, last_event, time.monotonic() - started)
+            yield self._chunk(request, {"event_type": "chat.error", "code": "codex_timeout", "error": "Codex native SDK operation timed out"}, complete=True, outcome="error")
         except Exception:
             yield self._chunk(request, {"event_type": "chat.error", "code": "codex_transport_failed", "error": "Codex runtime connection failed or an unsupported interaction was requested"}, complete=True, outcome="error")
         finally:
             self._release_controls(session)
             try:
-                if not terminal and not session.cancelled and session.client and session.turn_id:
+                if not terminal and not session.cancelled and session.client:
+                    # A failed reader cannot establish native termination.
+                    # Retain this Thread and the existing cancellation fence.
+                    session.cancelled = True
                     # The callback is released above before any reader-dependent RPC.
-                    with contextlib.suppress(Exception):
-                        await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
+                    if session.turn_id:
+                        with contextlib.suppress(Exception):
+                            await asyncio.wait_for(asyncio.to_thread(session.client.turn_interrupt, session.thread_id, session.turn_id), 5)
             finally:
                 if reader is not None:
                     reader.cancel()

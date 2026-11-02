@@ -16,7 +16,13 @@ def config_snapshot(config: dict) -> dict:
     cli_path = values.get("cli_path") or values.get("codex_bin") or ""
     if not isinstance(cli_path, str):
         raise ValueError("Codex CLI path must be a string")
-    return {"codex": {"enabled": entry is not None, "cli_path": cli_path.strip() or None}}
+    settings = {"enabled": entry is not None, "cli_path": cli_path.strip() or None}
+    idle = values.get("stream_idle_timeout_ms")
+    if idle is not None:
+        if type(idle) is not int or idle <= 0:
+            raise ValueError("Codex stream_idle_timeout_ms must be a positive integer")
+        settings["stream_idle_timeout_ms"] = idle
+    return {"codex": settings}
 
 
 def availability(config: dict) -> str | None:
@@ -66,7 +72,7 @@ def resolve_model(request):
     return model
 
 
-def model_overrides(model) -> tuple[str, ...]:
+def model_overrides(model, settings=None) -> tuple[str, ...]:
     values = [
         'model_provider="swarm"',
         'model_providers.swarm.name="Swarm model service"',
@@ -76,4 +82,9 @@ def model_overrides(model) -> tuple[str, ...]:
     ]
     if model.api_key:
         values.append('model_providers.swarm.env_key="SWARM_CODEX_MODEL_KEY"')
+    idle = (settings or {}).get("stream_idle_timeout_ms")
+    if idle is not None:
+        if type(idle) is not int or idle <= 0:
+            raise ValueError("Codex stream_idle_timeout_ms must be a positive integer")
+        values.append(f"model_providers.swarm.stream_idle_timeout_ms={idle}")
     return tuple(values)

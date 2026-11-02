@@ -171,6 +171,7 @@ def host(tmp_path, monkeypatch):
             if req.method == 'PATCH': native_permissions.extend(json.loads(req.content)['permission'])
             return httpx.Response(200,json={"id":"ses_test","permission":list(native_permissions)})
         if req.url.path == '/session':return httpx.Response(200,json={"id":"ses_test"})
+        if req.url.path == '/session/status':return httpx.Response(200,json={})
         if req.url.path == '/event':return httpx.Response(200,stream=Events(events,reply),headers={'content-type':'text/event-stream'})
         if req.url.path.endswith('/reply'):reply.set()
         return httpx.Response(200,json=True)
@@ -1261,3 +1262,53 @@ async def test_initialization_timeout_reaches_runtime_error_without_secret(host,
     finally:
         await runtime.close()
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_no_implicit_turn_limit_and_native_timeout_does_not_claim_deadline(host, monkeypatch):
+    app, config, _, _, _ = host
+    await app.create_instance(config)
+    assert app._adapter._timeout is None
+    original = app._adapter._call
+    async def failed_prompt(method, path, **kw):
+        if path.endswith('/prompt_async'):
+            raise TimeoutError('private-native-error')
+        return await original(method, path, **kw)
+    monkeypatch.setattr(app._adapter, '_call', failed_prompt)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert not any(x.get('code') == 'provider_timeout' for x in chunks)
+        assert any(x.get('event_type') == 'chat.error' for x in chunks)
+        assert 'private-native-error' not in str(chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('value', [False, True, 0, -1, float('inf'), float('nan')])
+async def test_invalid_explicit_turn_budget_is_rejected(host, value):
+    app, config, _, _, _ = host
+    config['opencode']['turn_timeout'] = value
+    with pytest.raises(ValueError, match='turn_timeout'):
+        await app.create_instance(config)
+
+
+@pytest.mark.asyncio
+async def test_timeout_abort_ack_without_idle_keeps_execution_owner(host, monkeypatch):
+    app, config, _, events, _ = host
+    config['opencode']['turn_timeout'] = 0.01
+    events[:] = [event('permission.asked', id='pending', permission='read', patterns=['fixture'])]
+    await app.create_instance(config)
+    original = app._adapter._call
+    async def busy_status(method, path, **kw):
+        if path == '/session/status':
+            return {'ses_test': {'type':'busy'}}
+        return await original(method, path, **kw)
+    monkeypatch.setattr(app._adapter, '_call', busy_status)
+    chunks = [x.payload async for x in app.process_message_stream(request())]
+    assert not any(x.get('event_type') == 'chat.interrupt_result' and x.get('success') for x in chunks)
+    assert app._adapter._sessions['test-session'].abort_failed
+    with pytest.raises(ValueError, match='equipment cannot change during an active turn'):
+        _ = [x async for x in app.process_message_stream(request())]
+    monkeypatch.setattr(app._adapter, '_call', original)
+    await app.cleanup()

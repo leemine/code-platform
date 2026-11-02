@@ -92,7 +92,7 @@ class OpenCodeAdapter:
         self._sessions: dict[str, _Session] = {}
         self._model: dict[str, str] = {}
         self._directory = ""
-        self._timeout = 120.0
+        self._timeout = None
         self._session_init_timeout = 120.0
         self._executable = None
         self._configured = False
@@ -134,9 +134,10 @@ class OpenCodeAdapter:
         if not directory.is_absolute() or not directory.is_dir():
             raise ValueError("OpenCode requires an existing absolute workspace directory")
         self._directory, self._model = str(directory.resolve()), dict(model)
-        self._timeout = float(settings.get("turn_timeout", 120))
-        if self._timeout <= 0:
-            raise ValueError("turn_timeout must be positive")
+        raw_timeout = settings.get("turn_timeout")
+        self._timeout = float(raw_timeout) if raw_timeout is not None else None
+        if raw_timeout is not None and (isinstance(raw_timeout, bool) or not math.isfinite(self._timeout) or self._timeout <= 0):
+            raise ValueError("turn_timeout must be positive and finite or null")
         self._session_init_timeout = float(settings.get("session_init_timeout", 120))
         if not math.isfinite(self._session_init_timeout) or not 0 < self._session_init_timeout <= 600:
             raise ValueError("session_init_timeout must be finite and between 0 and 600 seconds")
@@ -309,7 +310,7 @@ class OpenCodeAdapter:
         assistant_complete = False
         assistant_messages = set()
         try:
-            async with asyncio.timeout(self._timeout):
+            async with asyncio.timeout(self._timeout) as turn_budget:
                 async with transport.subscribe(session.service.client if session.service else self._client, session.directory) as events:
                     # Establish the sole event subscription before accepting the prompt.
                     await self._call("POST", f"/session/{session.native_id}/prompt_async", body={
@@ -391,7 +392,10 @@ class OpenCodeAdapter:
                             return
                     raise RuntimeError("OpenCode event stream closed without a terminal event")
         except TimeoutError:
-            await self._call("POST", f"/session/{session.native_id}/abort", session=session)
+            # Only our explicitly configured budget can claim a Turn deadline.
+            if not turn_budget.expired():
+                raise RuntimeError("OpenCode native operation timed out") from None
+            await self._abort_and_check(session)
             terminal = True
             # Reuse the existing successful-abort lifecycle projection to close
             # permission UI; timeout still ends the request as an error, not success.
@@ -405,7 +409,7 @@ class OpenCodeAdapter:
                 # Keep the active owner if abort fails: do not allow another turn
                 # to reuse a native session whose execution might still be running.
                 try:
-                    await self._call("POST", f"/session/{session.native_id}/abort", session=session)
+                    await self._abort_and_check(session)
                 except BaseException:
                     session.abort_failed = True
                     raise
@@ -418,6 +422,23 @@ class OpenCodeAdapter:
                     # Keep the completed turn intact; the next turn is fenced and
                     # the existing runtime snapshot reports the failed update.
                     session.permission_error = True
+
+    async def _abort_and_check(self, session):
+        """An abort RPC reply alone cannot release native execution ownership."""
+        try:
+            await self._call("POST", f"/session/{session.native_id}/abort", session=session)
+            statuses = await self._call("GET", "/session/status", session=session)
+            if not isinstance(statuses, dict):
+                raise RuntimeError("OpenCode did not return native session status")
+            # Official status.list omits idle sessions; this native identity
+            # was already established by POST /session for this owner.
+            status = statuses.get(session.native_id)
+            if status is not None and status.get("type") != "idle":
+                raise RuntimeError("OpenCode execution stop is unconfirmed")
+        except BaseException:
+            session.abort_failed = True
+            raise
+        session.abort_failed = False
 
     async def deliver_control_input_impl(self, request, inputs):
         session = self._sessions.get(request.session_id or "default")
