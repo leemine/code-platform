@@ -50,6 +50,8 @@ class FakeClient:
 
     async def query(self, prompt, session_id):
         self.sid = session_id
+        messages = [item async for item in prompt]
+        await self.queue.put(sdk.UserMessage(messages[0]['message']['content'], uuid=messages[0]['uuid']))
         await self.queue.put(sdk.SystemMessage('init', {'session_id': session_id}))
         self.worker = asyncio.create_task(self.execute())
 
@@ -64,13 +66,17 @@ class FakeClient:
         await self.queue.put(None)
 
     async def receive_response(self):
+        async for item in self.receive_messages():
+            yield item
+            if isinstance(item, sdk.ResultMessage):
+                return
+
+    async def receive_messages(self):
         while True:
             item = await self.queue.get()
             if item is None:
                 return
             yield item
-            if isinstance(item, sdk.ResultMessage):
-                return
 
     async def interrupt(self):
         self.interrupted = True
@@ -348,3 +354,271 @@ async def test_unconfirmed_sdk_close_fences_session(host, monkeypatch):
     # A local fixture exception is not proof of native shutdown. Keep ownership.
     with pytest.raises(RuntimeError, match='shutdown is unconfirmed'):
         await app.cleanup()
+
+
+def native_system(client, subtype, **data):
+    return sdk.SystemMessage(subtype, {'session_id': client.sid, **data})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal_event', ['task_notification', 'task_updated'])
+async def test_background_explorers_wait_for_native_idle_and_last_summary(host, monkeypatch, terminal_event):
+    app, config, clients, _, _ = host
+    async def execute(client):
+        async def emit(item):
+            await client.queue.put(item)
+        await emit(native_system(client, 'session_state_changed', state='running'))
+        for i in range(4):
+            await emit(sdk.AssistantMessage([sdk.ToolUseBlock(f'launch-{i}', 'Agent', {'description': f'explore-{i}'})], 'shared'))
+            await emit(native_system(client, 'task_started', task_id=f'agent-{i}', tool_use_id=f'launch-{i}', task_type='local_agent'))
+        await emit(sdk.ResultMessage('success', 1, 1, False, 1, client.sid, result='WAITING'))
+        for i in range(4):
+            data = {'patch': {'status': 'completed'}} if terminal_event == 'task_updated' else {'status': 'completed', 'summary': f'CHILD-{i}'}
+            await emit(native_system(client, terminal_event, task_id=f'agent-{i}', **data))
+        # Real CLI can clear all tasks before several follow-up results arrive.
+        await emit(sdk.ResultMessage('success', 1, 1, False, 1, client.sid, result='Still waiting'))
+        await emit(sdk.ResultMessage('success', 1, 1, False, 0, client.sid, result=''))
+        await emit(sdk.ResultMessage('success', 1, 1, False, 1, client.sid, result='ALL FOUR SUMMARIZED'))
+        await emit(native_system(client, 'session_state_changed', state='idle'))
+        await emit(None)
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        finals = [x for x in chunks if x.get('event_type') == 'chat.final']
+        assert finals[-1]['content'] == 'ALL FOUR SUMMARIZED'
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+        tasks = finals[-1]['provider']['claude']['tasks']
+        assert len(tasks) == 4 and all(t['status'] == 'completed' for t in tasks)
+        history = session_history.read_session_history_records('one')
+        assert any(x.get('content') == 'ALL FOUR SUMMARIZED' for x in history)
+        roster = [x for x in history if x.get('event_type') == 'chat.subtask_update']
+        assert {x['subagent_id'] for x in roster} == {f'claude-agent-{i}' for i in range(4)}
+        assert len([x for x in roster if x['status'] == 'closed']) == 4
+        assert all(x['can_send_input'] is False for x in roster)
+        assert clients[0].closed
+        assert clients[0].options.env['CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS'] == '1'
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_background_snapshot_empty_is_not_a_terminal_task_result(host, monkeypatch):
+    app, config, clients, _, _ = host
+    async def execute(client):
+        for message in [native_system(client, 'session_state_changed', state='running'),
+                        native_system(client, 'background_tasks_changed', tasks=[{'task_id':'a','task_type':'local_agent'}]),
+                        sdk.ResultMessage('success',1,1,False,1,client.sid,result='WAITING'),
+                        native_system(client, 'background_tasks_changed', tasks=[]),
+                        None]:
+            await client.queue.put(message)
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('code') == 'claude_incomplete' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.final' for x in chunks)
+        assert clients[0].closed
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_native_idle_ignores_nested_tools_and_foreign_lifecycle(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def execute(client):
+        for msg in [native_system(client, 'session_state_changed', state='running'),
+                    native_system(client, 'task_started', task_id='nested', owned_by_subagent=True, task_type='local_bash'),
+                    sdk.SystemMessage('task_started', {'session_id':'other','task_id':'foreign'}),
+                    sdk.ResultMessage('success',1,1,False,1,client.sid,result='DONE'),
+                    native_system(client, 'session_state_changed', state='idle'), None]:
+            await client.queue.put(msg)
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert next(x for x in chunks if x.get('event_type') == 'chat.final')['content'] == 'DONE'
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['failed', 'stopped', 'killed'])
+async def test_background_terminal_status_is_preserved_without_claiming_acceptance(host, monkeypatch, status):
+    app, config, _, _, _ = host
+    async def execute(client):
+        for msg in [native_system(client, 'session_state_changed', state='running'),
+                    native_system(client, 'task_started', task_id='child', task_type='local_agent'),
+                    native_system(client, 'task_updated', task_id='child', patch={'status':status}),
+                    sdk.ResultMessage('success',1,1,False,1,client.sid,result='Child did not complete successfully'),
+                    native_system(client, 'session_state_changed', state='idle'), None]:
+            await client.queue.put(msg)
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        final = next(x for x in chunks if x.get('event_type') == 'chat.final')
+        assert final['provider']['claude']['tasks'][0]['status'] == status
+        assert final['task_acceptance'] == 'unknown'
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_background_without_native_idle_capability_fails_explicitly(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def execute(client):
+        await client.queue.put(native_system(client, 'task_started', task_id='child', task_type='local_agent'))
+        await client.queue.put(sdk.ResultMessage('success',1,1,False,1,client.sid,result='WAITING'))
+        await client.queue.put(None)
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('code') == 'claude_lifecycle_unsupported' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.final' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_only_observed_tasks_and_waits_for_idle(host, monkeypatch):
+    app, config, clients, _, _ = host
+    waiting = asyncio.Event()
+    stopped = []
+    execute_original = FakeClient.execute
+    async def execute(client):
+        await client.queue.put(native_system(client, 'session_state_changed', state='running'))
+        for task_id in ('child-1','child-2'):
+            await client.queue.put(native_system(client, 'task_started', task_id=task_id, task_type='local_agent'))
+        await client.queue.put(sdk.ResultMessage('success',1,1,False,1,client.sid,result='WAITING'))
+        waiting.set()
+    async def stop_task(client, task_id):
+        stopped.append(task_id)
+        await client.queue.put(native_system(client, 'task_updated', task_id=task_id, patch={'status':'killed'}))
+        if len(stopped)==2:
+            await client.queue.put(sdk.ResultMessage('success',1,1,True,0,client.sid,result=''))
+            await client.queue.put(native_system(client, 'session_state_changed', state='idle'))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    monkeypatch.setattr(FakeClient, 'stop_task', stop_task, raising=False)
+    await app.create_instance(config)
+    chunks=[]
+    async def consume():
+        async for item in app.process_message_stream(request()):chunks.append(item.payload)
+    producer=asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(waiting.wait(),5)
+        # Give the original single reader its queued starts, without a second consumer.
+        while len(app._adapter._sessions['one'].native_tasks.active)!=2:
+            await asyncio.sleep(0)
+        assert not clients[0].closed
+        await app._adapter.process_interrupt(request(method=ReqMethod.CHAT_CANCEL,intent='cancel'))
+        await asyncio.wait_for(producer,5)
+        assert set(stopped)=={'child-1','child-2'} and len(stopped)==2
+        assert clients[0].closed
+        assert any(x.get('code')=='claude_cancelled' for x in chunks)
+        assert not any(x.get('event_type')=='chat.final' for x in chunks)
+        monkeypatch.setattr(FakeClient,'execute',execute_original)
+        resumed=[x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('content')=='reply' for x in resumed)
+        assert clients[1].options.resume==clients[0].sid
+    finally:
+        producer.cancel();await asyncio.gather(producer,return_exceptions=True)
+        await app.cleanup()
+
+
+
+@pytest.mark.asyncio
+async def test_resume_ignores_orphan_result_and_idle_before_exact_input_echo(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def query(client, prompt, session_id):
+        client.sid = session_id
+        messages=[m async for m in prompt]
+        for m in [native_system(client,'task_notification',task_id='orphan',status='stopped'),
+                  native_system(client,'session_state_changed',state='running'),
+                  sdk.ResultMessage('success',1,1,False,0,session_id,result=''),
+                  native_system(client,'session_state_changed',state='idle'),
+                  sdk.UserMessage('unrelated echo',uuid='not-this-input'),
+                  sdk.UserMessage(messages[0]['message']['content'],uuid=messages[0]['uuid']),
+                  native_system(client,'session_state_changed',state='running'),
+                  sdk.ResultMessage('success',1,1,False,1,session_id,result='CURRENT INPUT ANSWER'),
+                  native_system(client,'session_state_changed',state='idle'),None]:
+            await client.queue.put(m)
+    monkeypatch.setattr(FakeClient,'query',query)
+    await app.create_instance(config)
+    try:
+        chunks=[x.payload async for x in app.process_message_stream(request())]
+        finals=[x for x in chunks if x.get('event_type')=='chat.final']
+        assert len(finals)==1 and finals[0]['content']=='CURRENT INPUT ANSWER'
+        assert not any(x.get('event_type')=='chat.subtask_update' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cancel_control_waits_for_same_owner_sdk_close(host, monkeypatch):
+    app, config, clients, _, options = host
+    options['ask'] = True
+    waiting, closing, allow_close = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_disconnect = FakeClient.disconnect
+    async def disconnect(client):
+        closing.set()
+        await allow_close.wait()
+        await original_disconnect(client)
+    monkeypatch.setattr(FakeClient, 'disconnect', disconnect)
+    await app.create_instance(config)
+    async def consume():
+        async for x in app.process_message_stream(request()):
+            if x.payload.get('event_type') == 'chat.ask_user_question':waiting.set()
+    producer=asyncio.create_task(consume());control=None
+    try:
+        await asyncio.wait_for(waiting.wait(),5)
+        control=asyncio.create_task(app._adapter.process_interrupt(request(method=ReqMethod.CHAT_CANCEL,intent='cancel')))
+        await asyncio.wait_for(closing.wait(),5)
+        assert not control.done() and not clients[0].closed
+        allow_close.set()
+        await asyncio.wait_for(control,5)
+        await asyncio.wait_for(producer,5)
+        assert clients[0].closed and not app._adapter._sessions['one'].close_unconfirmed
+    finally:
+        allow_close.set();producer.cancel()
+        await asyncio.gather(producer,*([] if control is None else [control]),return_exceptions=True)
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_child_activity_and_summary_restore_through_existing_history(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def execute(client):
+        frames = [native_system(client, 'session_state_changed', state='running'),
+            native_system(client, 'task_started', task_id='child', task_type='local_agent', tool_use_id='launch', description='Inspect architecture'),
+            native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
+            native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
+            sdk.AssistantMessage([sdk.ToolUseBlock('read-1','Read',{'file_path':'entry.py'})], 'shared', parent_tool_use_id='launch'),
+            sdk.UserMessage([sdk.ToolResultBlock('read-1','CHILD TOOL OUTPUT',False)], parent_tool_use_id='launch'),
+            sdk.UserMessage([sdk.ToolResultBlock('foreign','FOREIGN SECRET',False)], parent_tool_use_id='unrelated'),
+            native_system(client,'task_notification',task_id='child',status='completed',summary='CHILD SUMMARY'),
+            sdk.ResultMessage('success',1,1,False,1,client.sid,result='PARENT SUMMARY'),
+            native_system(client,'session_state_changed',state='idle'),None]
+        for frame in frames:await client.queue.put(frame)
+    monkeypatch.setattr(FakeClient,'execute',execute)
+    await app.create_instance(config)
+    try:
+        chunks=[x.payload async for x in app.process_message_stream(request())]
+        activities=[x for x in chunks if x.get('event_type')=='chat.subagent_activity']
+        assert any(x.get('summary')=='CHILD TOOL OUTPUT' for x in activities)
+        paired=[x for x in activities if x.get('tool_call_id')=='read-1']
+        assert {x['kind']for x in paired}=={'tool_call','tool_result'}
+        assert len({x['activity_id']for x in paired})==2
+        assert len([x for x in activities if x.get('summary')=='Reading entrypoint'])==1
+        assert next(x for x in activities if x.get('summary')=='Reading entrypoint')['kind']=='thinking'
+        assert not any('FOREIGN SECRET' in str(x) for x in chunks)
+        assert next(x for x in chunks if x.get('event_type')=='chat.final')['content']=='PARENT SUMMARY'
+        from jiuwenswarm.server.control.history_service import load_history_page
+        session_history.flush_history_writes()
+        page=load_history_page('one',1,subagent_id='claude-child')
+        assert any(x.get('content')=='CHILD SUMMARY' for x in page['messages'])
+        assert any(x.get('event_type')=='chat.subagent_activity' for x in page['messages'])
+        assert 'claude-child' in session_history.list_session_subagent_ids('one')
+    finally:await app.cleanup()

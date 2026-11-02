@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
+from .subagent_projection import SubagentProjection
 
 
 _CANCEL_TIMEOUT = 15
@@ -64,6 +65,7 @@ class Session:
     pending: dict = field(default_factory=dict)
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    subagents: SubagentProjection | None = None
 
 
 def command_result(item: dict) -> dict:
@@ -272,6 +274,77 @@ class CodexAdapter:
         return {"approvalPolicy": "never" if profile == "full_access" else "on-request",
                 "approvalsReviewer": "user", "sandbox": "danger-full-access" if profile == "full_access" else "workspace-write"}
 
+    async def _collab_events(self, session, request, method, item):
+        if item.get("senderThreadId") != session.thread_id:
+            return
+        children = session.subagents
+        receivers = item.get("receiverThreadIds", [])
+        tool = item.get("tool", "collaboration")
+        if method == "item/started":
+            yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {
+                "id": item["id"], "name": tool, "arguments": {"agents": receivers, "prompt": item.get("prompt")}}})
+        if item.get("tool") == "spawnAgent":
+            for native_id in receivers:
+                if isinstance(native_id, str) and native_id:
+                    prompt = item.get("prompt") or ""
+                    children.register(native_id, prompt[:80] or native_id)
+        owned = [n for n in receivers if n in children.children]
+        if not owned:
+            return
+        results = {}
+        for native_id in owned:
+            state = item.get("agentsStates", {}).get(native_id, {})
+            status = state.get("status")
+            if method == "item/completed":
+                # A public snapshot request on a proven child; no second event reader.
+                async for payload in self._child_snapshot(session, native_id):
+                    yield self._chunk(request, payload)
+            message = state.get("message")
+            if status in {"completed", "errored"} and isinstance(message, str) and message.strip():
+                children.result(native_id, message, source="collabAgentToolCall.agentsStates.message")
+                results[children.children[native_id]["subagent_id"]] = message
+            activity = children.activity(native_id, "error" if status == "errored" else "tool_result" if method == "item/completed" else "tool_call",
+                message or f"{tool}: {status or item.get('status', 'unknown')}", identity=item["id"], tool_name=tool, tool_call_id=item["id"])
+            if activity:
+                yield self._chunk(request, activity)
+            outcome = {"completed": "completed", "errored": "failed", "interrupted": "cancelled", "shutdown": "parent_ended", "notFound": "parent_ended"}.get(status)
+            yield self._chunk(request, children.roster(native_id, outcome=outcome,
+                closed=status in {"shutdown", "notFound"}, native_status=status))
+        if method == "item/completed":
+            yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": item["id"],
+                "tool_name": tool, "content": json.dumps({n: item.get("agentsStates", {}).get(n, {}) for n in owned}, ensure_ascii=False),
+                "invocation_status": item.get("status"), "task_acceptance": "unknown",
+                "tool_result": {"subagent_wait": {"results": results}}})
+
+    async def _child_snapshot(self, session, native_id):
+        children = session.subagents
+        try:
+            response = await asyncio.wait_for(asyncio.to_thread(session.client.thread_read, native_id, include_turns=True), 5)
+            thread = response.model_dump(mode="json", by_alias=True)["thread"]
+            if thread.get("id") != native_id:
+                raise ValueError("Codex returned a different child thread")
+        except Exception as exc:
+            logging.getLogger(__name__).info("Codex child snapshot unavailable error_type=%s", type(exc).__name__)
+            return
+        for turn in thread.get("turns", []):
+            if not turn.get("id"):
+                continue
+            children.register(native_id, "", task_id=turn["id"])
+            final = []
+            for item in turn.get("items", []):
+                if item.get("type") == "commandExecution":
+                    done = item.get("status") in {"completed", "failed", "declined"}
+                    summary = item.get("aggregatedOutput", "") if done else item.get("command", "")
+                    activity = children.activity(native_id, "tool_result" if done else "tool_call", summary,
+                        identity=item["id"], tool_name="shell", tool_call_id=item["id"],
+                        ok=False if item.get("status") in {"failed", "declined"} else item["exitCode"] == 0 if type(item.get("exitCode")) is int else None)
+                    if activity:
+                        yield activity
+                elif item.get("type") == "agentMessage" and item.get("phase") != "commentary":
+                    final.append(item.get("text", ""))
+            if turn.get("status") == "completed":
+                children.result(native_id, "\n".join(final), source="thread.read.turns")
+
     async def process_message_stream_impl(self, request, inputs):
         if request.req_method not in {None, ReqMethod.CHAT_SEND} or request.params.get("answers"):
             raise ValueError("Use the active Codex control input channel")
@@ -280,6 +353,8 @@ class CodexAdapter:
                                    mode=request.params.get("mode", "agent"),
                                    project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
         session = self._sessions[sid]
+        if session.subagents is None:
+            session.subagents = SubagentProjection("codex", sid)
         model = resolve_model(request)
         async with session.lock:
             if session.cancelled and not session.cancel_confirmed:
@@ -348,7 +423,10 @@ class CodexAdapter:
                     # Native retries remain owned by Codex. Do not turn a
                     # retry notification into a second terminal event.
                     logging.getLogger(__name__).warning("Codex native error request=%s will_retry=%s elapsed=%.3fs", request.request_id, payload.get("willRetry"), time.monotonic() - started)
-                if method == "item/agentMessage/delta":
+                if method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
+                    async for projected in self._collab_events(session, request, method, item):
+                        yield projected
+                elif method == "item/agentMessage/delta":
                     yield self._chunk(request, {"event_type": "chat.delta", "content": payload.get("delta", "")})
                 elif method == "item/started" and item.get("type") == "commandExecution":
                     session.command_ids.add(item["id"])
