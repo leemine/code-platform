@@ -213,3 +213,11 @@ The current page provides only **Browser path** and **Browser run mode**. Leavin
 In WorkSwarm 0.2.5, **Updates** was under **More**. The new interface provides a separate **Updates** entry in the left sidebar.
 
 ![New standalone Update entry](../assets/images/settings-channels-migration/en/update-entry.png)
+
+### Claude background exploration in single-agent mode
+
+In installations with external single-agent engines, the official Claude CLI owns background exploration. Swarm projects its lifecycle into the existing task/subagent panels; these native subagents are not Team members. This integration exposes returned progress, tool activity and task summaries for observation; unsupported send/resume controls remain unavailable. An intermediate main-agent response does not end its background work; the request closes after the native execution settles.
+
+### External subagent details
+
+Claude/Codex native subagents use the existing Subagents panel and child history for returned activity, results, and refresh recovery. Claude completion notifications may contain only a summary; Codex child snapshots may not yet be readable. Missing content is not inferred or reconstructed from private native files. Tool return, subtask completion and task acceptance remain distinct. OpenCode delegation remains disabled; this change does not expand its permissions or enable subagents.

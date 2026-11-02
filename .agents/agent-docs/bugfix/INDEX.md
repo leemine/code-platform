@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 16 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 18 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -31,7 +31,7 @@ generated: true
 | [jiuwenswarm/common/config_panel](#module-14) | 1 |
 | [jiuwenswarm/server](#module-15) | 1 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-16) | 5 |
-| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-17) | 2 |
+| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-17) | 4 |
 | [scripts](#module-18) | 1 |
 | [server/worker](#module-19) | 1 |
 | [settings](#module-20) | 1 |
@@ -179,6 +179,8 @@ generated: true
 |---|---|---|---|---|---|---|
 | [B_20261030_2041_opencode-cli-discovery](agent_adapter/B_20261030_2041_opencode-cli-discovery.md) | B | OpenCode 桌面 PATH 缺口与传输边界收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, scripts | jiuwenswarm/server/runtime/agent_adapter/providers/cli.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_transport.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, tests/unit_tests/agentserver/test_opencode_direct_adapter.py, scripts/assemble-electron-linux.py | 无独立 D：用户确认保留官方 HTTP/SSE 并隔离传输边界；延续管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 的外部 Provider 桌面候选。 |
 | [B_20261102_1123_provider-native-timeouts](agent_adapter/B_20261102_1123_provider-native-timeouts.md) | B | 外部 Provider 模型超时与整轮时限职责修复 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, jiuwenswarm/common | jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/common/config_panel/config_set_handlers.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py | 无独立 D：用户在本会话确认超时职责修正与官方配置复用方案，无独立 D 文档；续写当前外部适配器契约，不修改已归档设计。 |
+| [B_20261102_1436_claude-background-lifecycle](agent_adapter/B_20261102_1436_claude-background-lifecycle.md) | B | Claude 后台探索的原生完成边界 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py | 无独立 D：用户明确确认的最小缺陷修复，沿现有 S_02_external-adapter-boundary 契约，无新增执行架构。 |
+| [B_20261102_1543_provider-subagent-content](agent_adapter/B_20261102_1543_provider-subagent-content.md) | B | 外部子智能体卡片缺少内部活动与结果 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/subagent_projection.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认Provider适配模块最小修复；沿原生命周期候选续作，无新宿主执行架构。OpenCode经用户确认后置。 |
 
 <a id="module-18"></a>
 

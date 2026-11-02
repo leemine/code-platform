@@ -17,9 +17,77 @@ from typing import Any
 from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_model, native_timeout_env
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
+from .subagent_projection import SubagentProjection
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _NativeTasks:
+    """Observe official lifecycle facts; scheduling stays in the CLI/Runtime."""
+    tasks: dict = field(default_factory=dict)
+    active: set = field(default_factory=set)
+    stop_requested: set = field(default_factory=set)
+    state_events: bool = False
+    idle: bool = False
+
+    def observe(self, subtype, data, native_id):
+        if data.get("session_id", native_id) != native_id:
+            return
+        if subtype == "session_state_changed":
+            self.state_events = True
+            self.idle = data.get("state") == "idle"
+        elif subtype == "background_tasks_changed" and isinstance(data.get("tasks"), list):
+            # This is an authoritative *live* snapshot, not completion proof.
+            self.active = {t["task_id"] for t in data["tasks"]
+                           if isinstance(t, dict) and t.get("task_id") and not t.get("ambient")}
+            for task_id in self.active:
+                self.tasks.setdefault(task_id, {"task_id": task_id, "status": "unknown"})
+        elif subtype in {"task_started", "task_progress", "task_updated", "task_notification"}:
+            task_id = data.get("task_id")
+            if not task_id or data.get("owned_by_subagent"):
+                return
+            if subtype != "task_started" and task_id not in self.tasks:
+                return
+            task = self.tasks.setdefault(task_id, {"task_id": task_id, "status": "unknown"})
+            for key in ("tool_use_id", "description", "task_type", "subagent_type"):
+                if key in data:
+                    if key != "description" or subtype == "task_started" or key not in task:
+                        task[key] = data[key]
+            status = (data.get("patch") or {}).get("status") if subtype == "task_updated" else data.get("status")
+            if subtype == "task_started":
+                status = "running"
+            if status is not None:
+                task["status"] = status
+            if subtype == "task_notification" and isinstance(data.get("summary"), str):
+                task["summary"] = data["summary"]
+            if status in {"completed", "failed", "stopped", "killed"}:
+                self.active.discard(task_id)
+            elif subtype == "task_started":
+                self.active.add(task_id)
+            task.setdefault("created_at", int(time.time() * 1000))
+            task["updated_at"] = int(time.time() * 1000)
+            task["revision"] = task.get("revision", 0) + 1
+            return task
+
+    @staticmethod
+    def web_update(task, session_id):
+        if task.get("task_type") not in {"local_agent", "remote_agent"}:
+            return None
+        outcome = {"completed": "completed", "failed": "failed", "stopped": "cancelled", "killed": "cancelled"}.get(task["status"])
+        return {"event_type": "chat.subtask_update", "session_id": session_id,
+                "parent_session_id": session_id, "subagent_id": "claude-" + task["task_id"],
+                "task_id": task["task_id"], "subagent_type": task.get("subagent_type", ""),
+                "display_name": task.get("description") or task["task_id"],
+                "task_description": task.get("description", ""),
+                "status": "closed" if outcome else "running", "turn_outcome": outcome,
+                "lifecycle": "closed" if outcome else "live", "can_send_input": False,
+                "needs_resume": False, "closed_reason": outcome,
+                "closed_at": task["updated_at"] if outcome else None,
+                "created_at": task["created_at"], "updated_at": task["updated_at"],
+                "revision": task["revision"],
+                "provider": {"claude": {"task_id": task["task_id"], "status": task["status"]}}}
 
 
 @dataclass
@@ -37,6 +105,8 @@ class Session:
     close_unconfirmed: bool = False
     pending: dict = field(default_factory=dict)
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    native_tasks: _NativeTasks = field(default_factory=_NativeTasks)
+    producer_done: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class ClaudeAdapter:
@@ -171,12 +241,14 @@ class ClaudeAdapter:
                "XDG_CACHE_HOME": str(session.root / "cache"), "APPDATA": str(session.root / "appdata"),
                "LOCALAPPDATA": str(session.root / "localappdata"), "ANTHROPIC_BASE_URL": model.api_base,
                "ANTHROPIC_API_KEY": model.api_key, "ANTHROPIC_AUTH_TOKEN": "", "CLAUDE_CODE_OAUTH_TOKEN": "",
-               "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_VERTEX": "0", "CLAUDE_CODE_USE_FOUNDRY": "0"}
+               "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_VERTEX": "0", "CLAUDE_CODE_USE_FOUNDRY": "0",
+               "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS": "1"}
         env.update(native_timeout_env(self._settings, model))
         return ClaudeAgentOptions(cwd=session.directory, cli_path=self._settings.get("cli_path"),
             model=model.model_name, env=env, setting_sources=[], strict_mcp_config=True,
             session_id=None if session.started else session.native_id,
             resume=session.native_id if session.started else None,
+            extra_args={"replay-user-messages": None},
             permission_mode="bypassPermissions" if session.desired_permission == "full_access" else "default",
             can_use_tool=lambda name, inputs, context: self._approval(session, name, inputs, context),
             include_partial_messages=True)
@@ -196,9 +268,15 @@ class ClaudeAdapter:
         if session.active:
             raise ValueError("Session already has a producer; use Runtime scheduling")
         session.active, session.cancelled = True, False
+        session.producer_done.clear()
+        session.native_tasks = tasks = _NativeTasks()
+        children = SubagentProjection("claude", sid)
         session.control_ready.clear()
         terminal = False
         tools = {}
+        result_message = None
+        input_id = str(uuid.uuid4())
+        input_accepted = False
         reader = None
         stream = None
         client = None
@@ -215,9 +293,14 @@ class ClaudeAdapter:
             session.effective_permission = session.desired_permission
             session.model_revision = revision
             phase = "query_submit"
-            await client.query(inputs["query"], session_id=session.native_id)
+            async def native_input():
+                yield {"type": "user", "uuid": input_id, "parent_tool_use_id": None,
+                       "message": {"role": "user", "content": inputs["query"]}}
+            await client.query(native_input(), session_id=session.native_id)
             phase = "execution"
-            stream = client.receive_response()
+            # receive_response stops at the main result, even while native
+            # background agents and their automatic follow-up turns still run.
+            stream = client.receive_messages()
             while True:
                 if reader is None:
                     reader = asyncio.create_task(anext(stream))
@@ -239,7 +322,61 @@ class ClaudeAdapter:
                 message = reader.result()
                 last_event = type(message).__name__
                 reader = None
+                if isinstance(message, UserMessage) and message.uuid == input_id:
+                    # Resume can first emit an orphan task's zero-turn result.
+                    # The official input echo identifies this request exactly.
+                    input_accepted = True
+                    result_message = None
+                    tasks.idle = False
+                    continue
+                if isinstance(message, SystemMessage):
+                    if input_accepted or message.subtype == "session_state_changed":
+                        task = tasks.observe(message.subtype, message.data, session.native_id)
+                        if task is not None:
+                            payload = tasks.web_update(task, sid)
+                            if payload is not None:
+                                native_id = task["task_id"]
+                                children.register(native_id, task.get("description", ""))
+                                data = message.data
+                                summary = data.get("summary") if message.subtype == "task_notification" else data.get("description")
+                                if isinstance(summary, str) and summary.strip():
+                                    terminal_task = task["status"] in {"completed", "failed", "stopped", "killed"}
+                                    if message.subtype == "task_notification":
+                                        children.result(native_id, summary, source="task_notification.summary")
+                                    activity = children.activity(native_id,
+                                        "error" if task["status"] == "failed" else "tool_result" if terminal_task else "thinking",
+                                        summary, identity="progress" if message.subtype == "task_progress" else data.get("uuid") or message.subtype + str(task["revision"]),
+                                        tool_name=data.get("last_tool_name"))
+                                    if activity:
+                                        yield self._chunk(request, activity)
+                                yield self._chunk(request, children.roster(native_id,
+                                    outcome=payload["turn_outcome"], closed=payload["lifecycle"] == "closed",
+                                    native_status=task["status"]))
+                    if session.cancelled:
+                        await self._stop_native_tasks(session)
+                    if input_accepted and tasks.idle and not tasks.active and result_message is not None:
+                        break
                 if getattr(message, "parent_tool_use_id", None):
+                    # Route only children proven by this producer's task_started.
+                    task = next((t for t in tasks.tasks.values()
+                        if t.get("tool_use_id") == message.parent_tool_use_id and t["task_id"] in children.children), None)
+                    if task and isinstance(message, (AssistantMessage, UserMessage)) and isinstance(message.content, list):
+                        for block in message.content:
+                            if isinstance(block, ToolUseBlock):
+                                tools[block.id] = block.name
+                                activity = children.activity(task["task_id"], "tool_call",
+                                    block.name + ": " + json.dumps(block.input, ensure_ascii=False),
+                                    identity=block.id, tool_name=block.name, tool_call_id=block.id)
+                            elif isinstance(block, ToolResultBlock):
+                                content = block.content if isinstance(block.content, str) else "\n".join(
+                                    c.get("text", "") for c in (block.content or []) if isinstance(c, dict) and c.get("type") == "text")
+                                activity = children.activity(task["task_id"], "tool_result", content,
+                                    identity=block.tool_use_id, tool_name=tools.get(block.tool_use_id),
+                                    tool_call_id=block.tool_use_id, ok=False if block.is_error else None)
+                            else:
+                                continue
+                            if activity:
+                                yield self._chunk(request, activity)
                     continue
                 if isinstance(message, SystemMessage) and message.subtype == "init":
                     if message.data.get("session_id") != session.native_id:
@@ -277,14 +414,29 @@ class ClaudeAdapter:
                     if message.session_id != session.native_id:
                         raise ValueError("Claude completed a different session")
                     session.started = True
-                    terminal = True
-                    if session.cancelled or message.is_error:
-                        outcome = "cancelled" if session.cancelled else "error"
+                    if not input_accepted and not message.is_error:
+                        logger.info("Claude pre-input result ignored request=%s native_session=%s", request.request_id, session.native_id)
+                        continue
+                    result_message = message
+                    if message.is_error and not session.cancelled:
+                        terminal = True
+                        outcome = "error"
                         logger.warning("Claude terminal request=%s outcome=%s subtype=%s api_status=%s elapsed=%.3fs", request.request_id, outcome, message.subtype, getattr(message, "api_error_status", None), time.monotonic() - started)
                         yield self._chunk(request, {"event_type": "chat.error", "code": "claude_" + outcome, "error": "Claude execution cancelled" if session.cancelled else "Claude model request failed; check model service compatibility and authentication"}, complete=True, outcome=outcome)
-                    else:
-                        yield self._chunk(request, {"event_type": "chat.final", "content": message.result or "", "invocation_status": "completed", "task_acceptance": "unknown"}, complete=True, outcome="completed")
-                    return
+                        return
+                    if not tasks.state_events:
+                        if tasks.tasks:
+                            yield self._chunk(request, {"event_type": "chat.error", "code": "claude_lifecycle_unsupported", "error": "Claude CLI did not expose a session idle boundary for background tasks"}, complete=True, outcome="error")
+                            return
+                        break
+            terminal = True
+            if session.cancelled:
+                yield self._chunk(request, {"event_type": "chat.error", "code": "claude_cancelled", "error": "Claude execution cancelled"}, complete=True, outcome="cancelled")
+            else:
+                payload = {"event_type": "chat.final", "content": result_message.result or "", "invocation_status": "completed", "task_acceptance": "unknown"}
+                if tasks.tasks:
+                    payload["provider"] = {"claude": {"tasks": list(tasks.tasks.values())}}
+                yield self._chunk(request, payload, complete=True, outcome="completed")
         except StopAsyncIteration:
             yield self._chunk(request, {"event_type": "chat.error", "code": "claude_incomplete", "error": "Claude stream ended without a result"}, complete=True, outcome="error")
         except TimeoutError:
@@ -305,15 +457,17 @@ class ClaudeAdapter:
                 if client is not None:
                     try:
                         await client.disconnect()
-                    except BaseException:
+                    except BaseException as exc:
                         session.close_unconfirmed = True
-                        logger.warning("Claude shutdown unconfirmed request=%s", request.request_id)
+                        logger.warning("Claude shutdown unconfirmed request=%s error_type=%s", request.request_id, type(exc).__name__)
                         raise
                     finally:
                         session.client = None
                         session.active = False
+                        session.producer_done.set()
                 else:
                     session.active = False
+                    session.producer_done.set()
             # Cancellation ends the Turn, not the initialized SDK Session. Keep
             # its official transcript for resume; close/eviction still owns cleanup.
             if not terminal and not (session.cancelled and session.started):
@@ -350,7 +504,25 @@ class ClaudeAdapter:
             self._release_controls(session)
             if session.client:
                 await asyncio.wait_for(session.client.interrupt(), 5)
+                await self._stop_native_tasks(session)
+                # Runtime cancels its producer after this control returns.
+                # Let the SDK owner drain/close first; a second cancellation
+                # during AnyIO teardown otherwise leaves shutdown unconfirmed.
+                await asyncio.wait_for(session.producer_done.wait(), 20)
+                if session.close_unconfirmed:
+                    raise RuntimeError("Claude SDK shutdown is unconfirmed; retain execution ownership")
         return AgentResponse(request.request_id, request.channel_id, payload={"event_type": "chat.interrupt_result", "intent": "cancel", "success": True})
+
+    @staticmethod
+    async def _stop_native_tasks(session):
+        # Only IDs observed from this producer's native session are owned here.
+        tasks = session.native_tasks
+        client = session.client
+        if client is None:
+            return
+        for task_id in tuple(tasks.active - tasks.stop_requested):
+            tasks.stop_requested.add(task_id)
+            await asyncio.wait_for(client.stop_task(task_id), 5)
 
     async def cleanup_session_adapter(self, session_id):
         session = self._sessions.get(session_id)

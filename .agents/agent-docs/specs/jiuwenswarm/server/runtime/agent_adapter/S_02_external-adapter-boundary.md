@@ -227,3 +227,25 @@ Claude SDK connect/disconnect 在同一生产者任务执行；关闭失败保�
 根因、来源、回归与待发布边界见 B_20261102_1123_provider-native-timeouts。
 
 Claude的专有首字节配置只是向原生CLI透传，不保证所有版本/路由均支持。已验证CLI2.1.274在自定义ANTHROPIC_BASE_URL路径不启用独立首字节期限；普通请求超时仍有效。不得据此新增宿主看门狗或宣称与Native首有效输出保护等价。
+
+
+## Claude 后台任务与最终结果边界（2026-11-02）
+
+ClaudeAdapter 唯一事件读者使用官方 receive_messages；receive_response 的首个 ResultMessage 不代表后台任务及自动汇总都结束。通过官方 env 开启 session_state_changed：在原生 idle、当前请求活跃任务集合为空且已收到原生结果时，才提交最后结果并关闭客户端。后台 started/progress/updated/notification 与 live snapshot 仅作事实投影，不增调度器；snapshot移除不补成功。updated或notification中的 completed/failed/stopped/killed均为任务终态，嵌套工具 owned_by_subagent 与其他 native session 不归当前任务所有。final.provider.claude.tasks保存原生状态并沿原历史透传，不改变task_acceptance=unknown。
+
+取消沿原Runtime控制和官方interrupt/stop_task，仅处理当前producer观测到的任务ID，继续由原Runtime排空/关闭。普通无后台旧CLI保留Result完成兼容；已经产生后台任务却无原生idle能力时明确不支持，不通过延时、文本/文件轮询或空Result猜结束，不静默升级SDK。EOF/未确认关闭保持既有错误/fence。详见 B_20261102_1436_claude-background-lifecycle。
+
+原生输入通过官方 SDK 的 AsyncIterable user frame 携带本轮 UUID，开启 replay-user-messages；匹配的 UserMessage.uuid 是输入归属边界。重连时在该回显之前出现的旧后台任务通知、成功空Result及idle不能结束新请求，也不按num_turns/文本猜测归属；原生错误仍明确上报。取消控制在原 SDK owner 完成关闭后才返回，以免 Runtime 后续取消打断同一任务的 AnyIO 收尾；关闭未确认仍保留原fence。
+
+Claude原生local_agent/remote_agent的启动、进度与终态转换为已有chat.subtask_update，沿现有父会话历史及Web子智能体store/panel消费。任务ID保留Claude命名空间、Provider专有状态放provider.claude；不引入Team成员、宿主执行队列或新UI。仅投影真实状态，can_send_input=false，不声称支持未接入的子任务交互/冷恢复；进度不能覆盖原始任务标题。
+
+
+## 外部子智能体活动与结果投影（2026-11-02）
+
+Claude/Codex只在各自现有producer中观察官方事实，providers/subagent_projection.py仅复用已有chat.subtask_update、chat.subagent_activity及append_history_record子桶；没有执行、队列、轮询、审批或新事件订阅。父Session/子Agent/原生任务关联必须明确，未知来源不收录。工具调用与返回保留实际tool_call_id，activity_id区分阶段；重复快照幂等，历史写入使用不同不可变记录ID。缺失退出码或任务验收事实不推断为成功。
+
+Claude仅在本轮精确输入回显后接收task_started证明的子Agent。task_progress作为最新进度活动（不是新的工具调用），官方子消息通过parent_tool_use_id关联原启动工具，实际工具调用/返回沿既有活动与子历史保留。task_notification.summary作为来源明确的任务完成摘要进入子历史；未通过公开事件返回的完整正文不通过原生内部文件补流。原idle/取消/SDK owner关闭边界保持。
+
+Codex在原父Turn协作工具通知中接受senderThreadId匹配且spawnAgent确认的子线程，其他目标不自动加入名册或读取。已确认子线程在实际协作item/completed时使用公开thread_read(include_turns=True)快照；没有第二事件读者或定时查询。工具活动和已完成子Turn正文进入原子历史，agentsStates.message保持来源；尚未可读的快照仅记录脱敏诊断，不阻断父任务或补造正文。完成子Turn是idle，只有原生shutdown/notFound才投影关闭；不开放尚未接入的子Agent控制。更新范围受原父producer生命周期限制，不建立父Turn之外的后台监听器。
+
+Web继续复用原活动、结果、历史恢复与只读控件；不改Runtime调度/审批、公共协议或Native实现。OpenCode仍保持原task=deny，子Agent开放须先验证权限继承、审批、取消及终态，此能力作为后续任务，不把观察映射模拟测试当作当前桌面已支持。

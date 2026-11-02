@@ -135,6 +135,55 @@ def request(sid='one', method=ReqMethod.CHAT_SEND, **params):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('wrong_thread',[False,True])
+@pytest.mark.parametrize('child_failed',[False,True])
+async def test_official_collab_child_snapshot_uses_original_history_and_parent_boundary(host, monkeypatch,wrong_thread,child_failed):
+    from openai_codex.generated.v2_all import CollabAgentToolCallThreadItem
+    app, config, clients, _, _ = host
+    reads=[]
+    def finish(client, status='completed'):
+        for tool, states in [('spawnAgent',{'child':{'status':'running','message':None}}),
+                             ('wait',{'child':{'status':'errored' if child_failed else 'completed','message':'CHILD FAILURE' if child_failed else 'CHILD SUMMARY'},'stranger':{'status':'completed','message':'FOREIGN SECRET'}})]:
+            for method, state in [('item/started','inProgress'),('item/completed','completed')]:
+                item=CollabAgentToolCallThreadItem.model_validate({'id':tool,'type':'collabAgentToolCall',
+                    'tool':tool,'status':state,'senderThreadId':client.thread_id,
+                    'receiverThreadIds':['child'] if tool=='spawnAgent' else ['child','stranger'],
+                    'agentsStates':states,'prompt':'Inspect architecture'})
+                client.emit(method,item=item.model_dump(mode='json',by_alias=True))
+        client.emit('item/completed',item={'id':'foreign','type':'collabAgentToolCall','tool':'spawnAgent','senderThreadId':'another-parent','receiverThreadIds':['foreign-child']})
+        client.emit('item/completed',item={'id':'text','type':'agentMessage','text':'PARENT SUMMARY','phase':'final_answer'})
+        client.emit('turn/completed',turn={'status':status})
+    def thread_read(client, native_id, include_turns=False):
+        reads.append(native_id)
+        assert native_id=='child' and include_turns
+        return Payload(thread={'id':'stranger' if wrong_thread else 'child','turns':[{'id':'child-turn','status':'failed' if child_failed else 'completed','items':[
+            {'id':'child-command','type':'commandExecution','status':'failed' if child_failed else 'completed','exitCode':0 if child_failed else None,'aggregatedOutput':'CHILD TOOL OUTPUT'},
+            {'id':'child-final','type':'agentMessage','text':'CHILD SUMMARY','phase':'final_answer'}]}]})
+    monkeypatch.setattr(FakeClient,'finish',finish)
+    monkeypatch.setattr(FakeClient,'thread_read',thread_read,raising=False)
+    await app.create_instance(config)
+    try:
+        chunks=[x.payload async for x in app.process_message_stream(request())]
+        assert reads==['child','child']
+        assert not any('FOREIGN SECRET' in str(x) for x in chunks)
+        activities=[x for x in chunks if x.get('event_type')=='chat.subagent_activity']
+        output=[x for x in activities if x.get('summary')=='CHILD TOOL OUTPUT']
+        assert len(output)==(0 if wrong_thread else 1)
+        if output:
+            assert output[0].get('ok') is (False if child_failed else None)
+        assert next(x for x in chunks if x.get('event_type')=='chat.final')['content']=='PARENT SUMMARY'
+        from jiuwenswarm.server.control.history_service import load_history_page
+        session_history.flush_history_writes()
+        page=load_history_page('one',1,subagent_id='codex-child')
+        assert any(x.get('content')==('CHILD FAILURE' if child_failed else 'CHILD SUMMARY') for x in page['messages'])
+        assert [x for x in chunks if x.get('event_type')=='chat.subtask_update'][-1]['turn_outcome']==('failed' if child_failed else 'completed')
+        assert any(x.get('subagent_activity',{}).get('task_id')=='child-turn' for x in page['messages']) is not wrong_thread
+        assert 'codex-child' in session_history.list_session_subagent_ids('one')
+        assert 'codex-foreign-child' not in session_history.list_session_subagent_ids('one')
+    finally:await app.cleanup()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('exit_code,success', [(0, True), (7, False), (None, None), (True, None)])
 async def test_facade_history_exit_and_shared_model(host, exit_code, success):
     app, config, clients, root, _ = host
