@@ -72,7 +72,8 @@ jobs:
           JIUWENSWARM_DATA_DIR: ${{ runner.temp }}/provider-data
         run: |
           mkdir -p "$HOME" "$JIUWENSWARM_DATA_DIR"
-          suites=(tests/unit_tests/common/test_external_cli_config_read.py
+          suites=(tests/unit_tests/test_release_asset_transfer.py
+                  tests/unit_tests/common/test_external_cli_config_read.py
                   tests/unit_tests/common/test_external_cli_runtime.py
                   tests/unit_tests/agentserver/test_codex_direct_adapter.py
                   tests/unit_tests/agentserver/test_claude_direct_adapter.py

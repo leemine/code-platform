@@ -5,7 +5,7 @@ type: F
 author: leemine
 author_email: leewanlong@gmail.com
 modules: [agent_adapter, desktop, gateway]
-files: [pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml]
+files: [pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml, .github/scripts/transfer-release-assets.py, .github/workflows/stable.yml, tests/unit_tests/test_release_asset_transfer.py]
 designs: []
 design_note: 用户确认两种安装组合和先 Linux 后 Windows/macOS 的实施范围；管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 第24节及 EXTERNAL_DESKTOP_BUILD_20261030 记录来源与验证。
 ---
@@ -62,3 +62,41 @@ macOS 首次运行41468422605已通过arm64和工具准备，但checkout默认�
 用户随后明确要求发布Linux/Windows/macOS安装包，替代此前本轮“仅Artifact、不发布Release”的限制。复用同一隔离CI分支，为原手动工作流增加release-assets模式；仅该job授予actions:read/contents:write，默认构建仍只读且Windows/Mac原步骤保持。该job只接受已存在且tag/产品SHA匹配的beta4草稿，检查固定成功运行的SHA、下载Artifact的source.json及实际EXE/DMG SHA256，再上传并核对服务端digest。只转存、不重建、不自动发布、不覆盖不匹配资产。
 
 实际Windows41467786074与macOS41468736696已成功生成beta4；macOS仅CI/文档差异，产品树等于main cf07852。云端转存避免本机往返约850MB。Linux使用已完成冻结真实验证的原DEB从本机上传；三平台SHA256/来源/验证边界与Release说明单独汇总，所有资产核验后由本次发布任务完成公开草稿，保留预发布/未签名/平台真实安装聊天待验限制。正式状态与运行证据见管理任务台账DESKTOP-RELEASE-01；此处不预记上传或发布成功。产品、锁、原构建脚本、Provider外部实现与用户安装版未变。
+
+
+## 2026-11-02 构建与通用资产转存主线合入
+
+beta4已统一发布至 https://github.com/leemine/code-platform/releases/tag/v0.2.5.beta4 ，标签cf07852397f3b7547ba6b52a54628b89e4aacd4e；三平台安装器与3项来源/验证/摘要资料均完成服务端digest核验。Windows41467786074、macOS41468736696原生构建成功；原一次性转存41470776627成功。具体发布证据归管理任务DESKTOP-RELEASE-01，不把发布结果冒称Windows/macOS真实安装或完整聊天验收。
+
+用户要求合入构建分支，并明确资产转存要通用。原删除方案未提交/推送，提交操作因最新要求变化被自动审批拒绝；本节以通用清单实现替代原仅beta4的临时转存逻辑。历史发布与转存证据继续有效，产品/原打包脚本/锁、用户安装版和已发布资产不改，不增加Provider/Runtime流程。
+
+### 当前手动入口
+
+原windows-external.yml保留windows/macOS/both（默认windows），以及release-assets转存选项。构建jobs保持只读，Windows步骤与main cf07852相同、macOS步骤与已成功运行63f04d3相同。release-assets只对目标草稿赋予contents:write/actions:read，执行仓内.github/scripts/transfer-release-assets.py，不将清单值插入Shell代码。GH_REPO使用github.repository，不再固定仓库名；按release ID串行转存，避免跨分支同时写同一草稿。
+
+转存输入为release_id及release_manifest JSON，清单字段如下（占位内容须替换为实际核验值）：
+
+```json
+{
+  "tag": "vNEXT",
+  "target_commit": "40位已验产品提交SHA",
+  "assets": [
+    {
+      "run_id": 123456,
+      "source_sha": "40位构建工作流提交SHA",
+      "artifact": "确切Actions产物名",
+      "file": "WorkSwarm-VERSION-windows.exe",
+      "sha256": "64位安装器本体摘要",
+      "bytes": 123456789
+    }
+  ]
+}
+```
+
+release_id必须是当前仓库已存在的draft，tag及target_commitish必须与清单tag/完整target_commit相等。每项run_id限定本仓成功运行，source_sha须与运行head_sha及Artifact source.json相等；source.json需profile=external，product_base_sha（无此字段则source_sha）等于产品target_commit。支持构建CI提交与产品提交不同但已明确核验的来源。每项file是单一文件名，各文件名唯一；大小与SHA256都核对安装器本体，不使用Artifact外层zip摘要替代。
+
+所有Artifact先下载并核验，全部通过后再上传；每次上传前后重新核对草稿与资产状态，已存在且大小/digest一致则幂等保留，不匹配即失败，不覆盖。完成只转存、不自动发布；发布可为稳定版或预发布，但必须另行明确授权并核验全部资产。临时下载由本次runner私有目录管理并清理。本入口沿用external构建source.json，不宣称Native产物或任意来源文件均已支持。
+
+### 验证与限制
+
+原桌面契约在隔离HOME/DATA_DIR、既有Python3.13.15测试环境44项通过（0.47秒）；新增转存入口22项确定性测试通过（0.11秒），覆盖任意repo/tag/源提交、幂等、来源/摘要/大小冲突、草稿变化及全量预验后才写入。转存回归加入原stable的两种安装组合，不新建全量门禁。Windows原步骤、已验macOS job、产品/原脚本/依赖树等价重新核对；本地结果不冒充新SHA原生打包或真实Actions成功。小体积Artifact的临时草稿真实转存、PR/stable和合入后结果由管理任务台账按实际SHA闭合，证据artifacts/desktop-actions-build-20261102/merge。Windows/macOS真实安装及完整Electron聊天仍未完成。
