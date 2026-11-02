@@ -1,7 +1,33 @@
-name: Windows external desktop installer
+name: External desktop installers
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Build native installers or transfer verified artifacts to a draft
+        required: true
+        default: windows
+        type: choice
+        options:
+          - windows
+          - macos
+          - both
+          - release-assets
+      product_base_sha:
+        description: Optional full product commit to verify before the macOS build
+        required: false
+        default: ''
+        type: string
+      release_id:
+        description: Existing draft release ID for release-assets
+        required: false
+        default: ''
+        type: string
+      release_manifest:
+        description: JSON manifest with tag, target_commit and verified artifact assets
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -12,6 +38,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == '' }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -80,11 +107,122 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-external-build-log-${{ github.run_id }}
+          path: ci-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  release-assets:
+    if: ${{ inputs.platform == 'release-assets' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: desktop-release-assets-${{ github.repository }}-${{ inputs.release_id }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out transfer script
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify and transfer declared release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_MANIFEST: ${{ inputs.release_manifest }}
+        run: python3 .github/scripts/transfer-release-assets.py
+
+  macos:
+    if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' }}
+    runs-on: macos-14
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      JIUWENSWARM_BUILD_PROFILE: external
+      UV_PYTHON: '3.13'
+      NOSIGN: '1'
+      NOTARIZE: '0'
+      PRODUCT_BASE_SHA: ${{ inputs.product_base_sha }}
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.12.0'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+          enable-cache: false
+      - name: Set up Bun for the bundled TUI
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.5'
+      - name: Record build source and native architecture
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          echo "JIUWENSWARM_DATA_DIR=$RUNNER_TEMP/swarm-build-data" >> "$GITHUB_ENV"
+          mkdir -p ci-evidence
+          python3 - <<'PY'
+          import hashlib, json, os, platform, re, subprocess
+          from pathlib import Path
+          base = os.environ.get('PRODUCT_BASE_SHA') or os.environ['GITHUB_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', base):
+              raise ValueError('product_base_sha must be a full commit SHA')
+          subprocess.run(['git', 'diff', '--exit-code', base, '--', 'jiuwenswarm',
+              'gateway', 'packages', 'scripts', 'pyproject.toml', 'uv.lock'], check=True)
+          Path('ci-evidence/source.json').write_text(json.dumps({
+              'source_sha': os.environ['GITHUB_SHA'], 'product_base_sha': base,
+              'profile': 'external', 'runner': os.environ['RUNNER_OS'],
+              'architecture': platform.machine(),
+              'uv_lock_sha256': hashlib.sha256(Path('uv.lock').read_bytes()).hexdigest(),
+              'signing': 'no Developer ID signing or notarization; test installer',
+          }, indent=2) + '\n')
+          PY
+          uv --version
+          node --version
+          bun --version
+      - name: Build full macOS arm64 installer
+        run: |
+          set -euo pipefail
+          bash scripts/build-electron-exe.sh 2>&1 | tee ci-evidence/build.log
+          git diff --exit-code -- uv.lock
+          shopt -s nullglob
+          installers=(dist/*.dmg)
+          test "${#installers[@]}" -gt 0
+          shasum -a 256 "${installers[@]}" > ci-evidence/SHA256SUMS
+      - name: Upload macOS installer
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-arm64-external-installer-${{ github.sha }}
+          path: |
+            dist/*.dmg
+            ci-evidence/SHA256SUMS
+            ci-evidence/source.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload macOS build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-external-build-log-${{ github.run_id }}
           path: ci-evidence/
           if-no-files-found: warn
           retention-days: 14
