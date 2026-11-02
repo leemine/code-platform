@@ -54,3 +54,5 @@ beta2候选验收闭合：201项联合后端、69项打包契约、6个前端入
 可选 product_base_sha 输入只接受完整提交 ID，并在构建前核验产品/脚本/依赖树相等；未提供时以当前 GITHUB_SHA 为基线，不把本次 cf07852 写成未来版本的永久门禁。任务分支将显式传入 beta4 SHA。依赖仍按原 uv.lock 安装，构建后检查锁未改变；来源、架构和摘要进入仅供下载的 Actions Artifact（14天），无 Release 发布或本机模型凭据注入。
 
 本地工作流结构/内嵌 Python 解析及产品树等价核对通过，既有桌面契约44项通过（0.69秒）。首次误用构建 venv 缺 pytest、第二次缺隔离数据目录导致用户日志只读，均未运行测试；改为既有测试环境和本任务私有 HOME/DATA_DIR 后执行，失败准备记录保留于管理仓 artifacts/desktop-actions-build-20261102/evidence。本地结果不是 Windows/macOS 原生构建成功或真实 Provider/Electron 聊天通过。最终运行与产物状态由管理任务台账及对应 Actions 记录，不在本节假定结果。
+
+macOS 首次运行41468422605已通过arm64和工具准备，但checkout默认浅克隆没有产品基线cf07852对象，来源核验返回bad object，构建尚未执行；属本工程新增CI准备缺陷。仅macOS checkout改为fetch-depth:0以保留明确的产品树比较，不删除来源断言、不改原打包脚本；Windows既有步骤保留。修复后在原隔离分支新提交并重跑，首次失败日志保留。
