@@ -205,7 +205,7 @@ async def test_cancel_pending_releases_sdk_reader(host):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('cancel_requested', [False, True])
-async def test_stream_close_fences_unconfirmed_cancel_and_cleans_other_exits(host, cancel_requested):
+async def test_stream_close_fences_unconfirmed_stop_with_or_without_user_cancel(host, cancel_requested):
     app, config, clients, root, _ = host
     await app.create_instance(config)
     try:
@@ -219,14 +219,10 @@ async def test_stream_close_fences_unconfirmed_cancel_and_cleans_other_exits(hos
             with pytest.raises(RuntimeError, match='could not be confirmed'):
                 await app.process_message(request(method=ReqMethod.CHAT_CANCEL, intent='cancel'))
         await producer.aclose()
-        if cancel_requested:
-            assert not clients[0].closed
-            assert app.has_session_runtime('one')
-            with pytest.raises(RuntimeError, match='cancellation is not confirmed'):
-                await anext(app._adapter.process_message_stream_impl(request(), {'query': 'unsafe resume'}))
-        else:
-            assert clients[0].closed
-            assert not app.has_session_runtime('one')
+        assert not clients[0].closed
+        assert app.has_session_runtime('one')
+        with pytest.raises(RuntimeError, match='cancellation is not confirmed'):
+            await anext(app._adapter.process_message_stream_impl(request(), {'query': 'unsafe resume'}))
     finally:
         await app.cleanup()
 
@@ -572,7 +568,7 @@ async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_stream_close_without_user_cancel_disposes_session(host):
+async def test_stream_close_without_native_terminal_keeps_stop_fence(host):
     app, config, clients, _, _ = host
     await app.create_instance(config)
     try:
@@ -581,8 +577,10 @@ async def test_stream_close_without_user_cancel_disposes_session(host):
         producer = app._adapter.process_message_stream_impl(request(), {'query': 'test'})
         assert (await anext(producer)).payload['event_type'] == 'chat.ask_user_question'
         await producer.aclose()
-        assert clients[0].closed
-        assert not app.has_session_runtime('one')
+        assert not clients[0].closed
+        assert app.has_session_runtime('one')
+        with pytest.raises(RuntimeError, match='cancellation is not confirmed'):
+            await anext(app._adapter.process_message_stream_impl(request(), {'query': 'unsafe resume'}))
     finally:
         await app.cleanup()
 
@@ -613,5 +611,26 @@ async def test_facade_model_client_tls_flag_does_not_override_codex_transport(ho
             assert 'verify_ssl' not in actual
         else:
             assert actual['verify_ssl'] is verify_ssl
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_model_timeout_is_not_a_turn_deadline_and_native_idle_is_projected(host, monkeypatch):
+    import time
+    app, config, clients, _, model = host
+    model.client_options['timeout'] = 0.01
+    config['codex']['stream_idle_timeout_ms'] = 42000
+    receive = FakeClient.next_turn_notification
+    def delayed_tool(self, turn_id):
+        time.sleep(0.02)
+        return receive(self, turn_id)
+    monkeypatch.setattr(FakeClient, 'next_turn_notification', delayed_tool)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert 'model_providers.swarm.stream_idle_timeout_ms=42000' in clients[0].config.config_overrides
+        assert any(x.get('event_type') == 'chat.final' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
     finally:
         await app.cleanup()

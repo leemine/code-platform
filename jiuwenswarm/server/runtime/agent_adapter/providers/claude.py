@@ -5,7 +5,8 @@ import asyncio
 import hashlib
 import importlib.metadata
 import json
-import math
+import logging
+import time
 import shutil
 import tempfile
 import uuid
@@ -13,9 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_model
+from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_model, native_timeout_env
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +34,7 @@ class Session:
     model_revision: str = ""
     desired_permission: str = "default"
     effective_permission: str | None = None
+    close_unconfirmed: bool = False
     pending: dict = field(default_factory=dict)
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -111,6 +116,8 @@ class ClaudeAdapter:
             raise ValueError("Claude requires an existing absolute project directory")
         directory = str(directory.resolve())
         if current:
+            if current.close_unconfirmed:
+                raise RuntimeError("Claude SDK shutdown is unconfirmed; close this session before continuing")
             if current.directory != directory:
                 raise ValueError("Claude session workspace cannot change after binding")
             return
@@ -165,6 +172,7 @@ class ClaudeAdapter:
                "LOCALAPPDATA": str(session.root / "localappdata"), "ANTHROPIC_BASE_URL": model.api_base,
                "ANTHROPIC_API_KEY": model.api_key, "ANTHROPIC_AUTH_TOKEN": "", "CLAUDE_CODE_OAUTH_TOKEN": "",
                "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_VERTEX": "0", "CLAUDE_CODE_USE_FOUNDRY": "0"}
+        env.update(native_timeout_env(self._settings, model))
         return ClaudeAgentOptions(cwd=session.directory, cli_path=self._settings.get("cli_path"),
             model=model.model_name, env=env, setting_sources=[], strict_mcp_config=True,
             session_id=None if session.started else session.native_id,
@@ -185,9 +193,6 @@ class ClaudeAdapter:
         revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
         if session.model_revision and session.model_revision != revision:
             raise ValueError("Claude model configuration changed; create a new session")
-        timeout = float(model.client_options.get("timeout", 180))
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("Claude model timeout must be positive and finite")
         if session.active:
             raise ValueError("Session already has a producer; use Runtime scheduling")
         session.active, session.cancelled = True, False
@@ -196,96 +201,119 @@ class ClaudeAdapter:
         tools = {}
         reader = None
         stream = None
+        client = None
+        phase = "sdk_connect"
+        last_event = "none"
+        started = time.monotonic()
         try:
-            # SDK AnyIO task groups are connected and closed by this same owner.
-            async with asyncio.timeout(timeout):
-                async with ClaudeSDKClient(self._options(session, model)) as client:
-                    session.client = client
-                    await client.set_permission_mode("bypassPermissions" if session.desired_permission == "full_access" else "default")
-                    session.effective_permission = session.desired_permission
-                    session.model_revision = revision
-                    await client.query(inputs["query"], session_id=session.native_id)
-                    stream = client.receive_response()
-                    while True:
-                        if reader is None:
-                            reader = asyncio.create_task(anext(stream))
-                        control = asyncio.create_task(session.control_ready.wait())
-                        try:
-                            done, _ = await asyncio.wait({reader, control}, return_when=asyncio.FIRST_COMPLETED)
-                        finally:
-                            control.cancel()
-                            await asyncio.gather(control, return_exceptions=True)
-                        if session.control_ready.is_set():
-                            session.control_ready.clear()
-                            for identity, (future, name, args) in list(session.pending.items()):
-                                if not future.done():
-                                    yield self._chunk(request, {"event_type": "chat.ask_user_question", "request_id": identity,
-                                        "source": "permission_interrupt", "questions": [{"question": name + ": " + json.dumps(args, ensure_ascii=False),
-                                        "options": [{"label": "允许一次", "value": "allow_once"}, {"label": "拒绝", "value": "reject"}], "multiSelect": False}]})
-                        if reader not in done:
+            # Official connect/disconnect stay on this producer/AnyIO owner.
+            client = ClaudeSDKClient(self._options(session, model))
+            await client.connect()
+            session.client = client
+            phase = "permission_update"
+            await client.set_permission_mode("bypassPermissions" if session.desired_permission == "full_access" else "default")
+            session.effective_permission = session.desired_permission
+            session.model_revision = revision
+            phase = "query_submit"
+            await client.query(inputs["query"], session_id=session.native_id)
+            phase = "execution"
+            stream = client.receive_response()
+            while True:
+                if reader is None:
+                    reader = asyncio.create_task(anext(stream))
+                control = asyncio.create_task(session.control_ready.wait())
+                try:
+                    done, _ = await asyncio.wait({reader, control}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    control.cancel()
+                    await asyncio.gather(control, return_exceptions=True)
+                if session.control_ready.is_set():
+                    session.control_ready.clear()
+                    for identity, (future, name, args) in list(session.pending.items()):
+                        if not future.done():
+                            yield self._chunk(request, {"event_type": "chat.ask_user_question", "request_id": identity,
+                                "source": "permission_interrupt", "questions": [{"question": name + ": " + json.dumps(args, ensure_ascii=False),
+                                "options": [{"label": "允许一次", "value": "allow_once"}, {"label": "拒绝", "value": "reject"}], "multiSelect": False}]})
+                if reader not in done:
+                    continue
+                message = reader.result()
+                last_event = type(message).__name__
+                reader = None
+                if getattr(message, "parent_tool_use_id", None):
+                    continue
+                if isinstance(message, SystemMessage) and message.subtype == "init":
+                    if message.data.get("session_id") != session.native_id:
+                        raise ValueError("Claude returned a different session")
+                    session.started = True
+                elif isinstance(message, StreamEvent):
+                    event = message.event
+                    if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "text_delta":
+                        yield self._chunk(request, {"event_type": "chat.delta", "content": event["delta"].get("text", "")})
+                elif isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, ToolUseBlock):
+                            tools[block.id] = block.name
+                            yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": block.id, "name": block.name, "arguments": block.input}})
+                elif isinstance(message, UserMessage) and isinstance(message.content, list):
+                    for block in message.content:
+                        if not isinstance(block, ToolResultBlock):
                             continue
-                        message = reader.result()
-                        reader = None
-                        if getattr(message, "parent_tool_use_id", None):
-                            continue
-                        if isinstance(message, SystemMessage) and message.subtype == "init":
-                            if message.data.get("session_id") != session.native_id:
-                                raise ValueError("Claude returned a different session")
-                            session.started = True
-                        elif isinstance(message, StreamEvent):
-                            event = message.event
-                            if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "text_delta":
-                                yield self._chunk(request, {"event_type": "chat.delta", "content": event["delta"].get("text", "")})
-                        elif isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, ToolUseBlock):
-                                    tools[block.id] = block.name
-                                    yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {"id": block.id, "name": block.name, "arguments": block.input}})
-                        elif isinstance(message, UserMessage) and isinstance(message.content, list):
-                            for block in message.content:
-                                if not isinstance(block, ToolResultBlock):
-                                    continue
-                                name = tools.get(block.tool_use_id, "tool")
-                                # CLI tool errors can carry text despite the SDK annotation.
-                                native = message.tool_use_result if isinstance(message.tool_use_result, dict) else {}
-                                code = native.get("exit_code") if name == "Bash" else None
-                                code = code if type(code) is int else None
-                                success = not block.is_error if block.is_error is not None else None
-                                if code is not None and not block.is_error:
-                                    success = code == 0
-                                content = block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False)
-                                result = {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
-                                    "content": content, "result": content, "status": "error" if block.is_error else "completed", "invocation_status": "completed",
-                                    "provider": {"claude": {"is_error": block.is_error}}, "success": success, "task_acceptance": "unknown"}
-                                if name == "Bash":
-                                    result.update(exit_code=code, command_success=code == 0 if code is not None else None)
-                                yield self._chunk(request, result)
-                        elif isinstance(message, ResultMessage):
-                            if message.session_id != session.native_id:
-                                raise ValueError("Claude completed a different session")
-                            session.started = True
-                            terminal = True
-                            if session.cancelled or message.is_error:
-                                outcome = "cancelled" if session.cancelled else "error"
-                                yield self._chunk(request, {"event_type": "chat.error", "code": "claude_" + outcome, "error": "Claude execution cancelled" if session.cancelled else "Claude model request failed; check model service compatibility and authentication"}, complete=True, outcome=outcome)
-                            else:
-                                yield self._chunk(request, {"event_type": "chat.final", "content": message.result or "", "invocation_status": "completed", "task_acceptance": "unknown"}, complete=True, outcome="completed")
-                            return
+                        name = tools.get(block.tool_use_id, "tool")
+                        # CLI tool errors can carry text despite the SDK annotation.
+                        native = message.tool_use_result if isinstance(message.tool_use_result, dict) else {}
+                        code = native.get("exit_code") if name == "Bash" else None
+                        code = code if type(code) is int else None
+                        success = not block.is_error if block.is_error is not None else None
+                        if code is not None and not block.is_error:
+                            success = code == 0
+                        content = block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False)
+                        result = {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
+                            "content": content, "result": content, "status": "error" if block.is_error else "completed", "invocation_status": "completed",
+                            "provider": {"claude": {"is_error": block.is_error}}, "success": success, "task_acceptance": "unknown"}
+                        if name == "Bash":
+                            result.update(exit_code=code, command_success=code == 0 if code is not None else None)
+                        yield self._chunk(request, result)
+                elif isinstance(message, ResultMessage):
+                    if message.session_id != session.native_id:
+                        raise ValueError("Claude completed a different session")
+                    session.started = True
+                    terminal = True
+                    if session.cancelled or message.is_error:
+                        outcome = "cancelled" if session.cancelled else "error"
+                        logger.warning("Claude terminal request=%s outcome=%s subtype=%s api_status=%s elapsed=%.3fs", request.request_id, outcome, message.subtype, getattr(message, "api_error_status", None), time.monotonic() - started)
+                        yield self._chunk(request, {"event_type": "chat.error", "code": "claude_" + outcome, "error": "Claude execution cancelled" if session.cancelled else "Claude model request failed; check model service compatibility and authentication"}, complete=True, outcome=outcome)
+                    else:
+                        yield self._chunk(request, {"event_type": "chat.final", "content": message.result or "", "invocation_status": "completed", "task_acceptance": "unknown"}, complete=True, outcome="completed")
+                    return
         except StopAsyncIteration:
             yield self._chunk(request, {"event_type": "chat.error", "code": "claude_incomplete", "error": "Claude stream ended without a result"}, complete=True, outcome="error")
         except TimeoutError:
-            yield self._chunk(request, {"event_type": "chat.error", "code": "claude_timeout", "error": "Claude execution exceeded the configured model timeout"}, complete=True, outcome="error")
-        except Exception:
+            logger.warning("Claude timeout request=%s phase=%s last_event=%s elapsed=%.3fs source=native_sdk", request.request_id, phase, last_event, time.monotonic() - started)
+            yield self._chunk(request, {"event_type": "chat.error", "code": "claude_timeout", "error": "Claude native SDK operation timed out", "provider": {"claude": {"phase": phase, "timeout_source": "native_sdk"}}}, complete=True, outcome="error")
+        except Exception as exc:
+            logger.warning("Claude failure request=%s phase=%s last_event=%s elapsed=%.3fs error_type=%s", request.request_id, phase, last_event, time.monotonic() - started, type(exc).__name__)
             yield self._chunk(request, {"event_type": "chat.error", "code": "claude_runtime_failed", "error": "Claude SDK initialization or execution failed; check the configured CLI and model service"}, complete=True, outcome="error")
         finally:
             self._release_controls(session)
             if reader is not None:
                 reader.cancel()
                 await asyncio.gather(reader, return_exceptions=True)
-            if stream is not None:
-                await stream.aclose()
-            session.client = None
-            session.active = False
+            try:
+                if stream is not None:
+                    await stream.aclose()
+            finally:
+                if client is not None:
+                    try:
+                        await client.disconnect()
+                    except BaseException:
+                        session.close_unconfirmed = True
+                        logger.warning("Claude shutdown unconfirmed request=%s", request.request_id)
+                        raise
+                    finally:
+                        session.client = None
+                        session.active = False
+                else:
+                    session.active = False
             # Cancellation ends the Turn, not the initialized SDK Session. Keep
             # its official transcript for resume; close/eviction still owns cleanup.
             if not terminal and not (session.cancelled and session.started):
@@ -330,6 +358,8 @@ class ClaudeAdapter:
             return False
         if session.active:
             raise RuntimeError("Cancel and drain the Claude producer before closing")
+        if session.close_unconfirmed:
+            raise RuntimeError("Claude SDK shutdown is unconfirmed; retain execution ownership")
         self._release_controls(session)
         shutil.rmtree(session.root)
         self._sessions.pop(session_id, None)

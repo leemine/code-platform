@@ -1184,7 +1184,11 @@ def external_cli_agents_from_switches(raw: dict[str, Any], params: dict[str, Any
         enabled, use_builtin, requested_path = external_cli_agent_effective_state(cli_agent, current, params)
         if not enabled:
             continue
-        entry: dict[str, Any] = {"cli_agent": cli_agent}
+        # The card owns enable/path controls, not Provider-specific options.
+        entry: dict[str, Any] = dict(untouched_entries.get(cli_agent, {}))
+        entry["cli_agent"] = cli_agent
+        entry.pop("cli_path", None)
+        entry.pop("codex_bin", None)
         uploaded_cli_path = _uploaded_cli_path(cli_agent)
         if use_builtin and uploaded_cli_path:
             entry["cli_path"] = uploaded_cli_path

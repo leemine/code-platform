@@ -39,6 +39,12 @@ class FakeClient:
             self.worker.cancel()
             await asyncio.gather(self.worker, return_exceptions=True)
 
+    async def connect(self):
+        await self.__aenter__()
+
+    async def disconnect(self):
+        await self.__aexit__()
+
     async def set_permission_mode(self, mode):
         self.mode = mode
 
@@ -283,4 +289,62 @@ async def test_facade_explicit_tool_error_is_not_overridden_by_zero_exit(host):
         assert result['exit_code'] == 0 and result['command_success'] is True
         assert result['status'] == 'error'
     finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_model_transport_timeout_does_not_limit_whole_turn(host, monkeypatch):
+    app, config, clients, _, _ = host
+    original = claude.resolve_model
+    model = original(request()).model_copy(update={'client_options': {'timeout': 0.01}})
+    monkeypatch.setattr(claude, 'resolve_model', lambda req: model)
+    execute = FakeClient.execute
+    async def slow_tool(self):
+        await asyncio.sleep(0.04)
+        await execute(self)
+    monkeypatch.setattr(FakeClient, 'execute', slow_tool)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        assert clients[0].options.env['API_TIMEOUT_MS'] == '10'
+        assert any(x.get('event_type') == 'chat.final' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+        assert any(x.get('status') == 'success' for x in session_history.read_session_history_records('one'))
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_native_sdk_timeout_has_honest_source_and_closes_client(host, monkeypatch):
+    app, config, clients, _, _ = host
+    async def timeout_query(self, *args, **kwargs):
+        raise TimeoutError('must-not-expose-native-secret')
+    monkeypatch.setattr(FakeClient, 'query', timeout_query)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        error = next(x for x in chunks if x.get('event_type') == 'chat.error')
+        assert error['code'] == 'claude_timeout'
+        assert error['provider']['claude']['timeout_source'] == 'native_sdk'
+        assert error['provider']['claude']['phase'] == 'query_submit'
+        assert 'must-not-expose-native-secret' not in str(chunks)
+        assert clients[0].closed
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_sdk_close_fences_session(host, monkeypatch):
+    app, config, clients, _, _ = host
+    await app.create_instance(config)
+    disconnect = FakeClient.disconnect
+    async def broken_close(self):
+        await disconnect(self)
+        raise RuntimeError('fixture shutdown failed')
+    monkeypatch.setattr(FakeClient, 'disconnect', broken_close)
+    _ = [x async for x in app.process_message_stream(request())]
+    with pytest.raises(RuntimeError, match='shutdown is unconfirmed'):
+        await anext(app._adapter.process_message_stream_impl(request(), {'query':'unsafe resume'}))
+    # A local fixture exception is not proof of native shutdown. Keep ownership.
+    with pytest.raises(RuntimeError, match='shutdown is unconfirmed'):
         await app.cleanup()

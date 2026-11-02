@@ -6,6 +6,7 @@ write a borrowed server's config or credentials. No second model catalog is kept
 from __future__ import annotations
 
 import hashlib
+import math
 
 from gateway.common.model_selection import ModelSelection, ResolvedModel
 from jiuwenswarm.common.model_catalog import ModelCatalog
@@ -36,7 +37,7 @@ def model_binding(model: ResolvedModel) -> dict[str, str]:
     return {"providerID": f"swarm-{revision}", "modelID": model.model_name}
 
 
-def provider_config(model: ResolvedModel) -> dict:
+def provider_config(model: ResolvedModel, settings=None) -> dict:
     if model.provider.lower() != 'openai' or not model.api_base:
         raise ValueError('opencode_shared_model_protocol_unsupported')
     unsupported = set(model.client_options) - {'timeout', 'verify_ssl'}
@@ -45,7 +46,17 @@ def provider_config(model: ResolvedModel) -> dict:
     # TLS verification remains enabled; never translate verify_ssl=False to a bypass.
     options = {"baseURL": model.api_base, "apiKey": model.api_key}
     if model.client_options.get('timeout') is not None:
-        options['timeout'] = int(float(model.client_options['timeout']) * 1000)
+        raw = model.client_options['timeout']
+        value = float(raw)
+        if isinstance(raw, bool) or not math.isfinite(value) or value <= 0:
+            raise ValueError('OpenCode model timeout must be positive and finite')
+        options['timeout'] = math.ceil(value * 1000)
+    for key, native in (('header_timeout_ms', 'headerTimeout'), ('chunk_timeout_ms', 'chunkTimeout')):
+        value = (settings or {}).get(key)
+        if value is not None:
+            if type(value) is not int or value <= 0:
+                raise ValueError(f'OpenCode {key} must be a positive integer')
+            options[native] = value
     return {
         "npm": "@ai-sdk/openai-compatible", "name": "Swarm configured model",
         "options": options, "models": {model.model_name: {"name": model.model_name}},
@@ -64,8 +75,10 @@ def build_server_model_config(config: dict | None = None) -> tuple[dict, list[st
     for item in catalog.list_public_models():
         model = resolver.resolve(ModelSelection(type='model', id=item['model_id']))
         try:
-            providers[model_binding(model)['providerID']] = provider_config(model)
-        except ValueError:
+            providers[model_binding(model)['providerID']] = provider_config(model, catalog.config.get('opencode', {}))
+        except ValueError as exc:
+            if str(exc) not in {'opencode_shared_model_protocol_unsupported', 'opencode_shared_model_options_unsupported'}:
+                raise
             unsupported.append(item['model_id'])
     return {"provider": providers}, unsupported
 

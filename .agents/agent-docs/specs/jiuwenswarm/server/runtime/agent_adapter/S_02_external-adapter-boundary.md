@@ -212,3 +212,18 @@ Codex 模型配置中的 verify_ssl 是 Swarm HTTP-client 选项，不控制官�
 ## 冻结桌面安装完成后的目录刷新（2026-10-31）
 
 Gateway 仍拥有官方 SDK 按需安装；App 生命周期复用原 install_status 轮询和 config.save_all 延迟保存，离开设置页不丢失用户选择，不重复安装或静默改路径。Front 在目录查询前复用经过清单校验的托管 SDK 路径激活，安装回执不代替保存成功或执行验收；失败保留意图，重连和显式操作沿原流程处理。
+
+
+## 原生超时职责（2026-11-02）
+
+模型请求、初始化、审批等待、整轮预算和执行停止为不同事实。Claude/Codex 不将 ModelClient 的 timeout 作为整轮时限；OpenCode 未配置或 null 的 turn_timeout 不设置整轮限时，已有显式正有限值继续生效。SDK/CLI 原生请求/流保护保持；EOF、interrupt/abort ACK 不补作原生终态。
+
+Claude 将模型 timeout 秒数向上换算为 API_TIMEOUT_MS；流式时其语义为请求响应头等待，不是整轮或完整响应体时限。external_cli_agents 中 Claude 条目可显式设置 stream_first_byte_timeout_ms、stream_idle_timeout_ms，分别传递官方同名环境配置；未设置不覆盖官方默认，CLI 原生版本/上下界和钳制规则仍有效。Codex 条目可设置 stream_idle_timeout_ms，通过现有 CodexConfig.config_overrides 写入 model_providers.swarm.stream_idle_timeout_ms；模型 timeout 不伪装成 SSE 空闲时间。
+
+OpenCode 自有服务仍由 opencode_models 生成原生配置：模型 timeout 转毫秒；opencode.header_timeout_ms 和 chunk_timeout_ms 对应 headerTimeout/chunkTimeout。借用服务不下发配置，仍由服务所有者正常配置。专有参数保留 Provider 命名空间，均只接受正整数且不发送关闭保护的值；卡片保存只更新开关/路径，保留已有专有字段。不增加 UI 控件或公共模型字段。
+
+Claude SDK connect/disconnect 在同一生产者任务执行；关闭失败保留所有者，禁止续聊。Codex 非原生终态退出后保留现有取消 fence，不以连接关闭或中断 ACK 允许新 Turn。OpenCode 超时 abort 后核对官方 session/status；未确认 idle 时保留 active/abort_failed。API/字节/流块空闲与 DeepAgent 有效输出超时不等价，不从聊天文本或整轮事件间隔猜模型停滞。错误和脱敏阶段诊断沿原历史/日志通道；不建立第二看门狗、事件消费者或重试器。
+
+根因、来源、回归与待发布边界见 B_20261102_1123_provider-native-timeouts。
+
+Claude的专有首字节配置只是向原生CLI透传，不保证所有版本/路由均支持。已验证CLI2.1.274在自定义ANTHROPIC_BASE_URL路径不启用独立首字节期限；普通请求超时仍有效。不得据此新增宿主看门狗或宣称与Native首有效输出保护等价。

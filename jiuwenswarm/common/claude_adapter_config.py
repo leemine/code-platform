@@ -1,5 +1,6 @@
 """Claude settings use the existing Third-party Agents and model catalog."""
 import importlib.metadata
+import math
 from urllib.parse import urlparse
 
 
@@ -12,7 +13,35 @@ def config_snapshot(config):
     path = values.get("cli_path") or ""
     if not isinstance(path, str):
         raise ValueError("Claude CLI path must be a string")
-    return {"claude": {"enabled": bool(matches), "cli_path": path.strip() or None}}
+    settings = {"enabled": bool(matches), "cli_path": path.strip() or None}
+    for key in ("stream_first_byte_timeout_ms", "stream_idle_timeout_ms"):
+        value = values.get(key)
+        if value is not None:
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"Claude {key} must be a positive integer")
+            settings[key] = value
+    return {"claude": settings}
+
+
+def native_timeout_env(settings, model):
+    """Configure native model transport, never the lifetime of a tool Turn."""
+    env = {}
+    timeout = model.client_options.get("timeout")
+    if timeout is not None:
+        if isinstance(timeout, bool):
+            raise ValueError("Claude model timeout must be positive and finite")
+        timeout = float(timeout)
+        if not math.isfinite(timeout) or timeout <= 0 or timeout * 1000 > 2147483647:
+            raise ValueError("Claude model timeout must be positive and within the native range")
+        env["API_TIMEOUT_MS"] = str(math.ceil(timeout * 1000))
+    for key, name in (("stream_first_byte_timeout_ms", "CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS"),
+                      ("stream_idle_timeout_ms", "CLAUDE_STREAM_IDLE_TIMEOUT_MS")):
+        value = settings.get(key)
+        if value is not None:
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"Claude {key} must be a positive integer")
+            env[name] = str(value)
+    return env
 
 
 def availability(config):
