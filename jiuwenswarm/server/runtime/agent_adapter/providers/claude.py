@@ -18,6 +18,7 @@ from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_mo
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .subagent_projection import SubagentProjection
+from . import session_recovery as recovery
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class _NativeTasks:
 class Session:
     directory: str
     root: Path
+    swarm_id: str = ""
     native_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     started: bool = False
     active: bool = False
@@ -191,12 +193,25 @@ class ClaudeAdapter:
             if current.directory != directory:
                 raise ValueError("Claude session workspace cannot change after binding")
             return
+        binding = recovery.load("claude", session_id, directory)
+        if binding:
+            recovery.require_settings(binding, self._settings)
+            self._sessions[session_id] = Session(directory, Path(binding["root"]), swarm_id=session_id,
+                native_id=binding["native_id"], started=True, model_revision=binding["model_revision"],
+                desired_permission=binding["permission"])
+            return
         if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in read_session_history_records(session_id)):
-            raise ValueError("Claude cannot restore a released Swarm session yet; create a new session")
+            raise ValueError("Claude cannot restore a released session without a recovery binding; its original native session cannot be identified")
         parent = get_agent_sessions_dir() / ".claude-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
-        self._sessions[session_id] = Session(directory, root, desired_permission=self._permission_profile)
+        self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
+
+    def _save_binding(self, session):
+        if session.swarm_id and session.started:
+            recovery.save("claude", session.swarm_id, root=session.root, directory=session.directory,
+                native_id=session.native_id, model_revision=session.model_revision,
+                settings_revision=recovery.settings_revision(self._settings), permission=session.desired_permission)
 
     def has_session_runtime(self, session_id=None):
         return session_id in self._sessions if session_id else bool(self._sessions)
@@ -382,6 +397,7 @@ class ClaudeAdapter:
                     if message.data.get("session_id") != session.native_id:
                         raise ValueError("Claude returned a different session")
                     session.started = True
+                    self._save_binding(session)
                 elif isinstance(message, StreamEvent):
                     event = message.event
                     if event.get("type") == "content_block_delta" and event.get("delta", {}).get("type") == "text_delta":
@@ -414,6 +430,7 @@ class ClaudeAdapter:
                     if message.session_id != session.native_id:
                         raise ValueError("Claude completed a different session")
                     session.started = True
+                    self._save_binding(session)
                     if not input_accepted and not message.is_error:
                         logger.info("Claude pre-input result ignored request=%s native_session=%s", request.request_id, session.native_id)
                         continue
@@ -533,7 +550,9 @@ class ClaudeAdapter:
         if session.close_unconfirmed:
             raise RuntimeError("Claude SDK shutdown is unconfirmed; retain execution ownership")
         self._release_controls(session)
-        shutil.rmtree(session.root)
+        self._save_binding(session)
+        if not session.started:
+            shutil.rmtree(session.root)
         self._sessions.pop(session_id, None)
         return True
 
@@ -559,6 +578,7 @@ class ClaudeAdapter:
         for sid, session in self._sessions.items():
             if target_session_id is None or sid == target_session_id:
                 session.desired_permission = profile
+                self._save_binding(session)
 
     async def process_message_impl(self, request, inputs):
         chunks = [chunk.payload async for chunk in self.process_message_stream_impl(request, inputs)]

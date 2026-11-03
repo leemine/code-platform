@@ -2,6 +2,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 import claude_agent_sdk as sdk
@@ -132,7 +133,35 @@ async def test_facade_native_results_history_and_resume(host, code, success):
     finally:
         await app.cleanup()
     assert all(c.closed for c in clients)
-    assert not list((root / 'sessions/.claude-direct').iterdir())
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    binding = session_recovery.load('claude', 'one', str(root))
+    assert binding['native_id'] == clients[0].sid
+    assert Path(binding['root']) == Path(clients[0].options.env['CLAUDE_CONFIG_DIR']).parent
+    assert Path(binding['root']).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_new_facade_resumes_original_session_and_transcript_home(host):
+    first, config, clients, _, _ = host
+    await first.create_instance(config)
+    try:
+        _ = [chunk async for chunk in first.process_message_stream(request())]
+        original_session = clients[0].sid
+        original_home = clients[0].options.env['CLAUDE_CONFIG_DIR']
+    finally:
+        await first.cleanup()
+    assert clients[0].closed
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in second.process_message_stream(request())]
+        assert any(chunk.get('event_type') == 'chat.final' for chunk in chunks)
+        assert len(clients) == 2
+        assert clients[1].options.resume == original_session
+        assert clients[1].options.session_id is None
+        assert clients[1].options.env['CLAUDE_CONFIG_DIR'] == original_home
+    finally:
+        await second.cleanup()
 
 
 @pytest.mark.asyncio
@@ -255,7 +284,10 @@ async def test_facade_cancel_drains_producer_then_resumes_native_session(host):
         producer.cancel()
         await asyncio.gather(producer, return_exceptions=True)
         await app.cleanup()
-    assert not list((root / 'sessions/.claude-direct').iterdir())
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    binding = session_recovery.load('claude', 'one', str(root))
+    assert binding['native_id'] == clients[0].sid
+    assert Path(binding['root']).is_dir()
 
 
 @pytest.mark.asyncio

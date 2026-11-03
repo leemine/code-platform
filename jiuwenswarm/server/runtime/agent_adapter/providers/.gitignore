@@ -1,0 +1,9 @@
+.recovery-tests-*/
+.recovery-test.out
+.recovery-test.err
+.existing-tests.out
+.existing-tests.err
+.live-tests.out
+.live-tests.err
+.baseline-tests.out
+.baseline-tests.err
