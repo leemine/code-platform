@@ -73,3 +73,21 @@ skipped that one symlink case. No workflow or common session files were changed.
 No formatter/static checker was run. Installer/release work is outside this
 change. The scope does not modify common session storage or Provider CLI/SDK
 source. The user authorized submission and merge after this validation.
+
+## Local Anthropic gateway validation (2026-11-03)
+
+The newly configured `deepseek-v4-flash` Anthropic model uses a loopback gateway.
+Inherited user HTTP/HTTPS proxy variables forwarded this local request through
+the outbound proxy: minimal requests returned 502 with proxy inheritance and
+200 with direct access. The official Claude CLI also emitted `api_retry` events
+with HTTP 502. The adapter now appends only loopback model hosts to the child
+process's NO_PROXY/no_proxy, preserving existing bypass entries and remote proxy
+policy. User/system environment settings are not changed.
+
+The complete Claude suite plus real two-turn recovery passed 40 cases on the
+frozen Windows runtime with official SDK 0.2.115 and configured CLI 2.1.317.
+The live case used the same native session ID and private transcript root after
+CLI/adapter recreation and correctly recalled the random prior-turn marker.
+The test launcher disabled pytest fd capture: capture in the frozen Windows
+runtime produced WinError 6 when the SDK inherited stderr, while normal app
+stdio worked. Native model-name/title warnings were not treated as failures.
