@@ -58,7 +58,7 @@ Windows 入口：`scripts/build-electron-exe.ps1 -BuildProfile external -NoSign 
 
 选择顺序：显式 `opencode.cli_path` → 显式 `opencode.url` → PATH → 当前用户的安装候选目录。显式 CLI 无效时拒绝，不回退到另一程序或 URL；显式 URL 不启动本机服务。自动查找不会执行 shell profile、安装/升级 CLI 或采用项目中的相对 PATH 条目。未发现 CLI 时提示安装或配置，而不再误报 URL 格式错误。
 
-OpenCode 候选包含当前用户 `~/.opencode/bin`、`~/.local/bin`；macOS 补充 `/opt/homebrew/bin` 与 `/usr/local/bin`，Windows 补充用户 Scoop shims 和 LOCALAPPDATA 下 WinGet Links。Windows 仅直接启动原生可执行文件，遇到 cmd/bat 包装器明确要求配置原生程序路径；不自动执行 shell 包装。Windows/macOS 只有路径规则测试，目标系统实机验收尚未完成。
+OpenCode 候选包含当前用户 `~/.opencode/bin`、`~/.local/bin`；macOS 补充 `/opt/homebrew/bin` 与 `/usr/local/bin`，Windows 补充用户 Scoop shims 和 LOCALAPPDATA 下 WinGet Links。Windows 自动发现遇到 `.cmd` / `.bat` / `.ps1` 时继续查找原生程序，不执行脚本。npm 安装补查绝对 PATH 目录、`NPM_CONFIG_PREFIX`（兼容小写环境变量）和 `%APPDATA%/npm` 下的 `node_modules/opencode-ai/bin/opencode.exe`；直接复用官方 postinstall 已选出的原生文件，不自行选择 CPU 变体或读取二进制正文。显式配置脚本或无效路径仍报错，不静默改选；缺少原生文件时提示正常安装或配置路径。自定义 npm prefix 需在 PATH 或对应环境变量中可见；不扫描项目依赖或任意磁盘目录。Windows/macOS 路径规则有确定性测试，目标系统真实聊天验收仍待完成。
 
 自有服务未设置 directory 时使用 Swarm 原默认项目目录，实际会话优先使用聊天所选项目并保持绑定；借用 URL 仍必须明确配置 directory。模型、权限、审批与历史继续使用原 Swarm 流程，不增加 UI 或用户配置写入。
 

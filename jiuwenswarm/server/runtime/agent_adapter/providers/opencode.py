@@ -34,7 +34,19 @@ def cli_candidates():
         paths.append(Path(os.environ.get("SCOOP") or home / "scoop") / "shims/opencode.exe")
         if os.environ.get("LOCALAPPDATA"):
             paths.append(Path(os.environ["LOCALAPPDATA"]) / "Microsoft/WinGet/Links/opencode.exe")
-    return paths
+        # npm's public command is a script shim. Its postinstall selects the
+        # native binary, so use that result rather than choosing CPU variants.
+        prefixes = [Path(p) for p in os.get_exec_path() if p and Path(p).is_absolute()]
+        configured = os.environ.get("NPM_CONFIG_PREFIX") or os.environ.get("npm_config_prefix")
+        if configured:
+            prefixes.append(Path(configured).expanduser())
+        if os.environ.get("APPDATA"):
+            prefixes.append(Path(os.environ["APPDATA"]) / "npm")
+        paths.extend(
+            prefix / "node_modules/opencode-ai/bin/opencode.exe"
+            for prefix in prefixes if prefix.is_absolute()
+        )
+    return list(dict.fromkeys(path for path in paths if path.is_absolute()))
 
 
 @dataclass

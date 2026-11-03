@@ -4,7 +4,9 @@ These tests prove host/adapter behavior, not real Provider acceptance.
 """
 import json
 import asyncio
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -96,6 +98,112 @@ def test_cli_precedence_and_no_project_path_lookup(tmp_path, monkeypatch):
     assert resolve_cli('opencode') is None
     with pytest.raises(ValueError, match='Configured CLI'):
         resolve_cli('opencode', explicit='./opencode', candidates=[home_cli])
+
+
+@pytest.fixture
+def windows_cli_lookup(monkeypatch):
+    """Model PATHEXT lookup over real temporary files; no Windows process is run."""
+    from jiuwenswarm.server.runtime.agent_adapter.providers import cli, opencode
+    original = cli.shutil.which
+
+    def which(path):
+        if not Path(path).suffix:
+            for suffix in ('.exe', '.cmd'):
+                found = original(str(path) + suffix)
+                if found:
+                    return found
+        return original(path)
+
+    monkeypatch.setattr(cli, 'os', SimpleNamespace(name='nt', path=os.path, get_exec_path=os.get_exec_path))
+    monkeypatch.setattr(cli, 'shutil', SimpleNamespace(which=which))
+    monkeypatch.setattr(opencode, 'sys', SimpleNamespace(platform='win32'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('location', ['path', 'appdata', 'prefix'])
+async def test_windows_npm_discovery_enters_original_facade(
+    owned_permissions, windows_cli_lookup, monkeypatch, tmp_path, location,
+):
+    from jiuwenswarm.common import utils
+    app, config, services = owned_permissions
+    config['opencode'].pop('cli_path')
+    config['opencode'].pop('url', None)
+    config['opencode'].pop('directory', None)
+    home = tmp_path / 'another user'
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
+    monkeypatch.setattr(utils, 'get_default_project_session_workspace_dir', lambda: tmp_path)
+    monkeypatch.setenv('APPDATA', str(home / 'AppData/Roaming'))
+    monkeypatch.delenv('NPM_CONFIG_PREFIX', raising=False)
+    monkeypatch.delenv('npm_config_prefix', raising=False)
+    prefix = home / 'custom npm' if location != 'appdata' else home / 'AppData/Roaming/npm'
+    installed_cli(prefix / 'opencode.cmd')
+    executable = installed_cli(prefix / 'node_modules/opencode-ai/bin/opencode.exe')
+    monkeypatch.setenv('PATH', str(prefix) if location == 'path' else '')
+    if location == 'prefix':
+        monkeypatch.setenv('NPM_CONFIG_PREFIX', str(prefix))
+    await app.create_instance(config)
+    try:
+        assert app._adapter._executable == executable
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request('windows-npm'))]
+        assert any(item.get('content') == 'PUBLIC_REPLY' for item in chunks)
+        assert any(row.get('event_type') == 'chat.final' for row in session_history.read_session_history_records('windows-npm'))
+        assert app.runtime_permission_status('windows-npm')['effective_profile'] == 'default'
+    finally:
+        await app.cleanup()
+    assert services[0].client.is_closed
+
+
+@pytest.mark.parametrize('suffix', ['.cmd', '.bat', '.ps1'])
+def test_windows_implicit_launcher_does_not_hide_native_candidate(
+    windows_cli_lookup, monkeypatch, tmp_path, suffix,
+):
+    from jiuwenswarm.server.runtime.agent_adapter.providers import cli
+    launcher = installed_cli(tmp_path / ('opencode' + suffix))
+    executable = installed_cli(tmp_path / 'native/opencode.exe')
+    monkeypatch.setenv('PATH', str(tmp_path))
+    original = cli.shutil.which
+    monkeypatch.setattr(cli, 'shutil', SimpleNamespace(which=lambda p: launcher if p == str(tmp_path / 'opencode') else original(p)))
+    assert cli.resolve_cli('opencode', candidates=[executable]) == executable
+    with pytest.raises(ValueError, match='native executable'):
+        cli.resolve_cli('opencode', explicit=launcher, candidates=[executable])
+
+
+def test_windows_native_path_precedes_npm_fallback(windows_cli_lookup, monkeypatch, tmp_path):
+    from jiuwenswarm.server.runtime.agent_adapter.providers import cli, opencode
+    prefix = tmp_path / 'npm prefix'
+    installed_cli(prefix / 'opencode.cmd')
+    installed_cli(prefix / 'node_modules/opencode-ai/bin/opencode.exe')
+    native = installed_cli(tmp_path / 'native/opencode.exe')
+    monkeypatch.setenv('PATH', os.pathsep.join([str(prefix), str(Path(native).parent)]))
+    assert cli.resolve_cli('opencode', candidates=opencode.cli_candidates()) == native
+
+
+@pytest.mark.asyncio
+async def test_windows_npm_missing_native_reports_installation(host, windows_cli_lookup, monkeypatch, tmp_path):
+    from jiuwenswarm.server.runtime.agent_adapter.providers import opencode
+    installed_cli(tmp_path / 'opencode.cmd')
+    monkeypatch.setenv('PATH', str(tmp_path))
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path / 'empty home'))
+    monkeypatch.setenv('APPDATA', str(tmp_path / 'empty appdata'))
+    monkeypatch.delenv('NPM_CONFIG_PREFIX', raising=False)
+    monkeypatch.delenv('npm_config_prefix', raising=False)
+    app, config, calls, _, _ = host
+    config['opencode'].pop('url')
+    with pytest.raises(ValueError, match='OpenCode CLI was not found'):
+        await app.create_instance(config)
+    assert not calls
+
+
+def test_windows_npm_relative_prefix_is_not_discovered(windows_cli_lookup, monkeypatch, tmp_path):
+    from jiuwenswarm.server.runtime.agent_adapter.providers import opencode
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('PATH', '.')
+    monkeypatch.setenv('APPDATA', 'relative-appdata')
+    monkeypatch.setenv('NPM_CONFIG_PREFIX', 'relative-prefix')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path / 'empty home'))
+    installed_cli(tmp_path / 'node_modules/opencode-ai/bin/opencode.exe')
+    assert all(candidate.is_absolute() for candidate in opencode.cli_candidates())
+    assert tmp_path / 'node_modules/opencode-ai/bin/opencode.exe' not in opencode.cli_candidates()
 
 
 @pytest.mark.parametrize('platform,tail', [
