@@ -67,7 +67,7 @@ def add_skill(result: Equipment, directory: Path, metadata=None):
 
 
 def read_package(result: Equipment, directory: Path, *, template: bool):
-    manifest = json.loads(contained(directory, "manifest.json").read_text())
+    manifest = json.loads(contained(directory, "manifest.json").read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("Invalid equipment manifest")
     portable = {"package_type", "name", "version", "display_name", "description", "display_description",
@@ -91,7 +91,7 @@ def read_package(result: Equipment, directory: Path, *, template: bool):
         files = sorted(folder.rglob("*.md"))
         if not files:
             raise ValueError("Equipment persona has no markdown")
-        result.system = "\n\n".join(contained(directory, str(f.relative_to(directory))).read_text() for f in files)
+        result.system = "\n\n".join(contained(directory, str(f.relative_to(directory))).read_text(encoding="utf-8") for f in files)
     for item in manifest.get("skills", []):
         if not isinstance(item, dict) or set(item) - {"dir", "mode", "enabled_skills"} or "dir" not in item:
             raise ValueError("Unsupported equipment Skill declaration")

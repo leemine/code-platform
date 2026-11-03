@@ -78,9 +78,9 @@ class SessionService:
         for index, (name, directory) in enumerate(equipment.skills.items()):
             shutil.copytree(directory, skills / str(index), ignore=shutil.ignore_patterns(".archive", ".git", "__pycache__"))
             if name in equipment.skill_documents:
-                (skills / str(index) / "SKILL.md").write_text(equipment.skill_documents[name])
+                (skills / str(index) / "SKILL.md").write_text(equipment.skill_documents[name], encoding="utf-8")
         config_file = self.root / "opencode.json"
-        config_file.write_text(json.dumps(config))
+        config_file.write_text(json.dumps(config), encoding="utf-8")
         config_file.chmod(0o600)
         # Use a private HOME/XDG namespace while retaining the actual project cwd.
         env = {k: v for k, v in os.environ.items() if not k.startswith("OPENCODE_")}
