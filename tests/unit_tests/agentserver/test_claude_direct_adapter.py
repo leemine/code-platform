@@ -111,6 +111,36 @@ def request(sid='one', method=ReqMethod.CHAT_SEND, **params):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('base,hostname', [
+    ('http://127.0.0.1:1234', '127.0.0.1'),
+    ('http://localhost:1234', 'localhost'),
+    ('http://[::1]:1234', '::1'),
+    ('https://models.example.invalid', None),
+])
+async def test_local_model_bypasses_inherited_proxy_without_changing_remote_policy(host, monkeypatch, base, hostname):
+    app, config, _, root, _ = host
+    monkeypatch.setenv('HTTP_PROXY', 'http://127.0.0.1:7897')
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7897')
+    monkeypatch.setenv('NO_PROXY', 'existing.example')
+    monkeypatch.setenv('no_proxy', 'other.example')
+    inherited = [__import__('os').environ.get('NO_PROXY', ''), __import__('os').environ.get('no_proxy', '')]
+    await app.create_instance(config)
+    try:
+        await app._adapter.prepare_session(session_id='one', channel_id='web', mode='code', project_dir=str(root))
+        model = claude.resolve_model(request()).model_copy(update={'api_base': base})
+        options = app._adapter._options(app._adapter._sessions['one'], model)
+        if hostname:
+            assert options.env['NO_PROXY'] == options.env['no_proxy']
+            assert options.env['NO_PROXY'].split(',') == [*filter(None, inherited), hostname]
+        else:
+            assert 'NO_PROXY' not in options.env and 'no_proxy' not in options.env
+        assert 'HTTP_PROXY' not in options.env and 'HTTPS_PROXY' not in options.env
+        assert __import__('os').environ['NO_PROXY'] == inherited[0]
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('code,success', [(0, True), (7, False), (None, None), (True, None)])
 async def test_facade_native_results_history_and_resume(host, code, success):
     app, config, clients, root, options = host

@@ -6,6 +6,7 @@ import hashlib
 import importlib.metadata
 import json
 import logging
+import os
 import time
 import shutil
 import tempfile
@@ -13,6 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_model, native_timeout_env
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
@@ -259,6 +261,14 @@ class ClaudeAdapter:
                "CLAUDE_CODE_USE_BEDROCK": "0", "CLAUDE_CODE_USE_VERTEX": "0", "CLAUDE_CODE_USE_FOUNDRY": "0",
                "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS": "1"}
         env.update(native_timeout_env(self._settings, model))
+        hostname = urlparse(model.api_base).hostname
+        if hostname in {"localhost", "127.0.0.1", "::1"}:
+            # A local model gateway must not be forwarded through an inherited
+            # outbound proxy. Keep the existing bypass entries for other hosts.
+            bypass = ",".join(value for value in (
+                os.environ.get("NO_PROXY", ""), os.environ.get("no_proxy", ""), hostname,
+            ) if value)
+            env["NO_PROXY"] = env["no_proxy"] = bypass
         return ClaudeAgentOptions(cwd=session.directory, cli_path=self._settings.get("cli_path"),
             model=model.model_name, env=env, setting_sources=[], strict_mcp_config=True,
             session_id=None if session.started else session.native_id,
