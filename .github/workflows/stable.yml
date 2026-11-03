@@ -78,6 +78,7 @@ jobs:
                   tests/unit_tests/agentserver/test_codex_direct_adapter.py
                   tests/unit_tests/agentserver/test_claude_direct_adapter.py
                   tests/unit_tests/agentserver/test_opencode_direct_adapter.py
+                  tests/unit_tests/agentserver/test_opencode_equipment_encoding.py
                   tests/unit_tests/agentserver/test_provider_session_selection.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
