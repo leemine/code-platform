@@ -16,11 +16,13 @@ def resolve_cli(command: str, *, explicit: str | None = None, candidates=()) -> 
     Never fall back after an invalid explicit selection. Implicit lookup ignores
     relative PATH entries, so a project-local executable cannot shadow the CLI.
     """
-    def executable(path):
+    def executable(path, *, explicit_selection=False):
         found = shutil.which(str(path))
         if found and Path(found).is_file():
-            if os.name == "nt" and Path(found).suffix.lower() in {".cmd", ".bat"}:
-                raise ValueError("CLI batch launchers require an explicit native executable path")
+            if os.name == "nt" and Path(found).suffix.lower() in {".cmd", ".bat", ".ps1"}:
+                if explicit_selection:
+                    raise ValueError("CLI script launchers require an explicit native executable path")
+                return None
             # Preserve symlink/shim identity; some launchers resolve resources via argv[0].
             return os.path.abspath(found)
         return None
@@ -29,11 +31,11 @@ def resolve_cli(command: str, *, explicit: str | None = None, candidates=()) -> 
     if explicit is not None:
         value = Path(explicit.strip()).expanduser()
         if value.is_absolute():
-            found = executable(value)
+            found = executable(value, explicit_selection=True)
         elif explicit.strip() == value.name and value.name not in {".", ".."}:
             found = None
             for parent in paths:
-                found = executable(parent / value)
+                found = executable(parent / value, explicit_selection=True)
                 if found:
                     break
         else:
