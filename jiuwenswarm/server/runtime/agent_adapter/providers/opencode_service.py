@@ -34,11 +34,12 @@ def permission_config(equipment, profile):
 
 
 class SessionService:
-    def __init__(self, executable: str, directory: str):
+    def __init__(self, executable: str, directory: str, *, root: Path | None = None):
         from jiuwenswarm.common.utils import get_agent_sessions_dir
         parent = get_agent_sessions_dir() / ".opencode"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
+        self.root = root if root is not None else Path(tempfile.mkdtemp(prefix="session-", dir=parent))
+        self.retain_data = root is not None
         self.executable = executable
         self.directory = directory
         self.process = None
@@ -143,4 +144,5 @@ class SessionService:
 
     async def close(self):
         await self.stop()
-        shutil.rmtree(self.root)
+        if not self.retain_data:
+            shutil.rmtree(self.root)

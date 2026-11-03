@@ -21,6 +21,7 @@ from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
+from . import session_recovery as recovery
 
 
 _CANCEL_TIMEOUT = 15
@@ -47,6 +48,7 @@ class _Terminated(BaseModel):
 class Session:
     directory: str
     root: Path
+    swarm_id: str = ""
     client: Any = None
     thread_id: str = ""
     turn_id: str = ""
@@ -165,12 +167,25 @@ class CodexAdapter:
                 raise ValueError("Codex session workspace cannot change after binding")
             return
         from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
+        binding = recovery.load("codex", session_id, directory)
+        if binding:
+            recovery.require_settings(binding, self._settings)
+            self._sessions[session_id] = Session(directory, Path(binding["root"]), swarm_id=session_id,
+                thread_id=binding["native_id"], model_revision=binding["model_revision"],
+                desired_permission=binding["permission"])
+            return
         if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in read_session_history_records(session_id)):
-            raise ValueError("Codex cannot restore a released Swarm session yet; create a new session")
+            raise ValueError("Codex cannot restore a released session without a recovery binding; its original native thread cannot be identified")
         parent = get_agent_sessions_dir() / ".codex-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
-        self._sessions[session_id] = Session(directory, root, desired_permission=self._permission_profile)
+        self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
+
+    def _save_binding(self, session):
+        if session.swarm_id and session.thread_id:
+            recovery.save("codex", session.swarm_id, root=session.root, directory=session.directory,
+                native_id=session.thread_id, model_revision=session.model_revision,
+                settings_revision=recovery.settings_revision(self._settings), permission=session.desired_permission)
 
     def has_session_runtime(self, session_id=None):
         return session_id in self._sessions if session_id else bool(self._sessions)
@@ -223,6 +238,8 @@ class CodexAdapter:
     async def _connect(self, session, model):
         from openai_codex.client import CodexClient, CodexConfig
         revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
+        if session.model_revision and revision != session.model_revision:
+            raise ValueError("Codex model configuration changed; restore the original configuration before resuming")
         if session.client:
             if revision != session.model_revision:
                 raise ValueError("Codex model configuration changed; create a new session")
@@ -247,10 +264,21 @@ class CodexAdapter:
         try:
             await asyncio.to_thread(client.start)
             await asyncio.wait_for(asyncio.to_thread(client.initialize), 30)
-            response = await asyncio.wait_for(asyncio.to_thread(client.thread_start, {
+            options = {
                 "cwd": session.directory, "model": model.model_name, "modelProvider": "swarm",
                 **self._permission_options(session.desired_permission),
-            }), 30)
+            }
+            if session.thread_id:
+                response = await asyncio.wait_for(asyncio.to_thread(client.thread_resume, session.thread_id, options), 30)
+                if response.thread.id != session.thread_id:
+                    raise ValueError("Codex resumed a different thread")
+                native = response.thread.model_dump(mode="json", by_alias=True)
+                if Path(native["cwd"]).resolve() != Path(session.directory):
+                    raise ValueError("Codex resumed another workspace")
+                if native.get("status", {}).get("type") not in {"idle", "notLoaded"}:
+                    raise ValueError("Codex native thread is not idle; recovery was not started")
+            else:
+                response = await asyncio.wait_for(asyncio.to_thread(client.thread_start, options), 30)
             session.thread_id = response.thread.id
             effective = response.model_dump(mode="json", by_alias=True)
             expected = self._permission_options(session.desired_permission)
@@ -266,6 +294,12 @@ class CodexAdapter:
         session.client = client
         session.model_revision = revision
         session.effective_permission = session.desired_permission
+        try:
+            self._save_binding(session)
+        except BaseException:
+            await asyncio.to_thread(client.close)
+            session.client = None
+            raise
 
     @staticmethod
     def _permission_options(profile):
@@ -377,6 +411,7 @@ class CodexAdapter:
                 if effective.get("approvalPolicy") != expected["approvalPolicy"] or effective.get("approvalsReviewer") != "user" or effective.get("sandbox", {}).get("type") != ("dangerFullAccess" if session.desired_permission == "full_access" else "workspaceWrite"):
                     raise ValueError("Codex permission update was not confirmed")
                 session.effective_permission = session.desired_permission
+                self._save_binding(session)
             session.turn_id = ""
             session.command_ids.clear()
             session.turn_ready.clear()
@@ -584,7 +619,9 @@ class CodexAdapter:
             self._release_controls(session)
             if session.client:
                 await asyncio.to_thread(session.client.close)
-            shutil.rmtree(session.root)
+            self._save_binding(session)
+            if not session.thread_id:
+                shutil.rmtree(session.root)
             self._sessions.pop(session_id, None)
         return True
 
@@ -611,6 +648,7 @@ class CodexAdapter:
         for sid, session in self._sessions.items():
             if target_session_id is None or sid == target_session_id:
                 session.desired_permission = profile
+                self._save_binding(session)
 
     async def process_message_impl(self, request, inputs):
         chunks = [chunk.payload async for chunk in self.process_message_stream_impl(request, inputs)]

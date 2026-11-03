@@ -18,6 +18,7 @@ import sys
 
 from . import opencode_transport as transport
 from .cli import resolve_cli
+from . import session_recovery as recovery
 
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
@@ -53,6 +54,9 @@ def cli_candidates():
 class _Session:
     native_id: str
     directory: str
+    swarm_id: str = ""
+    model_revision: str = ""
+    restored: bool = False
     active: bool = False
     abort_failed: bool = False
     cancelled: bool = False
@@ -109,6 +113,7 @@ class OpenCodeAdapter:
         self._executable = None
         self._configured = False
         self._permission_profile = "default"
+        self._recovery_settings = {}
 
     async def create_instance(self, config=None, *, mode="agent", sub_mode=None):
         if mode not in {"agent", "code"} or sub_mode not in {None, "normal"}:
@@ -123,6 +128,7 @@ class OpenCodeAdapter:
         if config.get("run_permissions_enabled"):
             raise ValueError("Native run permissions are not supported by OpenCode adapter")
         settings = (config.get("opencode") if "opencode" in config else get_config().get("opencode", {})) or {}
+        self._recovery_settings = dict(settings)
         executable = settings.get("cli_path")
         url = str(settings.get("url") or "").strip()
         if executable or not url:
@@ -219,27 +225,55 @@ class OpenCodeAdapter:
         if session_id not in self._sessions:
             from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
             records = read_session_history_records(session_id)
-            if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in records):
-                raise ValueError("OpenCode pilot cannot restore a released session; create a new session")
+            binding = recovery.load("opencode", session_id, directory)
+            if binding:
+                if not self._executable:
+                    raise ValueError("OpenCode recovery requires its original session-owned service")
+                recovery.require_settings(binding, self._recovery_settings)
+            elif any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in records):
+                raise ValueError("OpenCode cannot restore a released session without a recovery binding; its original native session cannot be identified")
             from .opencode_equipment import Equipment
-            session = _Session("", directory, equipment=Equipment(), desired_permission=self._permission_profile)
+            session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
+                model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
+                desired_permission=binding["permission"] if binding else self._permission_profile)
             if self._executable:
                 from .opencode_service import SessionService
-                session.service = SessionService(self._executable, directory)
+                if binding:
+                    session.service = SessionService(self._executable, directory, root=Path(binding["root"]))
+                else:
+                    session.service = SessionService(self._executable, directory)
             try:
                 if session.service:
                     await session.service.configure(session.equipment, permission_profile=session.desired_permission)
-                native = await self._call("POST", "/session", body={"title": "Swarm single Agent"}, session=session)
+                if binding:
+                    native = await self._call("GET", f"/session/{session.native_id}", session=session)
+                    if native.get("id") != session.native_id or native.get("directory") != directory:
+                        raise ValueError("OpenCode recovery returned another session or workspace")
+                    statuses = await self._call("GET", "/session/status", session=session)
+                    if statuses.get(session.native_id, {}).get("type", "idle") != "idle":
+                        raise ValueError("OpenCode native session is still active; recovery was not started")
+                else:
+                    native = await self._call("POST", "/session", body={"title": "Swarm single Agent"}, session=session)
                 session.native_id = native["id"]
                 self._sessions[session_id] = session
                 async with session.configuration_lock:
-                    session.desired_permission = self._permission_profile
+                    if not binding:
+                        session.desired_permission = self._permission_profile
                     await self._apply_permissions(session)
+                    self._save_binding(session)
             except BaseException:
                 self._sessions.pop(session_id, None)
                 if session.service:
                     await session.service.close()
                 raise
+
+    def _save_binding(self, session):
+        if session.swarm_id and session.native_id and session.service:
+            recovery.save("opencode", session.swarm_id, root=session.service.root, directory=session.directory,
+                native_id=session.native_id, model_revision=session.model_revision,
+                settings_revision=recovery.settings_revision(self._recovery_settings),
+                permission=session.desired_permission)
+            session.service.retain_data = True
 
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
         """Existing Facade equipment boundary; never reconfigure a borrowed server."""
@@ -313,7 +347,13 @@ class OpenCodeAdapter:
         async with session.configuration_lock:
             if session.active:
                 raise RuntimeError("Session already has an active producer; use Runtime scheduling")
+            model_revision = recovery.revision(selected_model)
+            if session.restored and session.model_revision and session.model_revision != model_revision:
+                raise ValueError("OpenCode model configuration changed; restore the original configuration before resuming")
             await self._apply_permissions(session)
+            session.model_revision = model_revision
+            self._save_binding(session)
+            session.restored = False
             session.active, session.cancelled, session.permission_denied = True, False, False
         terminal = False
         text_parts: dict[str, str] = {}
@@ -512,8 +552,7 @@ class OpenCodeAdapter:
                 raise RuntimeError("Cancel and drain the producer before disposing its session")
             if session.service:
                 try:
-                    if session.service.client is not None:
-                        await self._call("DELETE", f"/session/{session.native_id}", session=session)
+                    self._save_binding(session)
                 finally:
                     await session.service.close()
                     del self._sessions[session_id]
@@ -608,6 +647,7 @@ class OpenCodeAdapter:
         # leave another session able to start with a silently stale policy.
         for _, session in sessions:
             session.desired_permission = profile
+            self._save_binding(session)
         for sid, session in sessions:
             async with session.configuration_lock:
                 if self._sessions.get(sid) is not session:

@@ -5,6 +5,7 @@ These tests prove host/adapter behavior, not real Provider acceptance.
 import json
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,13 @@ def installed_cli(path):
     return str(path)
 
 
+def private_service_root():
+    from jiuwenswarm.common.utils import get_agent_sessions_dir
+    parent = get_agent_sessions_dir() / '.opencode'
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix='service-', dir=parent))
+
+
 @pytest.mark.asyncio
 async def test_desktop_discovery_enters_original_facade_and_history(owned_permissions, monkeypatch, tmp_path):
     app, config, services = owned_permissions
@@ -32,7 +40,7 @@ async def test_desktop_discovery_enters_original_facade_and_history(owned_permis
     config['opencode'].pop('url', None)
     config['opencode'].pop('directory', None)
     home = tmp_path / 'another user'
-    executable = installed_cli(home / '.opencode/bin/opencode')
+    executable = installed_cli(home / '.opencode/bin' / ('opencode.exe' if os.name == 'nt' else 'opencode'))
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: home))
     monkeypatch.setenv('PATH', '/nonexistent-desktop-path')
     from jiuwenswarm.common import utils
@@ -86,14 +94,15 @@ async def test_missing_cli_reports_installation_not_url_syntax(host, monkeypatch
 
 def test_cli_precedence_and_no_project_path_lookup(tmp_path, monkeypatch):
     from jiuwenswarm.server.runtime.agent_adapter.providers.cli import resolve_cli
-    path_cli = installed_cli(tmp_path / 'path/opencode')
-    home_cli = installed_cli(tmp_path / 'home/opencode')
-    local_cli = installed_cli(tmp_path / 'project/opencode')
+    binary = 'opencode.exe' if os.name == 'nt' else 'opencode'
+    path_cli = installed_cli(tmp_path / 'path' / binary)
+    home_cli = installed_cli(tmp_path / 'home' / binary)
+    local_cli = installed_cli(tmp_path / 'project' / binary)
     monkeypatch.chdir(Path(local_cli).parent)
-    monkeypatch.setenv('PATH', '.::' + str(Path(path_cli).parent))
-    assert resolve_cli('opencode', candidates=[home_cli]) == path_cli
+    monkeypatch.setenv('PATH', os.pathsep.join(['.', '', str(Path(path_cli).parent)]))
+    assert Path(resolve_cli('opencode', candidates=[home_cli])) == Path(path_cli)
     assert resolve_cli('opencode', explicit=home_cli) == home_cli
-    monkeypatch.setenv('PATH', '.:')
+    monkeypatch.setenv('PATH', '.' + os.pathsep)
     assert resolve_cli('opencode', candidates=[home_cli]) == home_cli
     assert resolve_cli('opencode') is None
     with pytest.raises(ValueError, match='Configured CLI'):
@@ -107,6 +116,8 @@ def windows_cli_lookup(monkeypatch):
     original = cli.shutil.which
 
     def which(path):
+        if Path(path).is_absolute() and Path(path).is_file():
+            return str(path)
         if not Path(path).suffix:
             for suffix in ('.exe', '.cmd'):
                 found = original(str(path) + suffix)
@@ -217,7 +228,7 @@ def test_platform_candidate_locations_use_current_user(monkeypatch, tmp_path, pl
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
     candidates = opencode.cli_candidates()
     assert tmp_path / tail in candidates
-    if platform == 'darwin':
+    if platform == 'darwin' and os.name != 'nt':
         assert Path('/opt/homebrew/bin/opencode') in candidates
 
 
@@ -719,7 +730,12 @@ async def test_template_symlink_rejected_before_native_prompt(host, equipment_as
     directory = equipment_assets('linked')
     outside = tmp_path / 'outside.md'; outside.write_text('outside')
     (directory / 'persona/rules.md').unlink()
-    (directory / 'persona/rules.md').symlink_to(outside)
+    try:
+        (directory / 'persona/rules.md').symlink_to(outside)
+    except OSError as exc:
+        if getattr(exc, 'winerror', None) == 1314:
+            pytest.skip('Windows account cannot create symbolic links')
+        raise
     await app.create_instance(config)
     try:
         with pytest.raises(ValueError, match='outside'):
@@ -745,7 +761,8 @@ async def test_skill_chip_is_not_a_persistent_allowlist_and_disabled_skill_fails
     snapshots = []
     original = httpx.AsyncClient
     class Service:
-        def __init__(self, executable, directory):
+        def __init__(self, executable, directory, *, root=None):
+            self.root = root if root is not None else private_service_root()
             self.client = original(base_url='http://127.0.0.1:12345')
         async def configure(self, equipment, *, permission_profile="default"):
             snapshots.append({name: (path / 'resource.txt').read_text() for name,path in equipment.skills.items()})
@@ -801,7 +818,8 @@ async def test_mcp_uses_existing_credentials_and_failed_mount_does_not_replace_s
     configured = []; status = {'probe': {'status': 'connected'}}
     original = httpx.AsyncClient
     class Service:
-        def __init__(self, executable, directory):
+        def __init__(self, executable, directory, *, root=None):
+            self.root = root if root is not None else private_service_root()
             self.client = original(base_url='http://127.0.0.1:12345')
         async def configure(self, equipment, *, permission_profile="default"): configured.append(equipment.mcps)
         async def close(self): await self.client.aclose()
@@ -873,7 +891,8 @@ async def test_owned_sessions_bind_ui_projects_across_equipment_http_and_cleanup
         project.mkdir()
     transports, equipment_dirs, services = [], [], []
     class Service:
-        def __init__(self, executable, directory):
+        def __init__(self, executable, directory, *, root=None):
+            self.root = root if root is not None else private_service_root()
             self.directory = directory
             self.closed = False
             async def observe(req):
@@ -911,8 +930,35 @@ async def test_owned_sessions_bind_ui_projects_across_equipment_http_and_cleanup
         await app.cleanup()
     assert all(s.closed for s in services)
     assert transports and all(owner == sent for owner, _, _, sent in transports)
-    assert sum(method == 'DELETE' and path == '/session/ses_test' for _, method, path, _ in transports) == 2
+    assert not any(method == 'DELETE' for _, method, _, _ in transports)
+    assert all(s.root.is_dir() for s in services)
     assert not any(path in {'/config', '/instance/dispose'} for _, _, path, _ in transports)
+
+
+@pytest.mark.asyncio
+async def test_new_facade_reopens_owned_service_without_replacing_native_session(owned_permissions):
+    first, config, services = owned_permissions
+    await first.create_instance(config)
+    try:
+        _ = [chunk async for chunk in first.process_message_stream(request('recovery'))]
+        original_id = first._adapter._sessions['recovery'].native_id
+        original_root = services[0].root
+    finally:
+        await first.cleanup()
+    assert services[0].client.is_closed and original_root.is_dir()
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in second.process_message_stream(request('recovery'))]
+        assert any(chunk.get('event_type') == 'chat.final' for chunk in chunks)
+        assert len(services) == 2 and services[1].root == original_root
+        assert second._adapter._sessions['recovery'].native_id == original_id
+        assert ('GET', '/session/ses_test', None) in services[1].calls
+        assert not any(method in {'POST', 'DELETE'} and path == '/session'
+            for method, path, _ in services[1].calls)
+        assert not any(method == 'DELETE' for service in services for method, _, _ in service.calls)
+    finally:
+        await second.cleanup()
 
 
 @pytest.mark.asyncio
@@ -953,8 +999,10 @@ def owned_permissions(host, monkeypatch):
     from jiuwenswarm.server.runtime.agent_adapter.providers import opencode_service
     services = []
     class Service:
-        def __init__(self, executable, directory):
+        def __init__(self, executable, directory, *, root=None):
+            self.root = root if root is not None else private_service_root()
             self.rules = []
+            self.directory = directory
             self.fail_readback = False
             self.events = completed_events()
             self.reply = asyncio.Event()
@@ -964,9 +1012,10 @@ def owned_permissions(host, monkeypatch):
                 body = json.loads(req.content) if req.content else None
                 self.calls.append((req.method, req.url.path, body))
                 if req.url.path == '/session': return httpx.Response(200, json={'id':'ses_test'})
+                if req.url.path == '/session/status': return httpx.Response(200, json={})
                 if req.url.path == '/session/ses_test':
                     if req.method == 'PATCH': self.rules.extend(body['permission'])
-                    return httpx.Response(200, json={'id':'ses_test','permission':[] if self.fail_readback else list(self.rules)})
+                    return httpx.Response(200, json={'id':'ses_test','directory':directory,'permission':[] if self.fail_readback else list(self.rules)})
                 if req.url.path == '/event': return httpx.Response(200, stream=Events(self.events,self.reply))
                 if req.url.path.endswith('/reply'): self.reply.set()
                 return httpx.Response(200,json=True)
@@ -1279,7 +1328,7 @@ async def test_owned_service_health_uses_short_probes_and_cleans_up(tmp_path, mo
     monkeypatch.setattr(utils, 'get_agent_sessions_dir', lambda: tmp_path)
     monkeypatch.setattr(opencode_service, 'build_server_model_config', lambda: ({}, None))
     monkeypatch.setattr(opencode_service, 'STARTUP_TIMEOUT', 0.12 if scenario == 'deadline' else 4)
-    monkeypatch.setattr(opencode_service.os, 'killpg', lambda *args: None)
+    monkeypatch.setattr(opencode_service.os, 'killpg', lambda *args: None, raising=False)
     # Real HTTP preserves actual socket read-timeout behavior; no sleeps model startup readiness.
     original_client = httpx._client.AsyncClient
     monkeypatch.setattr(opencode_transport, 'create_client', lambda url, **kw: original_client(base_url=url, timeout=15, trust_env=False))

@@ -2,6 +2,7 @@
 import asyncio
 import queue
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 from gateway.common.model_selection import ResolvedModel
@@ -22,6 +23,7 @@ class FakeClient:
         self.config, self.approval_handler = config, approval_handler
         self.events = queue.Queue()
         self.thread_id = 'thread-' + str(id(self))
+        self.native_threads = {}
         self.turns = 0
         self.closed = False
         self.approval = False
@@ -51,15 +53,18 @@ class FakeClient:
 
     def thread_start(self, options):
         self.options = options
+        self.native_threads[self.thread_id] = self.config.env['CODEX_HOME']
         return self._policy()
 
     def thread_resume(self, thread_id, options):
-        assert thread_id == self.thread_id
+        assert self.native_threads[thread_id] == self.config.env['CODEX_HOME']
+        self.thread_id = thread_id
         self.options = options
         return self._policy()
 
     def _policy(self):
         response = SimpleNamespace(thread=SimpleNamespace(id=self.thread_id))
+        response.thread.model_dump = lambda **kw: {'cwd': self.config.cwd, 'status': {'type': 'idle'}}
         response.model_dump = lambda **kw: {**self.options, 'sandbox': {'type': 'dangerFullAccess' if self.options['sandbox'] == 'danger-full-access' else 'workspaceWrite'}}
         return response
 
@@ -114,8 +119,10 @@ def host(monkeypatch, tmp_path):
     from jiuwenswarm.common import utils, config
     import openai_codex.client
     clients = []
+    native_threads = {}
     def factory(*args, **kwargs):
         client = FakeClient(*args, **kwargs)
+        client.native_threads = native_threads
         clients.append(client)
         return client
     monkeypatch.setattr(openai_codex.client, 'CodexClient', factory)
@@ -207,7 +214,34 @@ async def test_facade_history_exit_and_shared_model(host, exit_code, success):
     finally:
         await app.cleanup()
     assert clients[0].closed
-    assert not list((root / 'sessions/.codex-direct').iterdir())
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    binding = session_recovery.load('codex', 'one', str(root))
+    assert binding['native_id'] == clients[0].thread_id
+    assert Path(binding['root']) == Path(clients[0].config.env['CODEX_HOME']).parent
+    assert Path(binding['root']).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_new_facade_resumes_original_thread_and_private_home(host):
+    first, config, clients, _, _ = host
+    await first.create_instance(config)
+    try:
+        _ = [chunk async for chunk in first.process_message_stream(request())]
+        original_thread = clients[0].thread_id
+        original_home = clients[0].config.env['CODEX_HOME']
+    finally:
+        await first.cleanup()
+    assert clients[0].closed
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in second.process_message_stream(request())]
+        assert any(chunk.get('event_type') == 'chat.final' for chunk in chunks)
+        assert len(clients) == 2
+        assert clients[1].thread_id == original_thread
+        assert clients[1].config.env['CODEX_HOME'] == original_home
+    finally:
+        await second.cleanup()
 
 
 @pytest.mark.asyncio
@@ -613,7 +647,10 @@ async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, 
             await asyncio.gather(producer, return_exceptions=True)
         await runtime.close()
     assert clients[0].closed
-    assert not list((root / 'sessions/.codex-direct').iterdir())
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    binding = session_recovery.load('codex', 'resume-' + stage, str(root))
+    assert binding['native_id'] == original_thread
+    assert Path(binding['root']).is_dir()
 
 
 @pytest.mark.asyncio
