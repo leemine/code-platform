@@ -32,3 +32,9 @@ design_note: 用户在输出保护、P1 和 OBS-01 之后明确授权执行提�
 发布环境按 uv.lock 非 editable 安装 external/native 两个组合，实际导入文件与候选核对；源码缓存、构建配置、API 密钥和安装包不提交 Git。CI stable 及最终运行/合入 SHA、安装包摘要、构建链接在管理仓对应发布记录闭合；未拿到结论前不记成功。原本机 Codex/OpenCode 真实 Web/Worker 验收适用部分按文件哈希和语义差异核对，不能直接宣称 Windows/macOS 实机聊天通过。
 
 Claude 原渠道真实验收仍被官方 CLI 自身的 HTTP 429/10次重试阻塞；任务 1 不在本次授权的 2～6 范围。beta5 是测试版，明确列出该限制；没有改外部 SDK/CLI、替换密钥/路由、关闭 TLS 或使用 CC-Switch。Windows 安装包未签名；macOS arm64 未做 Developer ID 签名/公证，不能宣传正式签名发行或跨平台实机验收。
+
+## 首轮构建与来源复查
+
+PR #14在stable成功后已合入c8e55c7，三平台41787080221均构建成功。复查发现新增Linux job时macOS诊断上传步骤仍挂在Linux下，使macOS诊断资产被Linux内容标记；正式macOS安装包自身的source.json和dmg不受影响。该问题仅在工作流修正，不改产品/锁，增加每个job的安装包文件名、字节数、SHA256到原source.json并打印非敏感清单，便于下载/转存前核对。修正通过stable后以同一新合入SHA重跑三平台，首轮包不作为beta5最终发布资产。
+
+本地发布候选external432通过、Native553通过/3项Windows专属Linux跳过；前端8脚本共9测试、构建通过，实际按锁非editable来源一致。候选stable41786693197与合入后41787067588成功，未运行每日full-python。主目录已同步且clean。最终发布链接与SHA由管理仓发布记录续记，Claude429限制保留。

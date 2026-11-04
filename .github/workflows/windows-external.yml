@@ -97,6 +97,9 @@ jobs:
           } finally {
             Stop-Transcript
           }
+      - name: Record installer file manifests
+        run: |
+          .venv/Scripts/python.exe -I -c "import hashlib,json; from pathlib import Path; p=Path('ci-evidence/source.json'); s=json.loads(p.read_text(encoding='utf-8-sig')); s['assets']=[{'file':f.name,'bytes':f.stat().st_size,'sha256':hashlib.file_digest(f.open('rb'),'sha256').hexdigest()} for f in sorted(Path('dist').glob('*.exe'))]; p.write_text(json.dumps(s,indent=2)+'\n'); print(json.dumps(s))"
       - name: Upload installer
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -208,6 +211,19 @@ jobs:
           installers=(dist/*.dmg)
           test "${#installers[@]}" -gt 0
           shasum -a 256 "${installers[@]}" > ci-evidence/SHA256SUMS
+      - name: Record installer file manifests
+        run: |
+          .venv/bin/python -I - <<'PYMETA'
+          import hashlib, json
+          from pathlib import Path
+          p = Path('ci-evidence/source.json')
+          source = json.loads(p.read_text())
+          files = [f for pattern in ('*.dmg',) for f in sorted(Path('dist').glob(pattern))]
+          source['assets'] = [{'file': f.name, 'bytes': f.stat().st_size,
+                               'sha256': hashlib.file_digest(f.open('rb'), 'sha256').hexdigest()} for f in files]
+          p.write_text(json.dumps(source, indent=2) + '\n')
+          print(json.dumps(source))
+          PYMETA
       - name: Upload macOS installer
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -219,6 +235,15 @@ jobs:
             ci-evidence/source.json
           if-no-files-found: error
           compression-level: 0
+          retention-days: 14
+
+      - name: Upload macOS build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-external-build-log-${{ github.run_id }}
+          path: ci-evidence/
+          if-no-files-found: warn
           retention-days: 14
 
   linux:
@@ -269,6 +294,19 @@ jobs:
           installers=(dist/*.deb dist/*.tar.gz)
           test "${#installers[@]}" -eq 2
           sha256sum "${installers[@]}" > ci-evidence/SHA256SUMS
+      - name: Record installer file manifests
+        run: |
+          .venv/bin/python -I - <<'PYMETA'
+          import hashlib, json
+          from pathlib import Path
+          p = Path('ci-evidence/source.json')
+          source = json.loads(p.read_text())
+          files = [f for pattern in ('*.deb', '*.tar.gz') for f in sorted(Path('dist').glob(pattern))]
+          source['assets'] = [{'file': f.name, 'bytes': f.stat().st_size,
+                               'sha256': hashlib.file_digest(f.open('rb'), 'sha256').hexdigest()} for f in files]
+          p.write_text(json.dumps(source, indent=2) + '\n')
+          print(json.dumps(source))
+          PYMETA
       - name: Upload Linux installers
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -287,14 +325,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-external-build-log-${{ github.run_id }}
-          path: ci-evidence/
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Upload macOS build diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: macos-external-build-log-${{ github.run_id }}
           path: ci-evidence/
           if-no-files-found: warn
           retention-days: 14
