@@ -1,12 +1,14 @@
 """Public Facade/control/history regressions; SDK fake is not real acceptance."""
 import asyncio
+import io
+import json
 import queue
 from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 from gateway.common.model_selection import ResolvedModel
-from jiuwenswarm.common.schema.agent import AgentRequest
+from jiuwenswarm.common.schema.agent import AgentRequest, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from jiuwenswarm.server.runtime.agent_adapter import interface
 from jiuwenswarm.server.runtime.agent_adapter.providers import codex
@@ -144,10 +146,12 @@ def request(sid='one', method=ReqMethod.CHAT_SEND, **params):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('wrong_thread',[False,True])
 @pytest.mark.parametrize('child_failed',[False,True])
-async def test_official_collab_child_snapshot_uses_original_history_and_parent_boundary(host, monkeypatch,wrong_thread,child_failed):
+@pytest.mark.parametrize('large_output',[False,True,None], ids=['short','long','not-returned'])
+async def test_official_collab_child_snapshot_uses_original_history_and_parent_boundary(host, monkeypatch,wrong_thread,child_failed,large_output):
     from openai_codex.generated.v2_all import CollabAgentToolCallThreadItem
     app, config, clients, _, _ = host
     reads=[]
+    child_output = None if large_output is None else '子工具输出🙂' * 20000 if large_output else 'CHILD TOOL OUTPUT'
     def finish(client, status='completed'):
         for tool, states in [('spawnAgent',{'child':{'status':'running','message':None}}),
                              ('wait',{'child':{'status':'errored' if child_failed else 'completed','message':'CHILD FAILURE' if child_failed else 'CHILD SUMMARY'},'stranger':{'status':'completed','message':'FOREIGN SECRET'}})]:
@@ -164,7 +168,7 @@ async def test_official_collab_child_snapshot_uses_original_history_and_parent_b
         reads.append(native_id)
         assert native_id=='child' and include_turns
         return Payload(thread={'id':'stranger' if wrong_thread else 'child','turns':[{'id':'child-turn','status':'failed' if child_failed else 'completed','items':[
-            {'id':'child-command','type':'commandExecution','status':'failed' if child_failed else 'completed','exitCode':0 if child_failed else None,'aggregatedOutput':'CHILD TOOL OUTPUT'},
+            {'id':'child-command','type':'commandExecution','status':'failed' if child_failed else 'completed','exitCode':0 if child_failed else None,'aggregatedOutput':child_output},
             {'id':'child-final','type':'agentMessage','text':'CHILD SUMMARY','phase':'final_answer'}]}]})
     monkeypatch.setattr(FakeClient,'finish',finish)
     monkeypatch.setattr(FakeClient,'thread_read',thread_read,raising=False)
@@ -174,10 +178,16 @@ async def test_official_collab_child_snapshot_uses_original_history_and_parent_b
         assert reads==['child','child']
         assert not any('FOREIGN SECRET' in str(x) for x in chunks)
         activities=[x for x in chunks if x.get('event_type')=='chat.subagent_activity']
-        output=[x for x in activities if x.get('summary')=='CHILD TOOL OUTPUT']
+        output=[x for x in activities if x.get('tool_call_id')=='child-command']
         assert len(output)==(0 if wrong_thread else 1)
         if output:
             assert output[0].get('ok') is (False if child_failed else None)
+            assert len(output[0]['summary']) <= 2000
+            if large_output:
+                assert 'Output truncated' in output[0]['summary']
+                assert child_output.startswith(output[0]['summary'].split('\n[Output truncated')[0])
+            else:
+                assert output[0]['summary'] == (child_output or '')
         assert next(x for x in chunks if x.get('event_type')=='chat.final')['content']=='PARENT SUMMARY'
         from jiuwenswarm.server.control.history_service import load_history_page
         session_history.flush_history_writes()
@@ -185,9 +195,108 @@ async def test_official_collab_child_snapshot_uses_original_history_and_parent_b
         assert any(x.get('content')==('CHILD FAILURE' if child_failed else 'CHILD SUMMARY') for x in page['messages'])
         assert [x for x in chunks if x.get('event_type')=='chat.subtask_update'][-1]['turn_outcome']==('failed' if child_failed else 'completed')
         assert any(x.get('subagent_activity',{}).get('task_id')=='child-turn' for x in page['messages']) is not wrong_thread
+        if output:
+            saved = next(x for x in page['messages'] if x.get('subagent_activity',{}).get('tool_call_id')=='child-command')
+            assert saved['content'] == output[0]['summary']
         assert 'codex-child' in session_history.list_session_subagent_ids('one')
         assert 'codex-foreign-child' not in session_history.list_session_subagent_ids('one')
     finally:await app.cleanup()
+
+
+@pytest.mark.parametrize('size', [0, 59999, 60000, 60001])
+def test_command_output_boundary_preserves_short_text_and_native_facts(size):
+    text = 'x' * size
+    native = {'id': 'limit', 'status': 'completed', 'exitCode': 0, 'aggregatedOutput': text}
+    result = codex.command_result(native)
+    assert result['content'] == result['result']
+    assert len(result['result']) <= 60000
+    assert native['aggregatedOutput'] == text
+    assert result['exit_code'] == 0 and result['success'] is True
+    assert result['task_acceptance'] == 'unknown'
+    assert 'rendered_result' not in result
+    if size <= 60000:
+        assert result['result'] == text and 'provider' not in result
+    else:
+        assert 'Output truncated' in result['result']
+        assert result['provider']['codex']['received_output_chars'] == size
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text', ['\x00' * 1048610, '汉字🙂' * 350000, '\\"\n' * 350000], ids=['escaped-controls', 'unicode', 'quotes-newlines'])
+@pytest.mark.parametrize('exit_code', [0, 7, None])
+async def test_large_command_through_facade_history_wire_and_cli(host, monkeypatch, text, exit_code):
+    from gateway.common.ws_limits import AGENT_WS_SEND_BUDGET_BYTES
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.channels.process_cli.render import EventRenderer
+    from jiuwenswarm.runtime.events import RuntimeEvent
+    from jiuwenswarm.server.ws_send import send_wire_payload
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app, config, clients, _, _ = host
+    native = {'id': 'large-command', 'type': 'commandExecution', 'status': 'completed',
+              'exitCode': exit_code, 'aggregatedOutput': text}
+    def finish(client, status='completed'):
+        client.emit('item/completed', item=native)
+        client.emit('item/completed', item={'id': 'answer', 'type': 'agentMessage', 'text': 'done', 'phase': 'final_answer'})
+        client.emit('turn/completed', turn={'status': status})
+    monkeypatch.setattr(FakeClient, 'finish', finish)
+    class WebSocket:
+        sent = None
+        async def send(self, payload):
+            self.sent = payload
+    await app.create_instance(config)
+    try:
+        chunks = [chunk async for chunk in app.process_message_stream(request())]
+        assert not any(x.payload.get('event_type') == 'chat.error' for x in chunks)
+        chunk = next(x for x in chunks if x.payload.get('event_type') == 'chat.tool_result')
+        result = chunk.payload
+        assert len(result['content']) <= 60000
+        assert result['content'] == result['result']
+        assert 'Output truncated' in result['result']
+        assert result['invocation_status'] == 'completed'
+        assert result['exit_code'] == exit_code
+        assert result['success'] is (None if exit_code is None else exit_code == 0)
+        assert result['command_success'] is result['success']
+        assert result['task_acceptance'] == 'unknown'
+        assert 'rendered_result' not in result
+        assert result['provider']['codex'] == {
+            'output_truncated': True,
+            'received_output_chars': len(text), 'received_output_bytes': len(text.encode('utf-8')),
+            'displayed_output_chars': len(result['result']),
+            'displayed_output_bytes': len(result['result'].encode('utf-8')),
+        }
+        assert native['aggregatedOutput'] == text
+        ws = WebSocket()
+        if text[0] == '\x00':
+            # Reproduce JSON escaping plus both legacy aliases against the real guard.
+            legacy = AgentResponseChunk(request_id=chunk.request_id, channel_id=chunk.channel_id,
+                                        payload={**result, 'content': text, 'result': text})
+            oversized = encode_agent_chunk_for_wire(legacy, response_id='unbounded', sequence=1)
+            assert not await send_wire_payload(ws, oversized)
+            fallback = parse_agent_server_wire_chunk(json.loads(ws.sent))
+            assert fallback.payload['code'] == 'response_too_large'
+        wire = encode_agent_chunk_for_wire(chunk, response_id='bounded', sequence=1)
+        assert await send_wire_payload(ws, wire)
+        assert len(ws.sent.encode('utf-8')) < AGENT_WS_SEND_BUDGET_BYTES
+        restored = parse_agent_server_wire_chunk(json.loads(ws.sent))
+        assert restored.payload == result
+        session_history.flush_history_writes()
+        page = load_history_page('one', 1)
+        saved = next(x for x in page['messages'] if x.get('tool_call_id') == 'large-command')
+        assert saved['content'] == saved['result'] == result['result']
+        assert saved['provider'] == result['provider'] and saved['exit_code'] == exit_code
+        stream = io.StringIO()
+        EventRenderer('jsonl', stdout=stream).render(RuntimeEvent(
+            request_id='cli', session_id='one', channel_id='tui', payload=restored.payload))
+        assert json.loads(stream.getvalue())['payload']['result'] == result['result']
+        human = io.StringIO()
+        EventRenderer('human', stdout=human, stderr=human, show_tools=True).render(RuntimeEvent(
+            request_id='cli', session_id='one', channel_id='tui', payload=restored.payload))
+        assert 'Output truncated' in human.getvalue()
+        assert next(x.payload for x in chunks if x.payload.get('event_type') == 'chat.final')['content'] == 'done'
+        _ = [chunk async for chunk in app.process_message_stream(request())]
+        assert len(clients) == 1 and clients[0].turns == 2
+    finally:
+        await app.cleanup()
 
 
 @pytest.mark.asyncio

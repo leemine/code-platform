@@ -249,3 +249,21 @@ Claude仅在本轮精确输入回显后接收task_started证明的子Agent。tas
 Codex在原父Turn协作工具通知中接受senderThreadId匹配且spawnAgent确认的子线程，其他目标不自动加入名册或读取。已确认子线程在实际协作item/completed时使用公开thread_read(include_turns=True)快照；没有第二事件读者或定时查询。工具活动和已完成子Turn正文进入原子历史，agentsStates.message保持来源；尚未可读的快照仅记录脱敏诊断，不阻断父任务或补造正文。完成子Turn是idle，只有原生shutdown/notFound才投影关闭；不开放尚未接入的子Agent控制。更新范围受原父producer生命周期限制，不建立父Turn之外的后台监听器。
 
 Web继续复用原活动、结果、历史恢复与只读控件；不改Runtime调度/审批、公共协议或Native实现。OpenCode仍保持原task=deny，子Agent开放须先验证权限继承、审批、取消及终态，此能力作为后续任务，不把观察映射模拟测试当作当前桌面已支持。
+
+
+## Codex 工具正文的有界显示投影
+
+CodexAdapter.command_result 只在现有原生 commandExecution → chat.tool_result 映射处约束 Swarm 显示与历史正文。content/result 继续作为内容一致的兼容别名长期保留；两者均最多60000个Python字符，包含截断提示。短输出不变，不新增 rendered_result，也不改写官方 SDK/CLI 的工具结果、模型上下文、线程或 Turn 控制。provider.codex 中仅在发生截断时带 output_truncated、received_output_chars/bytes、displayed_output_chars/bytes；received 表示 SDK 实际返回的 aggregatedOutput，不能解释为命令完整输出，displayed 包括提示文字，字节数按 UTF-8 计。
+
+已确认子线程的 commandExecution 活动仍走原 _child_snapshot 与 SubagentProjection；工具正文和进行中命令摘要最多2000字符，包含同样的提示，官方可空输出按空摘要呈现。摘要裁剪不改变子线程归属、工具身份、实际退出码、活动幂等或任务终态。命令成功/失败/未知及 task_acceptance 语义保持；截断本身不表示执行失败或验收通过。
+
+AgentServer 原6MiB发送预算保持。此约束局限于 Codex 命令正文及子命令摘要，不宣称所有事件或 Claude/OpenCode 正文均已统一有界；不新增完整输出存储、宿主治理、二次执行或自动重试。故障依据与回归见 B_20261103_2148_codex-output-bound。
+
+
+## Claude/OpenCode 工具返回的有界显示投影
+
+Claude 主工具结果和 OpenCode tool_payload 的 output/error 经各自现有映射裁至60000个Python字符（含提示），content/result仍是同一有界正文的长期兼容别名。Claude子工具调用/返回活动摘要最多2000字符；原子任务归属、幂等和历史桶保留。普通短输出不增加截断标志；不伪造rendered_result，不改SDK/CLI及原生模型上下文。各自provider命名空间在发生截断时记录received/displayed输出字符和UTF-8字节数；计数对象为适配器已取得并映射为字符串的正文，不是原始网络包大小或全部命令输出。
+
+OpenCode原生metadata在JSON序列化文本不超过60000字符时完整保留；超限时按字段整体选择到同一预算，优先exit、truncated、outputPath，其余能容纳的字段仍保留。路径不会截断成另一条路径；单字段自身无法纳入预算时省略并计入诊断。provider.opencode中metadata_truncated/omitted_metadata_fields及received/displayed_metadata_bytes明确标记此投影，不覆盖原生metadata.truncated的含义，不读回或另存被省略字段。原生exit从未经裁剪的事实提取；is_error、缺码/未知、命令成功和任务验收语义不变。
+
+该限制只覆盖这两家的工具结果、Claude子工具摘要及OpenCode结果metadata；工具输入、任务最终正文、其它事件和多模态接入仍按既有边界，不据此宣称全局事件均受限。宿主Runtime/Facade/历史schema/UI生产代码/协议及6MiB发送保护保持；不依赖Core的渲染私有实现，不新增共用执行流程或公共模块。来源和验证限制见B_20261103_2208_claude-opencode-output-bound。

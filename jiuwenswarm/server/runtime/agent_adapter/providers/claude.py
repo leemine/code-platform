@@ -26,6 +26,27 @@ from . import session_recovery as recovery
 logger = logging.getLogger(__name__)
 
 
+_TOOL_OUTPUT_CHAR_LIMIT = 60000
+_ACTIVITY_CHAR_LIMIT = 2000
+
+
+def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
+    """Bound the Swarm projection, leaving the native tool/model context intact."""
+    if len(text) <= limit:
+        return text, {}
+    received_bytes = len(text.encode("utf-8"))
+    marker = (f"\n[Output truncated by Swarm; SDK returned {len(text)} characters / "
+              f"{received_bytes} UTF-8 bytes.]")
+    displayed = text[:limit - len(marker)] + marker
+    return displayed, {
+        "output_truncated": True,
+        "received_output_chars": len(text),
+        "received_output_bytes": received_bytes,
+        "displayed_output_chars": len(displayed),
+        "displayed_output_bytes": len(displayed.encode("utf-8")),
+    }
+
+
 @dataclass
 class _NativeTasks:
     """Observe official lifecycle facts; scheduling stays in the CLI/Runtime."""
@@ -389,12 +410,13 @@ class ClaudeAdapter:
                         for block in message.content:
                             if isinstance(block, ToolUseBlock):
                                 tools[block.id] = block.name
-                                activity = children.activity(task["task_id"], "tool_call",
-                                    block.name + ": " + json.dumps(block.input, ensure_ascii=False),
+                                summary, _ = _bounded_output(block.name + ": " + json.dumps(block.input, ensure_ascii=False), _ACTIVITY_CHAR_LIMIT)
+                                activity = children.activity(task["task_id"], "tool_call", summary,
                                     identity=block.id, tool_name=block.name, tool_call_id=block.id)
                             elif isinstance(block, ToolResultBlock):
                                 content = block.content if isinstance(block.content, str) else "\n".join(
                                     c.get("text", "") for c in (block.content or []) if isinstance(c, dict) and c.get("type") == "text")
+                                content, _ = _bounded_output(content, _ACTIVITY_CHAR_LIMIT)
                                 activity = children.activity(task["task_id"], "tool_result", content,
                                     identity=block.tool_use_id, tool_name=tools.get(block.tool_use_id),
                                     tool_call_id=block.tool_use_id, ok=False if block.is_error else None)
@@ -430,9 +452,10 @@ class ClaudeAdapter:
                         if code is not None and not block.is_error:
                             success = code == 0
                         content = block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False)
+                        content, projection = _bounded_output(content, _TOOL_OUTPUT_CHAR_LIMIT)
                         result = {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
                             "content": content, "result": content, "status": "error" if block.is_error else "completed", "invocation_status": "completed",
-                            "provider": {"claude": {"is_error": block.is_error}}, "success": success, "task_acceptance": "unknown"}
+                            "provider": {"claude": {"is_error": block.is_error, **projection}}, "success": success, "task_acceptance": "unknown"}
                         if name == "Bash":
                             result.update(exit_code=code, command_success=code == 0 if code is not None else None)
                         yield self._chunk(request, result)

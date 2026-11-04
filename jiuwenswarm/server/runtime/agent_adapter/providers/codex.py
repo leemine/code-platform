@@ -25,6 +25,25 @@ from . import session_recovery as recovery
 
 
 _CANCEL_TIMEOUT = 15
+_TOOL_OUTPUT_CHAR_LIMIT = 60000
+_ACTIVITY_CHAR_LIMIT = 2000
+
+
+def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
+    """Bound the Swarm projection, leaving the native tool/model context intact."""
+    if len(text) <= limit:
+        return text, {}
+    received_bytes = len(text.encode("utf-8"))
+    marker = (f"\n[Output truncated by Swarm; SDK returned {len(text)} characters / "
+              f"{received_bytes} UTF-8 bytes.]")
+    displayed = text[:limit - len(marker)] + marker
+    return displayed, {
+        "output_truncated": True,
+        "received_output_chars": len(text),
+        "received_output_bytes": received_bytes,
+        "displayed_output_chars": len(displayed),
+        "displayed_output_bytes": len(displayed.encode("utf-8")),
+    }
 
 
 class _Terminal(BaseModel):
@@ -75,12 +94,16 @@ def command_result(item: dict) -> dict:
     code = code if type(code) is int else None
     native_status = item.get("status")
     output = item.get("aggregatedOutput") or ("Command was not executed: permission declined" if native_status == "declined" else "")
-    return {"event_type": "chat.tool_result", "tool_call_id": item["id"],
+    output, projection = _bounded_output(output, _TOOL_OUTPUT_CHAR_LIMIT)
+    result = {"event_type": "chat.tool_result", "tool_call_id": item["id"],
             "tool_name": "shell", "content": output,
             "result": output, "status": "error" if native_status == "declined" else native_status,
             "invocation_status": item.get("status"), "exit_code": code,
             "command_success": code == 0 if code is not None else None,
             "success": code == 0 if code is not None else None, "task_acceptance": "unknown"}
+    if projection:
+        result["provider"] = {"codex": projection}
+    return result
 
 
 class CodexAdapter:
@@ -369,6 +392,7 @@ class CodexAdapter:
                 if item.get("type") == "commandExecution":
                     done = item.get("status") in {"completed", "failed", "declined"}
                     summary = item.get("aggregatedOutput", "") if done else item.get("command", "")
+                    summary, _ = _bounded_output(summary or "", _ACTIVITY_CHAR_LIMIT)
                     activity = children.activity(native_id, "tool_result" if done else "tool_call", summary,
                         identity=item["id"], tool_name="shell", tool_call_id=item["id"],
                         ok=False if item.get("status") in {"failed", "declined"} else item["exitCode"] == 0 if type(item.get("exitCode")) is int else None)

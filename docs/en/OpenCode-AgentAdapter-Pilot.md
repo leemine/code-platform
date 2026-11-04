@@ -103,3 +103,17 @@ Claude maps model timeout to API_TIMEOUT_MS rather than a 180-second turn deadli
 
 
 For the tested Claude CLI 2.1.274, the independent first-byte deadline is not active on the custom model endpoint route, although its setting reaches the CLI. The native request timeout remains effective. A supervised 300-second stalled-stream probe closed both connections and exited cleanly with code 0; the earlier unexplained 143 remains historical evidence, not a confirmed adapter defect.
+
+
+## Large Codex tool output
+
+Swarm projects at most 60,000 characters for a Codex command result and 2,000 for a child-agent command activity summary, including an explicit truncation marker. Short output is unchanged. The existing content/result aliases continue to carry identical bounded text. This only limits Swarm display and history: the official tool output seen by the model is untouched, and no command is repeated. Native exit codes, command success/failure/unknown and task acceptance keep their separate meanings.
+
+Truncation diagnostics under provider.codex distinguish SDK-returned from displayed quantities. The SDK may already have truncated its output; these counts do not establish the full command output size. Swarm history does not store another full copy or invent an artifact link. The original send guard remains; other Providers and event types require separate review. This is a local fix candidate, not a released desktop update.
+
+
+## Claude/OpenCode tool-output protection
+
+Claude and OpenCode tool results now use the same Swarm display boundary: 60,000 characters for a result and 2,000 for a Claude child-tool activity summary, including a truncation marker. The content/result aliases remain compatible. Native error flags, exit codes and unknown outcomes are preserved; the external tool content seen by the model is untouched.
+
+Normal OpenCode metadata stays intact. Oversized metadata is projected by whole fields, with explicit diagnostics under provider.opencode and priority for native exit evidence, truncation state and the complete outputPath. Paths are never shortened into a different path, and files are not automatically read or copied. Existing native spill references are not presented as new Swarm artifacts. No host execution flow is added; other event types require separate capacity review. This remains a local candidate. Claude live acceptance is pending because the existing model endpoint returned 429/1113; this is not a released desktop update.

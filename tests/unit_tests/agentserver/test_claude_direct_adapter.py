@@ -61,7 +61,7 @@ class FakeClient:
         if self.ask:
             self.decision = await self.options.can_use_tool('Bash', {'command': 'fixture'}, sdk.ToolPermissionContext(tool_use_id='cmd'))
         denied = isinstance(self.decision, sdk.PermissionResultDeny)
-        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', 'output', True if denied else self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
+        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', getattr(self, 'output', 'output'), True if denied else self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
         if not self.eof:
             await self.queue.put(sdk.ResultMessage('success', 1, 1, self.interrupted, 1, self.sid, result='reply'))
         await self.queue.put(None)
@@ -650,15 +650,16 @@ async def test_cancel_control_waits_for_same_owner_sdk_close(host, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_child_activity_and_summary_restore_through_existing_history(host, monkeypatch):
+@pytest.mark.parametrize('child_output', ['CHILD TOOL OUTPUT', '子输出🙂' * 30000, None], ids=['short','large','empty'])
+async def test_child_activity_and_summary_restore_through_existing_history(host, monkeypatch, child_output):
     app, config, _, _, _ = host
     async def execute(client):
         frames = [native_system(client, 'session_state_changed', state='running'),
             native_system(client, 'task_started', task_id='child', task_type='local_agent', tool_use_id='launch', description='Inspect architecture'),
             native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
             native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
-            sdk.AssistantMessage([sdk.ToolUseBlock('read-1','Read',{'file_path':'entry.py'})], 'shared', parent_tool_use_id='launch'),
-            sdk.UserMessage([sdk.ToolResultBlock('read-1','CHILD TOOL OUTPUT',False)], parent_tool_use_id='launch'),
+            sdk.AssistantMessage([sdk.ToolUseBlock('read-1','Read',{'file_path':'entry.py','note':child_output or ''})], 'shared', parent_tool_use_id='launch'),
+            sdk.UserMessage([sdk.ToolResultBlock('read-1',child_output,False)], parent_tool_use_id='launch'),
             sdk.UserMessage([sdk.ToolResultBlock('foreign','FOREIGN SECRET',False)], parent_tool_use_id='unrelated'),
             native_system(client,'task_notification',task_id='child',status='completed',summary='CHILD SUMMARY'),
             sdk.ResultMessage('success',1,1,False,1,client.sid,result='PARENT SUMMARY'),
@@ -669,9 +670,15 @@ async def test_child_activity_and_summary_restore_through_existing_history(host,
     try:
         chunks=[x.payload async for x in app.process_message_stream(request())]
         activities=[x for x in chunks if x.get('event_type')=='chat.subagent_activity']
-        assert any(x.get('summary')=='CHILD TOOL OUTPUT' for x in activities)
+        tool_output = next(x['summary'] for x in activities if x.get('tool_call_id')=='read-1' and x['kind']=='tool_result')
+        assert len(tool_output) <= 2000
+        if child_output and len(child_output)>2000:
+            assert 'Output truncated' in tool_output
+        else:
+            assert tool_output == (child_output or '')
         paired=[x for x in activities if x.get('tool_call_id')=='read-1']
         assert {x['kind']for x in paired}=={'tool_call','tool_result'}
+        assert all(len(x['summary'])<=2000 for x in paired)
         assert len({x['activity_id']for x in paired})==2
         assert len([x for x in activities if x.get('summary')=='Reading entrypoint'])==1
         assert next(x for x in activities if x.get('summary')=='Reading entrypoint')['kind']=='thinking'
@@ -681,6 +688,70 @@ async def test_child_activity_and_summary_restore_through_existing_history(host,
         session_history.flush_history_writes()
         page=load_history_page('one',1,subagent_id='claude-child')
         assert any(x.get('content')=='CHILD SUMMARY' for x in page['messages'])
-        assert any(x.get('event_type')=='chat.subagent_activity' for x in page['messages'])
+        assert any(x.get('event_type')=='chat.subagent_activity' and x.get('content')==tool_output for x in page['messages'])
         assert 'claude-child' in session_history.list_session_subagent_ids('one')
+    finally:await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('shape', ['controls','unicode','blocks'])
+@pytest.mark.parametrize('code', [0,7,None])
+async def test_large_tool_result_original_facade_history_and_wire(host, shape, code):
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.server.ws_send import send_wire_payload
+    from gateway.common.ws_limits import AGENT_WS_SEND_BUDGET_BYTES
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app, config, clients, _, settings = host
+    text = '\x00' * 1048610 if shape=='controls' else '工具输出🙂' * 30000
+    output = [{'type':'text','text':text}] if shape=='blocks' else text
+    settings.update(output=output, exit_code=code)
+    native_text = output if isinstance(output,str) else json.dumps(output,ensure_ascii=False)
+    original = json.dumps(output,ensure_ascii=False)
+    class WebSocket:
+        async def send(self, value): self.sent=value
+    await app.create_instance(config)
+    try:
+        chunks=[x async for x in app.process_message_stream(request())]
+        chunk=next(x for x in chunks if x.payload.get('event_type')=='chat.tool_result')
+        p=chunk.payload
+        assert p['content']==p['result'] and len(p['result'])==60000
+        assert 'Output truncated' in p['result']
+        assert p['provider']['claude']['is_error'] is False
+        assert p['provider']['claude']['received_output_bytes']==len(native_text.encode('utf-8'))
+        assert p['provider']['claude']['displayed_output_chars']==60000
+        assert p['exit_code']==code and p['command_success'] is (None if code is None else code==0)
+        assert p['success'] is (True if code is None else code==0)
+        assert p['task_acceptance']=='unknown' and 'rendered_result' not in p
+        assert json.dumps(settings['output'],ensure_ascii=False)==original
+        ws=WebSocket()
+        assert await send_wire_payload(ws,encode_agent_chunk_for_wire(chunk,response_id='bounded',sequence=1))
+        assert len(ws.sent.encode('utf-8'))<AGENT_WS_SEND_BUDGET_BYTES
+        assert parse_agent_server_wire_chunk(json.loads(ws.sent)).payload==p
+        session_history.flush_history_writes()
+        row=next(x for x in load_history_page('one',1)['messages'] if x.get('tool_call_id')=='cmd')
+        assert row['content']==row['result']==p['result'] and row['provider']==p['provider']
+        assert next(x.payload['content'] for x in chunks if x.payload.get('event_type')=='chat.final')=='reply'
+        settings['output']='short next turn'
+        follow=[x.payload async for x in app.process_message_stream(request())]
+        assert next(x for x in follow if x.get('event_type')=='chat.tool_result')['result']=='short next turn'
+        assert clients[1].options.resume==clients[0].sid
+    finally: await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('size',[0,60000,60001])
+async def test_noncommand_boundary_keeps_unknown_success_and_short_text(host,size):
+    app,config,_,_,settings=host
+    text='x'*size
+    settings.update(tool_name='Read',tool_error=None,output=text)
+    await app.create_instance(config)
+    try:
+        chunks=[x.payload async for x in app.process_message_stream(request())]
+        p=next(x for x in chunks if x.get('event_type')=='chat.tool_result')
+        assert p['success'] is None and p['provider']['claude']['is_error'] is None
+        assert 'exit_code' not in p and 'command_success' not in p
+        assert p['content']==p['result'] and len(p['result'])<=60000
+        if size<=60000:
+            assert p['result']==text and 'output_truncated' not in p['provider']['claude']
+        else:assert p['provider']['claude']['output_truncated'] is True
     finally:await app.cleanup()

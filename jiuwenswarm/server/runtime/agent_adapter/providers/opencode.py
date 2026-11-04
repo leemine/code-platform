@@ -24,6 +24,50 @@ from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 
 
+_TOOL_OUTPUT_CHAR_LIMIT = 60000
+
+
+def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
+    """Bound the Swarm projection, leaving the native tool/model context intact."""
+    if len(text) <= limit:
+        return text, {}
+    received_bytes = len(text.encode("utf-8"))
+    marker = (f"\n[Output truncated by Swarm; Provider returned {len(text)} characters / "
+              f"{received_bytes} UTF-8 bytes.]")
+    displayed = text[:limit - len(marker)] + marker
+    return displayed, {
+        "output_truncated": True,
+        "received_output_chars": len(text),
+        "received_output_bytes": received_bytes,
+        "displayed_output_chars": len(displayed),
+        "displayed_output_bytes": len(displayed.encode("utf-8")),
+    }
+
+
+def _bounded_metadata(metadata: dict) -> tuple[dict, dict]:
+    """Keep normal native metadata; omit oversized fields without cutting paths."""
+    serialized = json.dumps(metadata, ensure_ascii=False)
+    if len(serialized) <= _TOOL_OUTPUT_CHAR_LIMIT:
+        return metadata, {}
+    projected = {}
+    remaining = _TOOL_OUTPUT_CHAR_LIMIT - 2
+    # Preserve native command evidence and spill references before optional data.
+    for key in dict.fromkeys(["exit", "truncated", "outputPath", *metadata]):
+        if key not in metadata:
+            continue
+        entry_size = len(json.dumps({key: metadata[key]}, ensure_ascii=False)) - 2
+        cost = entry_size + (2 if projected else 0)
+        if cost <= remaining:
+            projected[key] = metadata[key]
+            remaining -= cost
+    return projected, {
+        "metadata_truncated": True,
+        "omitted_metadata_fields": len(metadata) - len(projected),
+        "received_metadata_bytes": len(serialized.encode("utf-8")),
+        "displayed_metadata_bytes": len(json.dumps(projected, ensure_ascii=False).encode("utf-8")),
+    }
+
+
 def cli_candidates():
     """OpenCode installation hints, evaluated for the current desktop user."""
     home = Path.home()
@@ -77,14 +121,15 @@ def tool_payload(part: dict[str, Any]) -> dict[str, Any]:
     code = state.get("metadata", {}).get("exit")
     code = code if type(code) is int else None
     is_command = part.get("tool") in {"bash", "shell"}
+    output, projection = _bounded_output(state.get("output", state.get("error", "")) or "", _TOOL_OUTPUT_CHAR_LIMIT)
+    metadata, metadata_projection = _bounded_metadata(state.get("metadata", {}))
     result = {
         "event_type": "chat.tool_result", "tool_call_id": part["callID"],
-        "tool_name": part["tool"], "content": state.get("output", state.get("error", "")),
-        "result": state.get("output", state.get("error", "")),
+        "tool_name": part["tool"], "content": output, "result": output,
         "invocation_status": state.get("status"), "status": state.get("status"), "exit_code": code,
         "command_success": (code == 0) if code is not None else None,
         "task_acceptance": "unknown",
-        "provider": {"opencode": {"part_id": part["id"], "metadata": state.get("metadata", {})}},
+        "provider": {"opencode": {"part_id": part["id"], "metadata": metadata, **projection, **metadata_projection}},
     }
     # Consumers must not infer success from the invocation's completed status.
     result["success"] = result["command_success"] if is_command else state.get("status") == "completed"

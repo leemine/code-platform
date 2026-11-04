@@ -1469,3 +1469,80 @@ async def test_timeout_abort_ack_without_idle_keeps_execution_owner(host, monkey
         _ = [x async for x in app.process_message_stream(request())]
     monkeypatch.setattr(app._adapter, '_call', original)
     await app.cleanup()
+
+
+@pytest.mark.parametrize('size', [0,60000,60001])
+def test_output_boundary_preserves_native_metadata_and_short_text(size):
+    metadata={'exit':7,'truncated':True,'outputPath':'/native/output/tool-42','other':{'flag':True}}
+    output='x'*size
+    native={'id':'p','callID':'c','tool':'bash','state':{'status':'completed','output':output,'metadata':metadata}}
+    p=tool_payload(native)
+    assert p['content']==p['result'] and len(p['result'])<=60000
+    assert p['provider']['opencode']['metadata']==metadata
+    assert p['exit_code']==7 and p['success'] is False and p['task_acceptance']=='unknown'
+    assert native['state']['output']==output
+    if size<=60000:
+        assert p['result']==output and 'output_truncated' not in p['provider']['opencode']
+    else: assert 'Output truncated' in p['result']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['completed','error'])
+@pytest.mark.parametrize('code', [0,7,None])
+@pytest.mark.parametrize('shape', ['controls','unicode','metadata-only'])
+async def test_large_output_and_metadata_original_sse_facade_history_and_wire(host,status,code,shape):
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.server.ws_send import send_wire_payload
+    from gateway.common.ws_limits import AGENT_WS_SEND_BUDGET_BYTES
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app,config,calls,events,_=host
+    text='\x00'*1048610 if shape=='controls' else '原生工具🙂'*30000
+    output='short result' if shape=='metadata-only' else text
+    metadata={'exit':code,'truncated':True,'outputPath':'/native/output/tool-42','extra':{'text':text},'output':text,'future':{'small':True}}
+    state={'status':status,'metadata':metadata,('output' if status=='completed' else 'error'):output}
+    native={'id':'p-tool','callID':'tool-42','tool':'bash','sessionID':'ses_test','messageID':'msg_agent','type':'tool','state':state}
+    original=json.dumps(native,ensure_ascii=False)
+    events.insert(3,event('message.part.updated',part=native))
+    class WebSocket:
+        async def send(self,value):self.sent=value
+    await app.create_instance(config)
+    try:
+        chunks=[x async for x in app.process_message_stream(request())]
+        chunk=next(x for x in chunks if x.payload.get('event_type')=='chat.tool_result')
+        p=chunk.payload; projected=p['provider']['opencode']
+        assert p['content']==p['result'] and len(p['result'])<=60000
+        assert p['result']=='short result' if shape=='metadata-only' else 'Output truncated' in p['result']
+        assert projected['metadata']['outputPath']=='/native/output/tool-42'
+        assert projected['metadata']['truncated'] is True and projected['metadata']['exit']==code
+        assert projected['metadata']['future']=={'small':True}
+        assert projected['metadata_truncated'] is True and projected['omitted_metadata_fields']==2
+        assert len(json.dumps(projected['metadata'],ensure_ascii=False))<=60000
+        assert p['invocation_status']==status and p['exit_code']==code
+        assert p['success'] is (False if status=='error' else None if code is None else code==0)
+        assert p['task_acceptance']=='unknown' and 'rendered_result' not in p
+        assert original==json.dumps(native,ensure_ascii=False)
+        ws=WebSocket()
+        assert await send_wire_payload(ws,encode_agent_chunk_for_wire(chunk,response_id='bounded',sequence=1))
+        assert len(ws.sent.encode('utf-8'))<AGENT_WS_SEND_BUDGET_BYTES
+        assert parse_agent_server_wire_chunk(json.loads(ws.sent)).payload==p
+        session_history.flush_history_writes()
+        row=next(x for x in load_history_page('test-session',1)['messages'] if x.get('tool_call_id')=='tool-42')
+        assert row['result']==row['content']==p['result'] and row['provider']==p['provider']
+        assert any(x.payload.get('content')=='PUBLIC_REPLY' for x in chunks)
+        events[:]=completed_events()
+        follow=[x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('content')=='PUBLIC_REPLY' for x in follow)
+        assert sum(method=='POST' and path=='/session' for method,path,_ in calls)==1
+    finally:await app.cleanup()
+
+
+def test_metadata_total_budget_preserves_reference_before_optional_fields():
+    metadata={**{f'field-{i}':'x'*1000 for i in range(100)},'exit':7,'truncated':True,'outputPath':'/native/'+'p'*3000}
+    native={'id':'p','callID':'c','tool':'bash','state':{'status':'completed','output':'short','metadata':metadata}}
+    p=tool_payload(native);projection=p['provider']['opencode']
+    assert p['result']=='short' and 'output_truncated' not in projection
+    assert len(json.dumps(projection['metadata'],ensure_ascii=False))<=60000
+    assert projection['metadata']['outputPath']==metadata['outputPath']
+    assert projection['metadata']['exit']==7 and projection['metadata']['truncated'] is True
+    assert projection['omitted_metadata_fields']==len(metadata)-len(projection['metadata'])>0
+    assert metadata['field-99']=='x'*1000
