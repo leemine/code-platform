@@ -90,35 +90,59 @@ async def resolve_assets(params, *, include_global_skills):
                            {"agent_template_name": template, "plugin_names": plugins, "mcp": explicit_mcps})
 
 
-async def reconcile_equipment(adapter, session_id, request, *, execution=None):
-    """Mount through the Provider, then commit only a still-authorized snapshot."""
+def _equipment_commit_context(sid):
     from jiuwenswarm.runtime.context import get_current_runtime
     from jiuwenswarm.server.runtime.session.session_metadata import get_session_equipment, save_session_equipment
 
-    if request.params.get("answers"):
-        return  # Control replies stay on the existing control channel.
-    sid = session_id or "default"
     runtime = get_current_runtime()
     before = runtime.get_session_snapshot(sid) if runtime else None
-    previous = deepcopy(get_session_equipment(sid))
-    task = asyncio.current_task()
+    previous = deepcopy(get_session_equipment(sid, cache_bust=True))
+    owner_task = asyncio.current_task()
 
     def ensure_current():
-        if task is not None and task.cancelling():
+        producer_task = asyncio.current_task()
+        if any(task is not None and task.cancelling() for task in (owner_task, producer_task)):
             raise asyncio.CancelledError
         if runtime is not None:
             current = runtime.get_session_snapshot(sid)
             if (before is None or current is None or current.generation != before.generation
                     or current.state in {"quiescing", "closed"}):
                 raise RuntimeError("Equipment execution no longer owns the current session generation")
-        if get_session_equipment(sid) != previous:
+        if get_session_equipment(sid, cache_bust=True) != previous:
             raise RuntimeError("Equipment snapshot changed while configuring the Provider")
 
+    def commit(snapshot):
+        ensure_current()
+        save_session_equipment(sid, **snapshot)
+
+    return previous, ensure_current, commit
+
+
+def prepare_role_commit(session_id, template_ref):
+    previous, _, commit = _equipment_commit_context(session_id or "default")
+    if previous.get("agent_template_name") == template_ref:
+        return None
+    return lambda: commit({**previous, "agent_template_name": template_ref})
+
+
+async def reconcile_equipment(adapter, session_id, request, *, execution=None):
+    """Mount through the Provider, then commit only a still-authorized snapshot."""
+    if request.params.get("answers"):
+        return None  # Control replies stay on the existing control channel.
+    sid = session_id or "default"
+    previous, ensure_current, commit = _equipment_commit_context(sid)
     policy = adapter.equipment_input_policy(sid, request, execution=execution)
-    assets = await resolve_assets(request.params, include_global_skills=policy.include_global_skills)
+    role = execution.main_agent_role if execution else None
+    params = request.params if role is None else {**request.params, "agent_template_name": ""}
+    assets = await resolve_assets(params, include_global_skills=policy.include_global_skills)
     ensure_current()
     await adapter.apply_equipment(sid, request, assets, directory=policy.directory,
                                   execution=execution, ensure_current=ensure_current)
-    ensure_current()
-    # No await between the final ownership check and the existing metadata commit.
-    save_session_equipment(sid, **assets.snapshot)
+    if role is not None:
+        snapshot = {**assets.snapshot, "agent_template_name": role.template_ref}
+        if snapshot != previous:
+            return lambda: commit(snapshot)
+        ensure_current()
+        return None
+    commit(assets.snapshot)
+    return None

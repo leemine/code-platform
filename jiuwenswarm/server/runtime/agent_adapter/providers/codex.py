@@ -17,13 +17,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from jiuwenswarm.common.external_adapter_factories import create_codex
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
 from .codex_usage import CodexUsage
 from . import session_recovery as recovery
-from ..execution_input import AdapterCapabilities
 
 
 _CANCEL_TIMEOUT = 15
@@ -74,6 +74,8 @@ class Session:
     thread_id: str = ""
     turn_id: str = ""
     model_revision: str = ""
+    role_instructions: str | None = field(default=None, repr=False)
+    role_refresh_uncertain: bool = False
     active: bool = False
     cancelled: bool = False
     cancel_acknowledged: bool = False
@@ -110,7 +112,7 @@ def command_result(item: dict) -> dict:
 
 
 class CodexAdapter:
-    capabilities = AdapterCapabilities(native_resume=True)
+    capabilities = create_codex.capabilities
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -268,7 +270,30 @@ class CodexAdapter:
         session.pending.clear()
         session.control_ready.set()
 
-    async def _connect(self, session, model):
+    @staticmethod
+    async def _refresh_role(session, role: str) -> None:
+        # Resuming a Codex thread does not rewrite its existing developer instructions.
+        # Append the current Swarm persona through the native API before starting the turn.
+        session.role_refresh_uncertain = True
+        try:
+            from openai_codex.generated.v2_all import ThreadInjectItemsResponse
+
+            await asyncio.wait_for(asyncio.to_thread(
+                session.client.request, "thread/inject_items",
+                {"threadId": session.thread_id, "items": [{
+                    "type": "message", "role": "developer",
+                    "content": [{"type": "input_text", "text":
+                                 ("Use the following as the current Swarm main Agent role. "
+                                  "It replaces any earlier Swarm role instructions.\n\n" + role)
+                                 if role else "The Swarm expert selection is cleared. "
+                                              "Disregard earlier Swarm role instructions."}],
+                }]}, response_model=ThreadInjectItemsResponse), 30)
+        except Exception:
+            raise RuntimeError("Codex could not apply the current Swarm role; execution was not started") from None
+        session.role_instructions = role
+        session.role_refresh_uncertain = False
+
+    async def _connect(self, session, model, role: str = ""):
         from openai_codex.client import CodexClient, CodexConfig
         revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
         if session.model_revision and revision != session.model_revision:
@@ -301,7 +326,8 @@ class CodexAdapter:
                 "cwd": session.directory, "model": model.model_name, "modelProvider": "swarm",
                 **self._permission_options(session.desired_permission),
             }
-            if session.thread_id:
+            resumed = bool(session.thread_id)
+            if resumed:
                 response = await asyncio.wait_for(asyncio.to_thread(client.thread_resume, session.thread_id, options), 30)
                 if response.thread.id != session.thread_id:
                     raise ValueError("Codex resumed a different thread")
@@ -311,6 +337,8 @@ class CodexAdapter:
                 if native.get("status", {}).get("type") not in {"idle", "notLoaded"}:
                     raise ValueError("Codex native thread is not idle; recovery was not started")
             else:
+                if role:
+                    options["developerInstructions"] = role
                 response = await asyncio.wait_for(asyncio.to_thread(client.thread_start, options), 30)
             session.thread_id = response.thread.id
             effective = response.model_dump(mode="json", by_alias=True)
@@ -325,6 +353,7 @@ class CodexAdapter:
                 raise
             raise RuntimeError("Codex initialization failed; check the configured CLI and model service") from None
         session.client = client
+        session.role_instructions = role if "developerInstructions" in options else None if resumed else ""
         session.model_revision = revision
         session.effective_permission = session.desired_permission
         try:
@@ -434,7 +463,11 @@ class CodexAdapter:
             if session.active:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
             new_thread = not session.thread_id
-            await self._connect(session, model)
+            role = execution.main_agent_role.instructions if execution and execution.main_agent_role else ""
+            if role:
+                await self._connect(session, model, role)
+            else:
+                await self._connect(session, model)
             if session.desired_permission != session.effective_permission:
                 # Resume the same thread with the new policy; no conversation replacement.
                 try:
@@ -451,6 +484,11 @@ class CodexAdapter:
                     raise ValueError("Codex permission update was not confirmed")
                 session.effective_permission = session.desired_permission
                 self._save_binding(session)
+            if session.role_refresh_uncertain or (
+                role != session.role_instructions
+                and ((execution and execution.main_agent_role is not None) or session.role_instructions)
+            ):
+                await self._refresh_role(session, role)
             session.turn_id = ""
             session.command_ids.clear()
             session.turn_ready.clear()
@@ -468,6 +506,9 @@ class CodexAdapter:
             response = await asyncio.to_thread(session.client.turn_start, session.thread_id, inputs["query"])
             session.turn_id = response.turn.id
             session.turn_ready.set()
+            commit_role = inputs.get("_commit_role_selection")
+            if commit_role is not None:
+                commit_role()
             while True:
                 if reader is None:
                     reader = asyncio.create_task(asyncio.to_thread(session.client.next_turn_notification, session.turn_id))

@@ -1991,9 +1991,26 @@ class JiuWenSwarm:
         )
 
         adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
-        from .execution_input import admit_equipment
-        admit_equipment(adapter, params)
-        final_query, turn = adapter.build_query(request, turn)
+        from copy import copy
+        from .agent_adapters import PreparedInputAdapter
+        from .execution_input import admit_equipment, resolve_turn_role
+
+        if "role_template_ref" in params:
+            raise ValueError("Set role_template_ref on session.create, not on chat.send")
+        prepared = isinstance(adapter, PreparedInputAdapter)
+        new_turn = (
+            request.req_method in {None, ReqMethod.CHAT_SEND}
+            and not params.get("answers")
+            and not is_interrupt_resume_payload(params)
+        )
+        role = resolve_turn_role(adapter, request) if prepared and new_turn else None
+        query_request = request
+        if "agent_template_name" in params and (role is not None or (prepared and not new_turn)):
+            # A role or an interaction answer must not be interpreted as a full equipment mount.
+            query_request = copy(request)
+            query_request.params = {key: value for key, value in params.items() if key != "agent_template_name"}
+        admit_equipment(adapter, query_request.params)
+        final_query, turn = adapter.build_query(query_request, turn)
 
         inputs: dict[str, Any] = {
             "conversation_id": request.session_id,
@@ -2081,11 +2098,16 @@ class JiuWenSwarm:
         # The turn carries both the user's own words (``turn.text``, needed by
         # the team path for directive / ``$member`` / slash parsing) and the
         # single renderer that produced ``inputs["query"]``.
-        from .agent_adapters import PreparedInputAdapter
-        if (request.req_method in {None, ReqMethod.CHAT_SEND} and not params.get("answers")
-                and isinstance(self._adapter, PreparedInputAdapter)):
-            from .execution_input import prepare_execution_input
-            inputs["_host_execution"] = prepare_execution_input(self._adapter, request, inputs, config=config_base)
+        if new_turn:
+            if prepared:
+                from .execution_input import prepare_execution_input
+                inputs["_host_execution"] = prepare_execution_input(adapter, request, inputs, config=config_base, role=role)
+            elif request.session_id:
+                from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+                saved = get_session_metadata(request.session_id, cache_bust=True, enable_writeback=False)
+                if "main_agent_role" in saved:
+                    raise ValueError("provider_capability_unsupported: main_instructions")
         return inputs, memory_mode, turn
 
     def _make_retry_without_a2ui_call(
@@ -3340,11 +3362,13 @@ class JiuWenSwarm:
         if "_host_execution" in inputs:
             reconcile_kwargs["execution_input"] = inputs["_host_execution"]
         try:
-            await self.reconcile_session_mcp(
+            commit = await self.reconcile_session_mcp(
                 request.session_id,
                 compute_chat_send_mcp_needed(params),
                 **reconcile_kwargs,
             )
+            if commit is not None:
+                inputs["_commit_role_selection"] = commit
         except asyncio.CancelledError:
             _schedule_feedback_once("cancelled")
             raise
@@ -4068,11 +4092,13 @@ class JiuWenSwarm:
         if "_host_execution" in inputs:
             reconcile_kwargs["execution_input"] = inputs["_host_execution"]
         try:
-            await self.reconcile_session_mcp(
+            commit = await self.reconcile_session_mcp(
                 request.session_id,
                 compute_chat_send_mcp_needed(params),
                 **reconcile_kwargs,
             )
+            if commit is not None:
+                inputs["_commit_role_selection"] = commit
             # Team 的交互回答走普通流式路径，不经过 deliver_control_input。
             # 与单 Agent 使用同一落盘格式，按原问题的 params.request_id 配对。
             await _persist_ask_user_answer_history(request, session_id, params)
@@ -5516,7 +5542,7 @@ class JiuWenSwarm:
         model_selection: Any = None,
         moa_can_access: Any = None,
         retain_moa_snapshot: bool = False,
-    ) -> None:
+    ) -> Callable[[], None] | None:
         """Reconcile this session's MCP set to ``needed`` (idempotent diff).
 
         Session-level enable driven by chat.send: callers should pass the union
@@ -5533,13 +5559,17 @@ class JiuWenSwarm:
         from .agent_adapters import EquipmentAwareAdapter
         if isinstance(adapter, EquipmentAwareAdapter) and execution_request is not None:
             from .equipment import reconcile_equipment
-            await reconcile_equipment(adapter, session_id, execution_request, execution=execution_input)
-            return
+            return await reconcile_equipment(adapter, session_id, execution_request, execution=execution_input)
+        role = execution_input.main_agent_role if execution_input else None
+        commit = None
+        if role is not None:
+            from .equipment import prepare_role_commit
+            commit = prepare_role_commit(session_id, role.template_ref)
         reconcile = getattr(adapter, "reconcile_session_mcp", None)
         if reconcile is None:
             # Adapter doesn't support session-level MCP (e.g. a stub/mock
             # adapter) — session-level enable is a no-op for it.
-            return
+            return commit
         parameters = {}
         accepts_kwargs = False
         try:
@@ -5573,6 +5603,7 @@ class JiuWenSwarm:
             if retain_moa_snapshot and ("retain_moa_snapshot" in parameters or accepts_kwargs):
                 supported_kwargs["retain_moa_snapshot"] = True
         await reconcile(session_id, needed, **supported_kwargs)
+        return commit
 
     @staticmethod
     async def _resolve_runtime_binding_for_request(

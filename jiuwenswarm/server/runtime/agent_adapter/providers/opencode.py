@@ -17,11 +17,11 @@ from urllib.parse import urlparse
 import os
 import sys
 
+from jiuwenswarm.common.external_adapter_factories import create_opencode
 from . import opencode_transport as transport
 from .cli import resolve_cli
 from .opencode_usage import OpenCodeUsage
 from . import session_recovery as recovery
-from ..execution_input import AdapterCapabilities
 
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
@@ -149,7 +149,7 @@ def tool_payload(part: dict[str, Any]) -> dict[str, Any]:
 
 
 class OpenCodeAdapter:
-    capabilities = AdapterCapabilities(equipment=frozenset({"agent_template_name", "plugin_names", "skills", "mcp"}), main_instructions=True, user_questions=True, native_resume=True)
+    capabilities = create_opencode.capabilities
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -469,8 +469,14 @@ class OpenCodeAdapter:
                     # Establish the sole event subscription before accepting the prompt.
                     await self._call("POST", f"/session/{session.native_id}/prompt_async", body={
                         "model": selected_model, "parts": [{"type": "text", "text": inputs["query"]}],
-                        "system": session.equipment.system if session.equipment else "",
+                        "system": (
+                            execution.main_agent_role.instructions if execution and execution.main_agent_role
+                            else session.equipment.system if session.equipment else ""
+                        ),
                     }, session=session)
+                    commit_role = inputs.get("_commit_role_selection")
+                    if commit_role is not None:
+                        commit_role()
                     async for event in events:
                         props = event.get("properties", {})
                         part = props.get("part", {})

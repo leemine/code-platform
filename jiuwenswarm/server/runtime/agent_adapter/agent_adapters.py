@@ -34,6 +34,14 @@ def _installed_adapter_factory(sdk: str):
     return matches[0]
 
 
+def require_adapter_capability(sdk: str, name: str) -> None:
+    """Check the registered factory declaration without creating an adapter."""
+    from .execution_input import require_capability
+
+    entry = _installed_adapter_factory(sdk)
+    require_capability(entry.load() if entry is not None else None, name, declared_only=True)
+
+
 def adapter_config_snapshot(sdk: str, config: dict) -> dict:
     """Resolve installed adapter configuration without starting its runtime."""
     from copy import deepcopy

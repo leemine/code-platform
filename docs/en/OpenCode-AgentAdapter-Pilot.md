@@ -123,7 +123,7 @@ Normal OpenCode metadata stays intact. Oversized metadata is projected by whole 
 
 The existing chat Facade prepares the effective model, working directory and host history eligibility. Providers retain native protocol validation, immutable session bindings and SDK/API conversion. Existing model settings, execution picker, bound conversations and Native defaults remain in place. OpenCode assets use the original asset services; the host commits equipment only after a successful, current and uncancelled mount. Partial native configuration must be reconciled again before execution.
 
-Active Swarm context queries and manual compaction remain unsupported rather than returning fabricated zero usage; passive Codex native counters are described in the section below. OpenCode persona/question support and task=deny remain unchanged; Claude/Codex main role instructions remain P2. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.
+Active Swarm context queries and manual compaction remain unsupported rather than returning fabricated zero usage; passive Codex native counters are described in the section below. OpenCode persona/question support and task=deny remain unchanged; The P2 section describes main role instructions for Claude and Codex. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.
 
 ## Codex native usage observation
 
@@ -141,3 +141,19 @@ Real OpenCode two-turn execution, same-native-session continuation after a Worke
 ### beta5 test release scope (2026-11-04)
 
 beta5 groups bounded tool output, P1 execution/equipment ownership, and native Tokens observation, reusing the existing chat, history, and usage UI. All desktop builds use the same merged commit and exclude user model configuration. Claude live acceptance remains blocked by HTTP 429 from the original service. Windows is unsigned; macOS arm64 has no Developer ID signature or notarization. A successful build is not an end-to-end desktop chat acceptance result. Only this project's version changes in the lock; external SDK/Core revisions remain fixed. See F_20261104_1430_provider-beta5-release.
+
+## Main Agent role template (P2 candidate)
+
+A configured caller can include both the execution Provider and the ID of an installed role template in the existing `session.create` parameters for a single-agent session. Include these fields alongside the usual workspace, mode, and `create_token` parameters.
+
+```json
+{"execution_provider": "codex-direct", "role_template_ref": "architecture-reviewer"}
+```
+
+This entry point accepts a registered single-agent Provider that declares and implements main Agent instructions. The bundled `claude-direct`, `codex-direct`, and `opencode-direct` adapters implement the capability. It reads UTF-8 Markdown persona files from the existing Experts catalog with a total budget of 8 KiB. A template may omit its runtime or declare the selected Provider with empty private configuration. A template that declares actual Skills, MCP connectors, subagents, or other unsupported features is ineligible for this entry point. The selected Provider receives the role instructions, so keep credentials out of the template.
+
+Select another compatible expert in the existing picker for a single-agent session. The next turn uses the new expert and continues on the same Provider and native session. Editing a template updates the instructions for the next turn. Swarm saves the selection after the Provider accepts it and restores the selection after a page reload or normal Worker restart. An uninstalled or incompatible choice is rejected and leaves the previously confirmed selection in place. OpenCode retains its existing full-template equipment path. Sessions created with `role_template_ref` can select persona-only templates. Generic session forking remains unavailable for those sessions.
+
+Codex uses its native thread API when the role changes, is cleared, or the Worker resumes the thread. An unchanged role is reused on the same connection after confirmation. Swarm stores the selected expert ID in its existing session equipment.
+
+Claude Code needs a CLI that supports `--system-prompt-snapshot off` to apply the current expert in a resumed session. This rebuilds the system prompt and can affect the native prompt cache.

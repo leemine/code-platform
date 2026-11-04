@@ -35,9 +35,16 @@ class FakeClient:
         self.messages = [(None, "reply")]
         self.terminals = []
         self.terminated = []
+        self.role_updates = []
+        self.role_update_error = False
 
     def request(self, method, params, *, response_model):
         assert params['threadId'] == self.thread_id
+        if method == 'thread/inject_items':
+            if self.role_update_error:
+                raise RuntimeError('fixture native role update failed')
+            self.role_updates.extend(params['items'])
+            return response_model.model_validate({})
         if method == 'thread/backgroundTerminals/list':
             offset = int(params.get('cursor', 0))
             next_cursor = str(offset + 1) if offset + 1 < len(self.terminals) else None
@@ -1025,5 +1032,73 @@ async def test_later_missing_window_clears_previous_capacity_in_original_stream(
         assert [x['context_window']['limit_tokens'] for x in contexts] == [200000, None]
         assert contexts[-1]['context_window']['occupancy_rate'] is None
         assert any(x.get('content') == 'reply' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_p2_role_is_thread_instruction_not_turn_text(host, monkeypatch):
+    from jiuwenswarm.server.runtime.agent_adapter import main_agent_role
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    app, config, clients, root, _ = host
+    monkeypatch.setattr(session_metadata, 'get_agent_sessions_dir', lambda: root / 'sessions')
+    role = main_agent_role.MainAgentRole('reviewer', 'P2_ROLE_CODEX')
+    def resolve(ref, _provider):
+        return role if ref == 'reviewer' else main_agent_role.MainAgentRole(ref, f'ROLE_{ref}')
+    monkeypatch.setattr(main_agent_role, 'resolve_main_agent_role', resolve)
+    sid = 'p2-codex'
+    session_metadata.init_session_metadata(session_id=sid, channel_id='web', execution_provider='codex-direct',
+                                           main_agent_role=role.binding())
+    submitted = []
+    start = FakeClient.turn_start
+
+    def turn_start(self, thread_id, prompt):
+        submitted.append(prompt)
+        return start(self, thread_id, prompt)
+
+    monkeypatch.setattr(FakeClient, 'turn_start', turn_start)
+    await app.create_instance(config)
+    try:
+        for index in range(4):
+            if index == 1:
+                role = main_agent_role.MainAgentRole('reviewer', 'P2_ROLE_CODEX_UPDATED')
+            if index == 3:
+                assert await app.cleanup_session_runtime(sid)
+            chunks = [c async for c in app.process_message_stream(request(sid, query=f'question {index}'))]
+            assert any((c.payload or {}).get('event_type') == 'chat.final' for c in chunks)
+        assert len(clients) == 2 and len({c.thread_id for c in clients}) == 1
+        assert [c.options.get('developerInstructions') for c in clients] == ['P2_ROLE_CODEX', None]
+        for client in clients:
+            [item] = client.role_updates
+            assert item['type'] == 'message' and item['role'] == 'developer'
+            assert item['content'][0]['text'].endswith('P2_ROLE_CODEX_UPDATED')
+        assert all('baseInstructions' not in c.options for c in clients)
+        assert len(submitted) == 4 and 'P2_ROLE_CODEX' not in str(submitted)
+        role = main_agent_role.MainAgentRole('reviewer', 'P2_ROLE_CODEX_REJECTED')
+        clients[-1].role_update_error = True
+        chunks = [c async for c in app.process_message_stream(request(sid, query='must not execute'))]
+        assert 'could not apply the current Swarm role' in str([c.payload for c in chunks])
+        assert len(submitted) == 4 and len(clients[-1].role_updates) == 1
+
+        async def send(**selection):
+            return [c.payload async for c in app.process_message_stream(request(sid, **selection))]
+
+        failed = await send(agent_template_name='tester')
+        assert 'could not apply the current Swarm role' in str(failed)
+        assert session_metadata.get_session_equipment(sid)['agent_template_name'] == 'reviewer'
+        assert len(submitted) == 4
+
+        clients[-1].role_update_error = False
+        assert any(c.get('event_type') == 'chat.final' for c in await send(agent_template_name='tester'))
+        assert session_metadata.get_session_equipment(sid)['agent_template_name'] == 'tester'
+        assert clients[-1].role_updates[-1]['content'][0]['text'].endswith('ROLE_tester')
+        assert await app.cleanup_session_runtime(sid)
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert len({client.thread_id for client in clients}) == 1
+        assert clients[-1].role_updates[-1]['content'][0]['text'].endswith('ROLE_tester')
+        await send(agent_template_name='')
+        assert session_metadata.get_session_equipment(sid)['agent_template_name'] == ''
+        assert 'selection is cleared' in clients[-1].role_updates[-1]['content'][0]['text']
     finally:
         await app.cleanup()

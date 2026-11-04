@@ -716,6 +716,12 @@ def _write_metadata_unfenced(
         if current is not None and current.get("execution_provider"):
             to_write = dict(to_write)
             to_write["execution_provider"] = current["execution_provider"]
+        if current is not None and current.get("session_id"):
+            if "main_agent_role" in current:
+                to_write = {**to_write, "main_agent_role": current["main_agent_role"]}
+            elif "main_agent_role" in to_write:
+                to_write = dict(to_write)
+                to_write.pop("main_agent_role")
 
         # External Harness runtime selection is a first-binding field. Preserve
         # the authoritative on-disk value against stale queued snapshots and
@@ -1072,6 +1078,7 @@ def init_session_metadata(
     channel_metadata: dict[str, Any] | None = None,
     agent_group_name: str = "",
     execution_provider: str | None = None,
+    main_agent_role: dict[str, str] | None = None,
 ) -> None:
     """初始化会话元数据(同步写,确保创建后立即可读)
 
@@ -1112,6 +1119,8 @@ def init_session_metadata(
     }
     if execution_provider is not None:
         metadata["execution_provider"] = execution_provider
+    if main_agent_role is not None:
+        metadata["main_agent_role"] = main_agent_role
     if agent_group_name:
         metadata["agent_group_name"] = agent_group_name
     if isinstance(channel_metadata, dict) and channel_metadata:

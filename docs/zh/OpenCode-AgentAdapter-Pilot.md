@@ -125,7 +125,7 @@ OpenCode普通metadata完整保留；超大metadata按字段整体省略并在pr
 
 宿主沿原聊天 Facade 准备有效模型、目录与必要的历史恢复资格；Provider 继续校验原生协议和会话绑定，并负责官方 SDK/API 转换。原模型设置、执行引擎下拉、已有会话绑定与 Native 默认路径不变。OpenCode 的模板/Skill/MCP 仍通过原资产服务；成功、当前且未取消的装载由宿主保存装备快照，部分失败必须重新核验。
 
-三家的主动上下文查询与手动压缩接口仍明确不支持，不显示虚假零用量；Codex被动原生统计见下方新增章节。OpenCode 现有 persona/用户提问与 task=deny 保留；Claude/Codex 主 Agent 角色文本仍是后续 P2。本轮不新增设置页面或第二套执行流程。实施和验收限制见 F_20261104_1030_provider-input-ownership；未提交发布，不代表已安装桌面版更新。
+三家的主动上下文查询与手动压缩接口仍明确不支持，不显示虚假零用量；Codex被动原生统计见下方新增章节。OpenCode 现有 persona/用户提问与 task=deny 保留；Claude/Codex 主 Agent 角色文本见 P2 小节。本轮不新增设置页面或第二套执行流程。实施和验收限制见 F_20261104_1030_provider-input-ownership；未提交发布，不代表已安装桌面版更新。
 
 ## Codex 原生用量观测
 
@@ -143,3 +143,19 @@ OpenCode真实两轮、原Worker重启后同原生会话续聊、数据库对账
 ### beta5 测试版发布范围（2026-11-04）
 
 beta5 整理三家工具输出保护、P1 输入/装备职责及原生 Tokens 只读观测；复用现有聊天、历史和统计控件。三平台构建从同一合入提交执行，安装包不包含用户模型配置。Claude 原服务 HTTP 429 的真实验收仍待完成；Windows 未签名、macOS arm64 未签名/公证，构建成功不代表平台实机聊天验收通过。版本与锁仅更新本工程版本，外部 SDK/Core 固定来源不变。详见 F_20261104_1430_provider-beta5-release。
+
+## 主 Agent 角色模板（P2 候选）
+
+配置调用方可以在原 `session.create` 的 `params` 中为单 Agent 会话同时传入执行 Provider 和已安装的角色模板 ID。例如在原工作区、模式和 `create_token` 参数之外附加：
+
+```json
+{"execution_provider": "codex-direct", "role_template_ref": "architecture-reviewer"}
+```
+
+已注册的单 Agent Provider 声明并实现主角色指令能力后即可使用此入口。随项目提供的 `claude-direct`、`codex-direct`、`opencode-direct` 已接入。使用现有专家模板目录中的纯 persona：UTF-8 Markdown 总预算 8 KiB。模板可省略运行时，或声明与所选 Provider 一致且无专有配置的运行时。有实际 Skill、MCP、子 Agent 等额外声明的模板无法作为此入口的角色模板。角色指令会传给所选 Provider，应避免在模板中放入密钥。
+
+在现有单 Agent 会话的专家选择器选另一个兼容专家，下一轮会用新专家继续对话。Provider 和原生会话保持绑定。通过原入口编辑同一模板后，下一轮读取新版角色正文。切换请求经 Provider 接受后保存，刷新页面或正常重启 Worker 后沿用已确认的选择。未安装或不兼容的选择会被拒绝，仍保留上一次确认的专家。OpenCode 原有完整装备继续由已有入口处理。使用 `role_template_ref` 创建的会话可选择纯角色模板，暂不支持通用会话分叉。
+
+Codex 在角色更新、清除或 Worker 恢复原线程时，通过原生接口更新角色指令。同一连接中已确认且正文不变时复用。Swarm 沿用原会话装备保存专家 ID。
+
+Claude Code 可切换角色路径要求实际 CLI 支持 `--system-prompt-snapshot off`，以便恢复会话后应用本轮角色。此配置会重建系统提示词，可能影响原生提示词缓存。
