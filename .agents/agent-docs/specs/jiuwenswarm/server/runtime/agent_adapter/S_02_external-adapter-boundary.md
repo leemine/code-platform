@@ -277,4 +277,21 @@ OpenCode 自有服务使用同一宿主模型快照生成原生配置，保留 a
 
 EquipmentAwareAdapter 是可选的原生装载接缝。原 Facade reconcile_session_mcp 中，宿主资产服务负责安装/启用/连接/凭据及有效选择，OpenCode 负责 persona/Skill/MCP 的原生转换、私有装载与查询核验；唯一 session_equipment 由宿主成功后保存。跨 await 校验原 Runtime 的 generation/关闭状态、当前任务取消及并发装备提交；失败、取消和失效不覆盖旧快照。原生部分配置失败时保留拒绝执行标记，须重新成功 reconcile，不新增 Turn 队列或取消状态机。控制答案不挂载装备；旧 Native reconcile 签名仍按原支持参数委托。
 
-AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 的 Swarm 装备和主角色提示词未实现，正常入口明确拒绝。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。当前三家未投影上下文统计、未实现 Swarm 手动压缩；相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩。无声明的 Native/旧插件保持原行为，不新增前端控件。
+AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 的 Swarm 装备和主角色提示词未实现，正常入口明确拒绝。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
+
+## Codex 原生用量只读投影
+
+Codex 原通知消费者将匹配当前 threadId/turnId 的 thread/tokenUsage/updated 投影到原 chat.usage_summary；total 为覆盖快照，last 仅作专有来源，不直接当整轮或当前上下文。本轮 usage 只有在基线明确时提供；恢复、取消/失败后的首轮不猜差额；已观察到计数倒退时隐藏不可信累计，保留专有诊断。可选SDK字段须保留是否原生提供，不能将默认0变为返回事实。
+
+session_usage 沿用现有schema_version=1/main/others/revision。外部调用数未知可为null，主线程以外类别不伪造计数；主类别可附total_tokens、cached_input_tokens、cache_write_input_tokens、reasoning_output_tokens。修订号为观察修订，不代表调用次数。没有把累计快照写入逐模型调用Ledger，也没有第二持久账本。原历史须保留没有本轮usage但具有session_usage的事件；实时与恢复均不补0，原底部控件隐藏缺失字段，保留确切返回的0。
+
+原生modelContextWindow仅作为原context.usage窗口容量；当前占用、比例、分类和缓存率未明确返回则保持缺失并隐藏。Facade主动查询能力与手动压缩均未因此开放；Native原统计/压缩保持。见F_20261104_1230_codex-native-usage-observation；交付状态及测试证据以feature/任务记录为准。
+
+
+## Claude / OpenCode 原生只读统计
+
+复用原 chat.usage_summary/session_usage schema_version=1，scope 可选 native 表示原生报告范围，不保证跨进程产品会话累计。原 Native 不带此字段时不改变行为。单行分类显示 Tokens；数据缺失隐藏，不把 SDK/上游默认0当返回事实；Native多行分类保留。原生会话标识须命名 native_session_id，避免与递归历史边界校验中的产品 session_id 混淆。
+
+Claude 只从当前已接收输入且身份匹配的 ResultMessage.model_usage 投影跨模型同字段汇总，不叠加分块/步骤/主循环usage，不推算未返回总Tokens或调用次数。调用和续聊范围遵循原 CLI，旧CLI可能在恢复时重置，故不冒充完整产品累计。执行崩溃的全零可疑快照隐藏并保留源诊断；正常明确0保留。
+
+OpenCode 只按当前原生会话已完成 assistant message ID 覆盖去重；step-finish 不叠加。原生归一化已丢失0来源时隐藏该项，任一消息缺计数也不输出该字段的部分和作为完整总计。恢复绑定首次通过已有消息查询只读建立基线（5秒上限），失败只隐藏不可信累计，不改变聊天结果，不重发旧任务或新建会话，不增加持久账本。两家保留自身输入/输出/缓存分类，未确认的跨Provider口径不强行统一。主动上下文查询/压缩仍未因此开放。验证状态及服务限制以 feature/任务记录为准。

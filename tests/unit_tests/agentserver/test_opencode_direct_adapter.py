@@ -1551,3 +1551,132 @@ def test_metadata_total_budget_preserves_reference_before_optional_fields():
     assert projection['metadata']['exit']==7 and projection['metadata']['truncated'] is True
     assert projection['omitted_metadata_fields']==len(metadata)-len(projection['metadata'])>0
     assert metadata['field-99']=='x'*1000
+
+
+def usage_info(identity, **tokens):
+    return {'id': identity, 'sessionID': 'ses_test', 'role': 'assistant',
+            'time': {'completed': 1}, 'finish': 'stop', 'tokens': tokens}
+
+
+@pytest.mark.asyncio
+async def test_completed_message_usage_deduplicates_steps_and_replay_in_original_facade(host):
+    app, config, calls, events, root = host
+    events[:] = completed_events()[:-2] + [
+        event('message.updated', info=usage_info('msg_agent', input=100, output=20, total=125,
+            reasoning=5, cache={'read': 0, 'write': 0})),
+        event('message.updated', info=usage_info('msg_agent', input=100, output=20, total=125,
+            reasoning=5, cache={'read': 0, 'write': 0})),
+        event('message.part.updated', part={'id': 'same-step', 'sessionID': 'ses_test',
+            'messageID': 'msg_agent', 'type': 'step-finish', 'tokens': {'input': 99999, 'output': 99999}}),
+        event('message.updated', info=usage_info('second-response', input=200, output=30, total=236,
+            reasoning=6, cache={'read': 0, 'write': 0})),
+        event('session.idle'),
+    ]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        latest = snapshots[-1]
+        assert latest['session_usage']['scope'] == 'native'
+        assert latest['session_usage']['main'] == {'input_tokens': 300, 'output_tokens': 50,
+            'total_tokens': 361, 'reasoning_output_tokens': 11,
+            'input_calls': None, 'output_calls': None, 'calls_total': None}
+        assert 'cached_input_tokens' not in latest['session_usage']['main']
+        assert latest['provider']['opencode']['zero_provenance'] == 'not_available'
+        assert 'usage' not in latest
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        records = session_history.read_session_history_records('test-session')
+        assert max((r['session_usage'] for r in records if r.get('session_usage')), key=lambda r: r['revision']) == latest['session_usage']
+        # Replay is the same native message identity; it is not new model spend.
+        repeated = [c.payload async for c in app.process_message_stream(request())]
+        assert not [c for c in repeated if c.get('event_type') == 'chat.usage_summary']
+        assert any(c.get('event_type') == 'chat.final' for c in repeated)
+        assert not any(path.endswith('/message') for _, path, _ in calls)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_missing_usage_hides_incomplete_aggregate_without_failing_execution(host):
+    app, config, calls, events, root = host
+    events[:] = [
+        event('message.updated', info=usage_info('known', input=100, output=10, total=110)),
+        event('message.updated', info=usage_info('unreported', input=0, output=None)),
+        event('message.updated', info={'id': 'partial', 'sessionID': 'ses_test', 'role': 'assistant',
+            'tokens': {'input': 999999}}),
+        event('message.updated', info={**usage_info('foreign', input=999999), 'sessionID': 'other-session'}),
+        event('message.updated', info=usage_info('finish')),
+        event('session.idle'),
+    ]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        assert all(v is None for v in snapshots[-1]['session_usage']['main'].values())
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unavailable', [False, True])
+async def test_usage_restore_uses_original_native_identity_and_never_blocks_chat(owned_permissions, monkeypatch, unavailable):
+    first, config, services = owned_permissions
+    await first.create_instance(config)
+    try:
+        _ = [chunk async for chunk in first.process_message_stream(request('usage-recovery'))]
+        identity = first._adapter._sessions['usage-recovery'].native_id
+    finally:
+        await first.cleanup()
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    original_call = second._adapter._call
+    reads = []
+    async def call(method, path, **kw):
+        if method == 'GET' and path == f'/session/{identity}/message':
+            reads.append((path, kw['session'].native_id))
+            if unavailable:
+                raise RuntimeError('fixture observation unavailable')
+            # An old message appears twice in history; identity still counts once.
+            info = usage_info('historical', input=100, output=10, total=110)
+            return [{'info': info}, {'info': info}]
+        return await original_call(method, path, **kw)
+    monkeypatch.setattr(second._adapter, '_call', call)
+    try:
+        await second.prepare_session(session_id='usage-recovery', channel_id='web', mode='agent')
+        services[-1].events[:] = [
+            event('message.updated', info=usage_info('new', input=200, output=20, total=220)),
+            event('session.idle'),
+        ]
+        chunks = [chunk.payload async for chunk in second.process_message_stream(request('usage-recovery'))]
+        assert reads == [(f'/session/{identity}/message', identity)]
+        assert second._adapter._sessions['usage-recovery'].native_id == identity
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        if unavailable:
+            assert not snapshots
+        else:
+            assert snapshots[-1]['session_usage']['main']['input_tokens'] == 300
+            assert snapshots[-1]['session_usage']['main']['output_tokens'] == 30
+            assert snapshots[-1]['session_usage']['main']['total_tokens'] == 330
+    finally:
+        await second.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error_name', ['MessageAbortedError', 'ApiError'])
+async def test_native_error_usage_precedes_terminal_without_claiming_success(host, error_name):
+    app, config, calls, events, root = host
+    info = usage_info('failed-message', input=40, output=3, total=43)
+    info['error'] = {'name': error_name, 'data': {'message': 'fixture'}}
+    events[:] = [event('message.updated', info=info)]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        assert [c['event_type'] for c in chunks if c.get('event_type') in {'chat.usage_summary', 'chat.error'}] == ['chat.usage_summary','chat.error']
+        assert next(c['session_usage']['main']['input_tokens'] for c in chunks if c.get('event_type') == 'chat.usage_summary') == 40
+        assert not any(c.get('event_type') == 'chat.final' for c in chunks)
+    finally:
+        await app.cleanup()

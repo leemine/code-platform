@@ -123,4 +123,17 @@ Normal OpenCode metadata stays intact. Oversized metadata is projected by whole 
 
 The existing chat Facade prepares the effective model, working directory and host history eligibility. Providers retain native protocol validation, immutable session bindings and SDK/API conversion. Existing model settings, execution picker, bound conversations and Native defaults remain in place. OpenCode assets use the original asset services; the host commits equipment only after a successful, current and uncancelled mount. Partial native configuration must be reconciled again before execution.
 
-These integrations do not currently implement Swarm context usage or manual compaction; those operations explicitly report unsupported instead of fabricated zero usage. OpenCode persona/question support and task=deny remain unchanged; Claude/Codex main role instructions remain P2. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.
+Active Swarm context queries and manual compaction remain unsupported rather than returning fabricated zero usage; passive Codex native counters are described in the section below. OpenCode persona/question support and task=deny remain unchanged; Claude/Codex main role instructions remain P2. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.
+
+## Codex native usage observation
+
+The Codex candidate reuses the existing bottom statistics control for reported main-thread input, output, cached input, cache write, reasoning output and total tokens. Only returned, interpretable counters are shown. Window capacity may appear independently; context occupancy and cache hit rates are not guessed. Missing metrics are hidden, while explicitly reported zero remains visible. A resumed or post-cancellation turn without a trustworthy baseline has no invented turn usage. Cumulative snapshots replace previous values rather than being added again.
+
+The original chat, history and controls remain in use, with no additional compaction, page or execution flow. Native behavior is preserved; Claude/OpenCode extension status is described below. See F_20261104_1230_codex-native-usage-observation. This local, unpublished candidate does not update an installed desktop application.
+
+
+## Claude / OpenCode native usage and Tokens
+
+The single-row label for all three external executors is Tokens. Missing fields stay hidden in the existing statistics control and history. Claude uses native model_usage, including subagents, without adding main-loop usage or synthesizing an unreturned total. Native CLI versions can change resume accounting, so these snapshots are labeled Native usage, not a complete Swarm session total. OpenCode counts completed message identities once and ignores duplicate step views. Unknown zero provenance or a missing count in any message hides that aggregate field. Native input, output and cache semantics remain distinct; occupancy and cache hit rates are not inferred.
+
+Real OpenCode two-turn execution, same-native-session continuation after a Worker restart, database reconciliation and UI refresh have passed. Claude deterministic mappings passed; its existing model service returned HTTP429, leaving real channel acceptance pending. No new execution, approval or compaction flow was introduced. Native statistics remain available. This uncommitted candidate has not updated any installer. See F_20261104_1230_codex-native-usage-observation.

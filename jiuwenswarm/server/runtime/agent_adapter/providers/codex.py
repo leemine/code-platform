@@ -21,6 +21,7 @@ from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
+from .codex_usage import CodexUsage
 from . import session_recovery as recovery
 from ..execution_input import AdapterCapabilities
 
@@ -88,6 +89,7 @@ class Session:
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     subagents: SubagentProjection | None = None
+    usage: CodexUsage = field(default_factory=CodexUsage)
 
 
 def command_result(item: dict) -> dict:
@@ -431,6 +433,7 @@ class CodexAdapter:
                 raise RuntimeError("Codex cancellation is not confirmed; retry cancel before continuing this session")
             if session.active:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
+            new_thread = not session.thread_id
             await self._connect(session, model)
             if session.desired_permission != session.effective_permission:
                 # Resume the same thread with the new policy; no conversation replacement.
@@ -455,6 +458,7 @@ class CodexAdapter:
             session.native_terminal = session.cancel_confirmed = False
             session.control_ready.clear()
             session.active, session.cancelled, session.cancel_acknowledged = True, False, False
+            session.usage.begin_turn(new_thread=new_thread)
         reader = None
         terminal = False
         text_parts = {}
@@ -494,7 +498,14 @@ class CodexAdapter:
                     # Native retries remain owned by Codex. Do not turn a
                     # retry notification into a second terminal event.
                     logging.getLogger(__name__).warning("Codex native error request=%s will_retry=%s elapsed=%.3fs", request.request_id, payload.get("willRetry"), time.monotonic() - started)
-                if method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
+                if method == "thread/tokenUsage/updated":
+                    # Preserve missing SDK fields (notably defaulted cache writes).
+                    native = notification.payload.model_dump(mode="json", by_alias=True, exclude_unset=True)
+                    for event in session.usage.project(native, session_id=sid,
+                                                       thread_id=session.thread_id, turn_id=session.turn_id,
+                                                       request_id=request.request_id):
+                        yield self._chunk(request, event)
+                elif method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
                     async for projected in self._collab_events(session, request, method, item):
                         yield projected
                 elif method == "item/agentMessage/delta":
@@ -516,6 +527,7 @@ class CodexAdapter:
                     session.native_terminal = True
                     session.turn_ended.set()
                     status = payload["turn"]["status"]
+                    session.usage.end_turn(completed=status == "completed" and not session.cancelled)
                     if status == "completed":
                         yield self._chunk(request, {"event_type": "chat.final", "content": self._final_response(text_parts), "invocation_status": status, "task_acceptance": "unknown"}, complete=True, outcome="completed")
                     else:

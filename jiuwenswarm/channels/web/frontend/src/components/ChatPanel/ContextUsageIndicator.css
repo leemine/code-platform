@@ -264,6 +264,13 @@
   display: contents;
 }
 
+.context-usage-token-extra {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .context-usage-token-category__label {
   display: grid;
   gap: 1px;

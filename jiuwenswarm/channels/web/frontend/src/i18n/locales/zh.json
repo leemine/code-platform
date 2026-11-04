@@ -1871,6 +1871,13 @@
       "collaborationDisabled": "多模型协同已关闭，请选择普通模型后发送。"
     },
     "contextUsage": {
+      "usageTitle": "用量统计",
+      "usedTokens": "已用 {{tokens}}",
+      "windowTokens": "窗口 {{tokens}}",
+      "cachedInputTokens": "缓存输入",
+      "cacheWriteInputTokens": "缓存写入",
+      "reasoningOutputTokens": "推理输出",
+      "totalTokens": "总 Tokens",
       "title": "上下文用量",
       "ariaLabel": "上下文用量 {{rate}}",
       "hoverMetric": "{{rate}}（{{used}}/{{limit}}）",
@@ -1883,6 +1890,8 @@
       "skills": "技能",
       "notReported": "未报告",
       "cumulativeTitle": "累计 Token",
+      "nativeTitle": "原生用量",
+      "tokens": "Tokens",
       "mainAgentTokens": "主 Agent",
       "otherAgentTokens": "子 Agent / 团队成员",
       "inputTokens": "输入",

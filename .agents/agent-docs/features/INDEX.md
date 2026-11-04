@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 4 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 5 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -19,10 +19,11 @@ generated: true
 | [desktop](#module-2) | 1 |
 | [gateway](#module-3) | 1 |
 | [gateway/common](#module-4) | 1 |
-| [jiuwenswarm/channels/web/frontend](#module-5) | 1 |
+| [jiuwenswarm/channels/web/frontend](#module-5) | 2 |
 | [jiuwenswarm/common](#module-6) | 1 |
 | [jiuwenswarm/server](#module-7) | 1 |
-| [jiuwenswarm/server/runtime/agent_adapter](#module-8) | 1 |
+| [jiuwenswarm/server/runtime/agent_adapter](#module-8) | 2 |
+| [jiuwenswarm/server/runtime/session](#module-9) | 1 |
 
 <a id="module-1"></a>
 
@@ -65,6 +66,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [F_20261104_1230_codex-native-usage-observation](F_20261104_1230_codex-native-usage-observation.md) | F | Provider 原生用量只读观测（Codex、Claude、OpenCode） | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_usage.py, jiuwenswarm/server/runtime/session/session_history.py, jiuwenswarm/channels/web/frontend/src/types/sessionTokenUsage.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.css, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude_usage.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_usage.py | 无独立 D：用户确认管理仓 OBS-01 只读方案后授权先做 Codex 原生事件试点；无独立 D 文档，不扩展到压缩或发布；同日用户授权将只读方案续接 Claude/OpenCode。 |
 
 <a id="module-6"></a>
 
@@ -89,3 +91,12 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [F_20261104_1230_codex-native-usage-observation](F_20261104_1230_codex-native-usage-observation.md) | F | Provider 原生用量只读观测（Codex、Claude、OpenCode） | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_usage.py, jiuwenswarm/server/runtime/session/session_history.py, jiuwenswarm/channels/web/frontend/src/types/sessionTokenUsage.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.css, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude_usage.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_usage.py | 无独立 D：用户确认管理仓 OBS-01 只读方案后授权先做 Codex 原生事件试点；无独立 D 文档，不扩展到压缩或发布；同日用户授权将只读方案续接 Claude/OpenCode。 |
+
+<a id="module-9"></a>
+
+## jiuwenswarm/server/runtime/session
+
+| ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
+|---|---|---|---|---|---|---|
+| [F_20261104_1230_codex-native-usage-observation](F_20261104_1230_codex-native-usage-observation.md) | F | Provider 原生用量只读观测（Codex、Claude、OpenCode） | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_usage.py, jiuwenswarm/server/runtime/session/session_history.py, jiuwenswarm/channels/web/frontend/src/types/sessionTokenUsage.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ContextUsageIndicator.css, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude_usage.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_usage.py | 无独立 D：用户确认管理仓 OBS-01 只读方案后授权先做 Codex 原生事件试点；无独立 D 文档，不扩展到压缩或发布；同日用户授权将只读方案续接 Claude/OpenCode。 |

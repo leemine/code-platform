@@ -796,3 +796,97 @@ async def test_facade_prepared_input_is_not_reresolved_by_provider(host, monkeyp
             prepared_input(request('another-session'), {'_host_execution': prepared[0]})
     finally:
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_native_model_usage_replaces_snapshots_and_preserves_original_history(host, monkeypatch):
+    app, config, clients, root, settings = host
+    native = {
+        'main-model': {'inputTokens': 10, 'outputTokens': 5, 'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 3},
+        'child-model': {'inputTokens': 20, 'outputTokens': 6, 'cacheReadInputTokens': 2, 'cacheCreationInputTokens': 0},
+    }
+
+    async def execute(self):
+        await self.queue.put(sdk.SystemMessage('session_state_changed', {'session_id': self.sid, 'state': 'working'}))
+        duplicate = sdk.AssistantMessage([sdk.TextBlock('partial')], 'main-model',
+            message_id='one-response', usage={'input_tokens': 999999, 'output_tokens': 1})
+        await self.queue.put(duplicate)
+        await self.queue.put(duplicate)
+        # First result followed by an automatic native follow-up, on the same reader.
+        for models in [dict(list(native.items())[:1]), native, native]:
+            await self.queue.put(sdk.ResultMessage('success', 1, 1, False, 1, self.sid,
+                result='native reply', model_usage=models, usage={'input_tokens': 999999}))
+        await self.queue.put(sdk.SystemMessage('session_state_changed', {'session_id': self.sid, 'state': 'idle'}))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        latest = snapshots[-1]
+        assert latest['session_usage']['scope'] == 'native'
+        assert latest['session_usage']['main'] == {
+            'input_tokens': 30, 'output_tokens': 11, 'cached_input_tokens': 2,
+            'cache_write_input_tokens': 3,
+            'input_calls': None, 'output_calls': None, 'calls_total': None,
+        }
+        assert all(v is None for v in latest['session_usage']['others'].values())
+        assert latest['provider']['claude']['includes_subagents'] is True
+        assert 'usage' not in latest
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        records = session_history.read_session_history_records('one')
+        restored = max((r['session_usage'] for r in records if r.get('event_type') == 'chat.usage_summary'), key=lambda r: r['revision'])
+        assert restored == latest['session_usage']
+        # New SDK calls may reset counters on older CLIs: do not add prior snapshots.
+        native.clear()
+        native['same-model'] = {'inputTokens': 4, 'outputTokens': 0, 'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 0}
+        again = [chunk.payload async for chunk in app.process_message_stream(request())]
+        latest = [c for c in again if c.get('event_type') == 'chat.usage_summary'][-1]
+        assert latest['session_usage']['main']['input_tokens'] == 4
+        assert latest['session_usage']['main']['output_tokens'] == 0
+        assert 'total_tokens' not in latest['session_usage']['main']
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error', [False, True])
+async def test_native_usage_missing_fields_and_error_result_do_not_invent_counts(host, monkeypatch, error):
+    app, config, _, _, _ = host
+    async def execute(self):
+        models = {'a': {'inputTokens': 100, 'outputTokens': 2, 'cacheReadInputTokens': 0},
+                  'b': {'inputTokens': 200, 'outputTokens': None, 'cacheReadInputTokens': 0}}
+        await self.queue.put(sdk.ResultMessage('error_during_execution' if error else 'success', 1, 1, error, 1,
+            self.sid, model_usage=models, usage={'output_tokens': 500}, result='reply'))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        main = next(c['session_usage']['main'] for c in chunks if c.get('event_type') == 'chat.usage_summary')
+        assert main['input_tokens'] == 300
+        assert main['output_tokens'] is None
+        assert main['cached_input_tokens'] == 0
+        assert 'total_tokens' not in main and 'cache_write_input_tokens' not in main
+        assert any(c.get('event_type') == ('chat.error' if error else 'chat.final') for c in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_execution_crash_zeroed_native_totals_are_not_a_successful_zero_usage(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def execute(self):
+        await self.queue.put(sdk.ResultMessage('error_during_execution', 1, 1, True, 1, self.sid,
+            model_usage={'model': {'inputTokens': 0, 'outputTokens': 0,
+                'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 0}}))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        event = next(c for c in chunks if c.get('event_type') == 'chat.usage_summary')
+        assert all(v is None for v in event['session_usage']['main'].values())
+        assert event['provider']['claude']['counter_continuity'] == 'unknown'
+        assert event['provider']['claude']['reported_counts']['input_tokens'] == 0
+        assert any(c.get('event_type') == 'chat.error' for c in chunks)
+    finally:
+        await app.cleanup()

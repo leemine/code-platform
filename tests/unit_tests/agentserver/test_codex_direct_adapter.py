@@ -657,8 +657,9 @@ async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, 
     monkeypatch.setattr(interface, 'get_config', lambda: settings)
     monkeypatch.setattr(session_metadata, 'get_agent_sessions_dir', lambda: root / 'sessions')
     runtime = AgentRuntime()
+    sid = f'resume-{stage}-{failure or "normal"}'
     def req(method=ReqMethod.CHAT_SEND):
-        return request('resume-' + stage, method, project_dir=str(root),
+        return request(sid, method, project_dir=str(root),
                        execution_provider='codex-direct', intent='cancel', work_mode='work')
     async def drain():
         return [item async for item in runtime.stream(req())]
@@ -765,7 +766,7 @@ async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, 
         await runtime.close()
     assert clients[0].closed
     from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
-    binding = session_recovery.load('codex', 'resume-' + stage, str(root))
+    binding = session_recovery.load('codex', sid, str(root))
     assert binding['native_id'] == original_thread
     assert Path(binding['root']).is_dir()
 
@@ -869,5 +870,160 @@ async def test_facade_prepared_input_is_not_reresolved_by_provider(host, monkeyp
         from jiuwenswarm.server.runtime.agent_adapter.execution_input import prepared_input
         with pytest.raises(ValueError, match='does not belong'):
             prepared_input(request('another-session'), {'_host_execution': prepared[0]})
+    finally:
+        await app.cleanup()
+
+
+def emit_native_usage(client, total, *, last=None, window=200000, thread=None, turn=None):
+    from openai_codex.generated.v2_all import ThreadTokenUsageUpdatedNotification
+    native = ThreadTokenUsageUpdatedNotification.model_validate({
+        'threadId': thread or client.thread_id, 'turnId': turn or client.turn_id,
+        'tokenUsage': {'total': total, 'last': last or total, 'modelContextWindow': window},
+    })
+    client.events.put(SimpleNamespace(method='thread/tokenUsage/updated', payload=native))
+
+
+@pytest.mark.asyncio
+async def test_native_usage_updates_existing_facade_wire_history_without_summing_snapshots(host, monkeypatch):
+    from dataclasses import replace
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app, config, clients, _, _ = host
+    original = FakeClient.finish
+    def finish(client, status='completed'):
+        base = (client.turns - 1) * 210
+        for count in [100, 100, 210]:
+            usage = {'inputTokens': base + count, 'outputTokens': client.turns * 28,
+                     'totalTokens': base + count + client.turns * 28,
+                     'cachedInputTokens': 0, 'reasoningOutputTokens': 3}
+            emit_native_usage(client, usage)
+        # Foreign and stale events must not contaminate the bound root totals.
+        emit_native_usage(client, usage, thread='foreign')
+        emit_native_usage(client, usage, turn='stale-turn')
+        original(client, status)
+    monkeypatch.setattr(FakeClient, 'finish', finish)
+    await app.create_instance(config)
+    try:
+        previous_revision = 0
+        for index in [1, 2]:
+            frames = [chunk async for chunk in app.process_message_stream(replace(request(), request_id=f'usage-{index}'))]
+            chunks = [x.payload for x in frames]
+            updates = [x for x in chunks if x.get('event_type') == 'chat.usage_summary']
+            assert len(updates) == 2
+            assert updates[-1]['usage']['input_tokens'] == 210
+            assert updates[-1]['usage']['output_tokens'] == 28
+            total = updates[-1]['session_usage']
+            assert total['main']['input_tokens'] == index * 210
+            assert total['main']['output_tokens'] == index * 28
+            assert total['main']['total_tokens'] == index * 238
+            assert total['main']['cached_input_tokens'] == 0
+            assert 'cache_write_input_tokens' not in total['main']
+            assert all(total['main'][key] is None for key in ['input_calls', 'output_calls', 'calls_total'])
+            assert all(value is None for value in total['others'].values())
+            assert total['revision'] > previous_revision
+            previous_revision = total['revision']
+            context = next(x for x in chunks if x.get('event_type') == 'context.usage')
+            assert context['request_id'] == f'usage-{index}'
+            assert context['context_window'] == {'limit_tokens': 200000, 'input_tokens': None, 'occupancy_rate': None}
+            assert context['session_kv_cache_hit_rate'] is None
+            assert any(x.get('content') == 'reply' for x in chunks)
+            assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+            wire = [parse_agent_server_wire_chunk(encode_agent_chunk_for_wire(c, response_id=f'wire-{index}', sequence=i)).payload for i, c in enumerate(frames, 1)]
+            assert [x['session_usage'] for x in wire if x.get('event_type') == 'chat.usage_summary'][-1] == total
+        session_history.flush_history_writes()
+        page = load_history_page('one', 1)
+        saved = [x for x in page['messages'] if x.get('event_type') == 'chat.usage_summary']
+        assert len(saved) == 4
+        assert max(saved, key=lambda x: x['session_usage']['revision'])['session_usage']['main']['input_tokens'] == 420
+        assert len(clients) == 1 and clients[0].turns == 2
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['completed', 'interrupted', 'failed'])
+async def test_usage_native_terminal_does_not_change_outcome_or_invent_recovery_baseline(host, monkeypatch, status):
+    app, config, clients, _, _ = host
+    original = FakeClient.finish
+    def finish(client, ignored='completed'):
+        count = client.turns * 100
+        emit_native_usage(client, {'inputTokens': count, 'outputTokens': count // 5,
+                                  'totalTokens': count + count // 5,
+                                  'cachedInputTokens': 0, 'reasoningOutputTokens': 0}, window=None)
+        original(client, status if client.turns == 1 else 'completed')
+    monkeypatch.setattr(FakeClient, 'finish', finish)
+    await app.create_instance(config)
+    try:
+        first = [x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('event_type') == 'chat.usage_summary' for x in first)
+        assert not any(x.get('event_type') == 'context.usage' for x in first)
+        assert any(x.get('event_type') == 'chat.error' for x in first) is (status != 'completed')
+        if status == 'completed':
+            assert any(x.get('content') == 'reply' for x in first)
+        second = [x.payload async for x in app.process_message_stream(request())]
+        update = next(x for x in second if x.get('event_type') == 'chat.usage_summary')
+        assert update['session_usage']['main']['input_tokens'] == 200
+        assert ('usage' in update) is (status == 'completed')
+    finally:
+        await app.cleanup()
+    # New Facade resumes the same native thread but has no proven turn baseline.
+    restored = interface.JiuWenSwarm()
+    await restored.create_instance(config)
+    try:
+        chunks = [x.payload async for x in restored.process_message_stream(request())]
+        update = next(x for x in chunks if x.get('event_type') == 'chat.usage_summary')
+        assert 'usage' not in update
+        session_history.flush_history_writes()
+        text = (Path(session_history.get_agent_sessions_dir()) / 'one/history.jsonl').read_text()
+        assert 'session_usage' in text
+    finally:
+        await restored.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_missing_partial_and_reset_usage_are_observation_only(host, monkeypatch):
+    app, config, _, _, _ = host
+    original = FakeClient.finish
+    def finish(client, status='completed'):
+        for usage in [None, {}, {'total': {'inputTokens': True, 'outputTokens': -1, 'totalTokens': '123'}},
+                      {'total': {'inputTokens': 70}}, {'total': {'inputTokens': 3}},
+                      {'total': {'inputTokens': 3, 'outputTokens': 0}}]:
+            client.emit('thread/tokenUsage/updated', threadId=client.thread_id, turnId=client.turn_id, tokenUsage=usage)
+        original(client, status)
+    monkeypatch.setattr(FakeClient, 'finish', finish)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        updates = [x for x in chunks if x.get('event_type') == 'chat.usage_summary']
+        assert len(updates) == 3
+        assert updates[0]['usage'] == {'input_tokens': 70}
+        assert updates[-1]['session_usage']['main']['input_tokens'] is None
+        assert updates[-1]['session_usage']['main']['output_tokens'] is None
+        assert updates[-1]['provider']['codex']['total']['outputTokens'] == 0
+        # A decrease invalidates the baseline, rather than reporting a negative turn.
+        assert 'usage' not in updates[-1]
+        assert any(x.get('content') == 'reply' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_later_missing_window_clears_previous_capacity_in_original_stream(host, monkeypatch):
+    app, config, _, _, _ = host
+    original = FakeClient.finish
+    def finish(client, status='completed'):
+        for value, window in [(100, 200000), (200, None)]:
+            emit_native_usage(client, {'inputTokens': value, 'outputTokens': 0,
+                'totalTokens': value, 'cachedInputTokens': 0, 'reasoningOutputTokens': 0}, window=window)
+        original(client, status)
+    monkeypatch.setattr(FakeClient, 'finish', finish)
+    await app.create_instance(config)
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request())]
+        contexts = [x for x in chunks if x.get('event_type') == 'context.usage']
+        assert [x['context_window']['limit_tokens'] for x in contexts] == [200000, None]
+        assert contexts[-1]['context_window']['occupancy_rate'] is None
+        assert any(x.get('content') == 'reply' for x in chunks)
     finally:
         await app.cleanup()

@@ -1,15 +1,20 @@
 export interface SessionTokenUsageCategory {
   input_tokens: number | null;
   output_tokens: number | null;
-  input_calls: number;
-  output_calls: number;
-  calls_total: number;
+  input_calls: number | null;
+  output_calls: number | null;
+  calls_total: number | null;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_output_tokens?: number;
+  cache_write_input_tokens?: number;
 }
 
 export interface SessionTokenUsageSnapshot {
   schema_version: 1;
   revision: number;
   session_id: string;
+  scope?: 'native';
   main: SessionTokenUsageCategory;
   others: SessionTokenUsageCategory;
 }
@@ -31,11 +36,13 @@ function isCategory(value: unknown): value is SessionTokenUsageCategory {
   return (
     isNullableCount(value.input_tokens)
     && isNullableCount(value.output_tokens)
-    && isCount(value.input_calls)
-    && isCount(value.output_calls)
-    && isCount(value.calls_total)
-    && value.input_calls <= value.calls_total
-    && value.output_calls <= value.calls_total
+    && isNullableCount(value.input_calls)
+    && isNullableCount(value.output_calls)
+    && isNullableCount(value.calls_total)
+    && (value.input_calls === null || value.calls_total === null || value.input_calls <= value.calls_total)
+    && (value.output_calls === null || value.calls_total === null || value.output_calls <= value.calls_total)
+    && ['total_tokens', 'cached_input_tokens', 'reasoning_output_tokens', 'cache_write_input_tokens']
+      .every((key) => value[key] === undefined || isCount(value[key]))
   );
 }
 
@@ -46,6 +53,7 @@ export function parseSessionTokenUsageSnapshot(value: unknown): SessionTokenUsag
     || !isCount(value.revision)
     || typeof value.session_id !== 'string'
     || !value.session_id
+    || (value.scope !== undefined && value.scope !== 'native')
     || !isCategory(value.main)
     || !isCategory(value.others)
   ) {

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,7 @@ import sys
 
 from . import opencode_transport as transport
 from .cli import resolve_cli
+from .opencode_usage import OpenCodeUsage
 from . import session_recovery as recovery
 from ..execution_input import AdapterCapabilities
 
@@ -26,6 +28,7 @@ from jiuwenswarm.common.schema.message import ReqMethod
 
 
 _TOOL_OUTPUT_CHAR_LIMIT = 60000
+logger = logging.getLogger(__name__)
 
 
 def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
@@ -115,6 +118,8 @@ class _Session:
     effective_permission: str | None = None
     permission_error: bool = False
     configuration_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    usage: OpenCodeUsage = field(default_factory=OpenCodeUsage)
+    usage_loaded: bool = False
 
 
 def tool_payload(part: dict[str, Any]) -> dict[str, Any]:
@@ -299,6 +304,7 @@ class OpenCodeAdapter:
             from .opencode_equipment import Equipment
             session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
                 model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
+                usage=OpenCodeUsage(complete=not bool(binding)),
                 desired_permission=binding["permission"] if binding else self._permission_profile)
             if self._executable:
                 from .opencode_service import SessionService
@@ -445,6 +451,19 @@ class OpenCodeAdapter:
         assistant_complete = False
         assistant_messages = set()
         try:
+            if not session.usage_loaded:
+                if session.usage.complete:
+                    session.usage_loaded = True
+                else:
+                    # Restore only the native counters, not tool bodies or a
+                    # second durable ledger. Observation failure cannot fail execution.
+                    try:
+                        async with asyncio.timeout(5):
+                            rows = await self._call("GET", f"/session/{session.native_id}/message", session=session)
+                        session.usage.restore(rows, native_id=session.native_id)
+                        session.usage_loaded = session.usage.complete
+                    except Exception as exc:
+                        logger.info("OpenCode usage restore unavailable error_type=%s", type(exc).__name__)
             async with asyncio.timeout(self._timeout) as turn_budget:
                 async with transport.subscribe(session.service.client if session.service else self._client, session.directory) as events:
                     # Establish the sole event subscription before accepting the prompt.
@@ -460,6 +479,11 @@ class OpenCodeAdapter:
                         if event_sid != session.native_id:
                             continue
                         kind = event.get("type")
+                        if kind == "message.updated" and info.get("role") == "assistant":
+                            session.usage.observe(info, native_id=session.native_id)
+                            usage = session.usage.project(session_id=sid, native_id=session.native_id)
+                            if usage is not None:
+                                yield self._chunk(request, usage)
                         native_error = props.get("error", {}) if kind == "session.error" else info.get("error", {})
                         if native_error.get("name") == "MessageAbortedError" or (kind == "session.idle" and session.cancelled):
                             terminal = True

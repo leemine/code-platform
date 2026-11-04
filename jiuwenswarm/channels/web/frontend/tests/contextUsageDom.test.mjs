@@ -195,27 +195,18 @@ for (const language of ['zh', 'en']) {
     });
   });
 
-  test(language + ': null fields remain unknown and no old category or KV value survives', async () => {
+  test(language + ': unreported metrics hide the entire widget and clear old values', async () => {
     await mount(language, async ({ receive, click }) => {
       await receive(structuredClone(fixture));
-      const trigger = document.querySelector('.context-usage-trigger');
-      await click(trigger);
+      await click(document.querySelector('.context-usage-trigger'));
       const next = structuredClone(fixture);
       next.context_window = { input_tokens: null, limit_tokens: null, occupancy_rate: null };
       next.session_kv_cache_hit_rate = null;
       next.parts = {};
       await receive(next);
-      assert.equal(document.querySelector('.context-usage-ring__value'), null);
-      assert.equal(document.querySelectorAll('.context-usage-category').length, 0);
-      assert.equal(document.querySelectorAll('.context-usage-breakdown__segment').length, 0);
-      const metric = document.querySelector('.context-usage-detail__metric').textContent;
-      assert.match(metric, language === 'zh' ? /未报告/ : /Not reported/);
-      assert.doesNotMatch(metric, /0%|1K|2.0K/);
-      assert.equal(document.querySelector('.context-usage-detail__kv'), null);
-      await click(document.querySelector('.context-usage-detail__close'));
-      const tooltip = document.querySelector('[role="tooltip"]');
-      assert.equal(tooltip.querySelectorAll('.context-usage-tooltip__row').length, 1);
-      assert.doesNotMatch(tooltip.textContent, language === 'zh' ? /KV命中率/ : /KV hit rate/);
+      assert.equal(document.querySelector('.context-usage-trigger'), null);
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      assert.equal(document.querySelector('[role="tooltip"]'), null);
       assert.equal(document.querySelector('[role="alert"]'), null);
     });
   });
@@ -410,7 +401,7 @@ test('detail shows both cumulative input and output token totals in uppercase K'
 });
 
 for (const language of ['zh', 'en']) {
-  test(language + ': cumulative K units use one decimal and preserve unknown totals', async () => {
+  test(language + ': cumulative K units preserve known zero and hide missing totals', async () => {
     await mount(language, async ({ receiveTokenUsage, click, sessionId }) => {
       await receiveTokenUsage({
         schema_version: 1,
@@ -424,10 +415,7 @@ for (const language of ['zh', 'en']) {
       const main = document.querySelector('.context-usage-token-category[data-variant="main"]');
       const others = document.querySelector('.context-usage-token-category[data-variant="others"]');
       assert.equal(main.querySelector('[data-variant="input"]').textContent, '0.0K');
-      assert.equal(
-        main.querySelector('[data-variant="output"]').textContent,
-        language === 'zh' ? '未报告' : 'Not reported',
-      );
+      assert.equal(main.querySelector('[data-variant="output"]'), null);
       assert.equal(others.querySelector('[data-variant="input"]').textContent, '0.0K');
       assert.equal(others.querySelector('[data-variant="output"]').textContent, '1,234.6K');
     });
@@ -442,6 +430,57 @@ test('restored cumulative totals remain accessible without a current context sna
     assert.ok(trigger);
     await click(trigger);
     assert.equal(document.querySelectorAll('.context-usage-token-category').length, 2);
-    assert.match(document.querySelector('.context-usage-detail__metric').textContent, /Not reported/);
+    assert.equal(document.querySelector('.context-usage-detail__metric'), null);
   });
 });
+
+for (const language of ['zh', 'en']) {
+  test(language + ': Codex native counters need neither invented calls nor a context percentage', async () => {
+    await mount(language, async ({ receive, receiveTokenUsage, click, sessionId }) => {
+      const unknown = { input_tokens: null, output_tokens: null, input_calls: null, output_calls: null, calls_total: null };
+      await receiveTokenUsage({ schema_version: 1, revision: 100, session_id: sessionId,
+        main: { ...unknown, input_tokens: 1200, output_tokens: 200, total_tokens: 1400,
+          cached_input_tokens: 0, reasoning_output_tokens: 20 }, others: unknown });
+      await click(document.querySelector('.context-usage-trigger'));
+      let dialog = document.querySelector('[role="dialog"]');
+      assert.equal(document.querySelector('.context-usage-detail__metric'), null);
+      assert.equal(document.querySelector('.context-usage-ring__value'), null);
+      assert.equal(document.querySelector('.context-usage-detail__kv'), null);
+      assert.equal(document.querySelector('.context-usage-detail__empty'), null);
+      assert.equal(document.querySelectorAll('.context-usage-token-category').length, 1);
+      assert.equal(document.querySelector('.context-usage-token-category__label').textContent, 'Tokens');
+      assert.doesNotMatch(dialog.textContent, language === 'zh' ? /主智能体/ : /Main Agent/);
+      assert.equal(document.querySelector('[data-testid="chat-panel-context-usage-token-partial-status"]'), null);
+      assert.equal(dialog.querySelector('[data-variant="cached_input_tokens"] strong').textContent, '0');
+      assert.equal(dialog.querySelector('[data-variant="cache_write_input_tokens"]'), null);
+      assert.doesNotMatch(dialog.textContent, language === 'zh' ? /未报告|命中率/ : /Not reported|hit rate/);
+      const context = structuredClone(fixture);
+      context.context_window = { input_tokens: null, limit_tokens: 200000, occupancy_rate: null };
+      context.parts = {};
+      context.session_kv_cache_hit_rate = null;
+      await receive(context);
+      dialog = document.querySelector('[role="dialog"]');
+      assert.match(dialog.querySelector('.context-usage-detail__metric').textContent, /195\.3K/);
+      assert.doesNotMatch(dialog.textContent, /%/);
+      // An actual zero usage snapshot remains visible, unlike missing usage.
+      await receiveTokenUsage({ schema_version: 1, revision: 101, session_id: sessionId,
+        main: { ...unknown, input_tokens: 0, output_tokens: 0, total_tokens: 0 }, others: unknown });
+      assert.equal(dialog.querySelector('[data-variant="total_tokens"] strong').textContent, '0');
+    });
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(language + ': native-only totals use Tokens without promising a product-session total', async () => {
+    await mount(language, async ({ receiveTokenUsage, click, sessionId }) => {
+      const unknown = { input_tokens: null, output_tokens: null, input_calls: null, output_calls: null, calls_total: null };
+      await receiveTokenUsage({ schema_version: 1, revision: 200, session_id: sessionId, scope: 'native',
+        main: { ...unknown, input_tokens: 20, output_tokens: 0 }, others: unknown });
+      await click(document.querySelector('.context-usage-trigger'));
+      assert.equal(document.querySelector('.context-usage-token-category__label').textContent, 'Tokens');
+      assert.equal(document.querySelector('[data-testid="chat-panel-context-usage-token-totals-title"]').textContent,
+        language === 'zh' ? '原生用量' : 'Native usage');
+      assert.equal(document.querySelector('[data-variant="output"]').textContent, '0.0K');
+    });
+  });
+}

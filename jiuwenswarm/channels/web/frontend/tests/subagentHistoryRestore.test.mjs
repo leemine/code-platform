@@ -1328,3 +1328,48 @@ test('legacy Claude Read history is completed without command-exit semantics', (
   assert.equal(preview.executions[0].result.commandExitUnknown, undefined);
   assert.equal(preview.executions[0].result.outcomeUnknown, undefined);
 });
+
+test('native cumulative-only usage restores without invented turn totals or model-call counts', () => {
+  const unknown = { input_tokens: null, output_tokens: null, input_calls: null, output_calls: null, calls_total: null };
+  const usage = { schema_version: 1, revision: 10000, session_id: sessionId, scope: 'native',
+    main: { ...unknown, input_tokens: 400, output_tokens: 0, total_tokens: 400, cached_input_tokens: 0 }, others: unknown };
+  const preview = parseHistoryJsonFileToTimelinePreview([
+    { id: 'native-final', role: 'assistant', event_type: 'chat.final', content: 'done', timestamp: 1787019580 },
+    { id: 'native-usage', role: 'assistant', event_type: 'chat.usage_summary', content: '', timestamp: 1787019581,
+      session_usage: usage },
+    { id: 'old-usage', role: 'assistant', event_type: 'chat.usage_summary', content: '', timestamp: 1787019582,
+      session_usage: { ...usage, revision: 9999, main: { ...usage.main, input_tokens: 399 } } },
+  ], sessionId);
+  assert.deepEqual(preview.tokenUsageSnapshot, usage);
+  assert.equal(preview.messages.length, 1);
+  assert.equal(preview.messages[0].usageSummary, undefined);
+  const partial = parseHistoryJsonFileToTimelinePreview([
+    { id: 'final', role: 'assistant', event_type: 'chat.final', content: 'partial', timestamp: 1787019580 },
+    { id: 'usage', role: 'assistant', event_type: 'chat.usage_summary', content: '', timestamp: 1787019581,
+      usage: { input_tokens: 0, output_tokens: null, total_tokens: true } },
+  ], sessionId);
+  assert.deepEqual(partial.messages[0].usageSummary, { input_tokens: 0 });
+});
+
+for (const provider of ['claude', 'opencode']) {
+  test(provider + ': original streamed history restores native totals with distinct native identity', () => {
+    const unknown = { input_tokens: null, output_tokens: null, input_calls: null, output_calls: null, calls_total: null };
+    const usage = { schema_version: 1, revision: 10001, session_id: sessionId, scope: 'native',
+      main: { ...unknown, input_tokens: 20, output_tokens: 0 }, others: unknown };
+    const meta = { session_id: sessionId, subagent_id: '', cursor: null, next_cursor: null,
+      has_more: false, snapshot_id: 'native-snapshot', snapshot_end: 1 };
+    let restored = null;
+    let failure = null;
+    const handle = beginHistoryRestore({ sessionId, onReady: () => {},
+      onFailure: (value) => { failure = value; }, onSessionTokenUsage: (value) => { restored = value; } });
+    try {
+      webClient.dispatchEventNow({ type: 'event', event: 'history.message', payload: { ...meta,
+        message: { id: 'native-usage', role: 'assistant', event_type: 'chat.usage_summary', content: '',
+          timestamp: 1787019581, session_id: sessionId, session_usage: usage,
+          provider: { [provider]: { native_session_id: 'native-session-is-not-the-product-session' } } } } });
+      webClient.dispatchEventNow({ type: 'event', event: 'history.message', payload: { ...meta, status: 'done' } });
+      assert.equal(failure, null);
+      assert.deepEqual(restored, usage);
+    } finally { handle.dispose(); }
+  });
+}

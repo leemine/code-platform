@@ -1871,6 +1871,13 @@
       "collaborationDisabled": "Multi-model collaboration is off. Select an individual model before sending."
     },
     "contextUsage": {
+      "usageTitle": "Usage statistics",
+      "usedTokens": "Used {{tokens}}",
+      "windowTokens": "Window {{tokens}}",
+      "cachedInputTokens": "Cached input",
+      "cacheWriteInputTokens": "Cache write",
+      "reasoningOutputTokens": "Reasoning output",
+      "totalTokens": "Total tokens",
       "title": "Context usage",
       "ariaLabel": "Context usage {{rate}}",
       "hoverMetric": "{{rate}} ({{used}}/{{limit}})",
@@ -1883,6 +1890,8 @@
       "skills": "Skills",
       "notReported": "Not reported",
       "cumulativeTitle": "Cumulative tokens",
+      "nativeTitle": "Native usage",
+      "tokens": "Tokens",
       "mainAgentTokens": "Main Agent",
       "otherAgentTokens": "Subagents / team members",
       "inputTokens": "Input",

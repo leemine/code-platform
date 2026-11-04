@@ -20,6 +20,7 @@ from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_mo
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .subagent_projection import SubagentProjection
+from .claude_usage import ClaudeUsage
 from . import session_recovery as recovery
 from ..execution_input import AdapterCapabilities
 
@@ -133,6 +134,7 @@ class Session:
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     native_tasks: _NativeTasks = field(default_factory=_NativeTasks)
     producer_done: asyncio.Event = field(default_factory=asyncio.Event)
+    usage: ClaudeUsage = field(default_factory=ClaudeUsage)
 
 
 class ClaudeAdapter:
@@ -479,6 +481,11 @@ class ClaudeAdapter:
                     if not input_accepted and not message.is_error:
                         logger.info("Claude pre-input result ignored request=%s native_session=%s", request.request_id, session.native_id)
                         continue
+                    if input_accepted:
+                        usage = session.usage.project(message.model_usage, session_id=sid, native_id=session.native_id,
+                            crashed=message.subtype == "error_during_execution")
+                        if usage is not None:
+                            yield self._chunk(request, usage)
                     result_message = message
                     if message.is_error and not session.cancelled:
                         terminal = True
