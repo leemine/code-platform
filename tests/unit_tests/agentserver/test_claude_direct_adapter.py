@@ -101,8 +101,15 @@ def host(monkeypatch, tmp_path):
     monkeypatch.setattr(session_history, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_default_project_session_workspace_dir', lambda: tmp_path)
-    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared', provider='Anthropic', api_base='http://127.0.0.1:1234', api_key='private-fixture-key')
+    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared', fallback_tag='shared', provider='Anthropic', api_base='http://127.0.0.1:1234', api_key='private-fixture-key')
     monkeypatch.setattr(claude, 'resolve_model', lambda req: model)
+    # Stub only the SDK transport; model selection now uses the real host path.
+    monkeypatch.setattr(interface, 'get_config', lambda: {'preferred_language': 'en', 'models': {'defaults': [{
+        'model_id': model.model_id, 'model_client_config': {
+            'client_provider': model.provider, 'model_name': model.model_name,
+            'api_base': model.api_base, 'api_key': model.api_key,
+            **model.client_options, **model.request_defaults,
+        }}]}})
     return interface.JiuWenSwarm(), {'claude': {'enabled': True}, 'permissions': {'enabled': True}}, clients, tmp_path, settings
 
 
@@ -364,7 +371,8 @@ async def test_facade_explicit_tool_error_is_not_overridden_by_zero_exit(host):
 async def test_model_transport_timeout_does_not_limit_whole_turn(host, monkeypatch):
     app, config, clients, _, _ = host
     original = claude.resolve_model
-    model = original(request()).model_copy(update={'client_options': {'timeout': 0.01}})
+    model = original(request())
+    model.client_options['timeout'] = 0.01
     monkeypatch.setattr(claude, 'resolve_model', lambda req: model)
     execute = FakeClient.execute
     async def slow_tool(self):
@@ -755,3 +763,36 @@ async def test_noncommand_boundary_keeps_unknown_success_and_short_text(host,siz
             assert p['result']==text and 'output_truncated' not in p['provider']['claude']
         else:assert p['provider']['claude']['output_truncated'] is True
     finally:await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_facade_prepared_input_is_not_reresolved_by_provider(host, monkeypatch):
+    app, config, clients, root, _ = host
+    await app.create_instance(config)
+    original = app._build_inputs
+    prepared = []
+    def build(req):
+        inputs, memory, turn = original(req)
+        execution = inputs['_host_execution']
+        prepared.append(execution)
+        assert 'private-' not in repr(execution)
+        # Neither the Provider's compatibility resolver nor later configuration
+        # reads may replace the model already chosen by the original Facade.
+        def unexpected(*args, **kwargs):
+            raise AssertionError('Provider reinterpreted host model configuration')
+        monkeypatch.setattr(claude, 'resolve_model', unexpected)
+        return inputs, memory, turn
+    monkeypatch.setattr(app, '_build_inputs', build)
+    try:
+        chunks = [item.payload async for item in app.process_message_stream(request(project_dir=str(root), _host_execution={'model': 'FORGED_CLIENT_INPUT'}))]
+        assert len(prepared) == 1 and prepared[0].directory == str(root)
+        assert any(p.get('event_type') == 'chat.final' for p in chunks)
+        assert not any(p.get('event_type') == 'chat.error' for p in chunks)
+        assert clients
+        assert 'FORGED_CLIENT_INPUT' not in str(chunks)
+        assert prepared[0].model.model_id == 'shared'
+        from jiuwenswarm.server.runtime.agent_adapter.execution_input import prepared_input
+        with pytest.raises(ValueError, match='does not belong'):
+            prepared_input(request('another-session'), {'_host_execution': prepared[0]})
+    finally:
+        await app.cleanup()

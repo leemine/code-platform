@@ -594,6 +594,7 @@ async def test_shared_model_selection_uses_real_swarm_resolver_and_official_prom
         {'model_id': 'beta', 'model_client_config': {'client_provider': 'OpenAI', 'model_name': 'model-b', 'api_base': 'https://example.invalid/v1', 'api_key': 'private-b'}},
     ]}}
     monkeypatch.setattr(model_catalog, 'get_config', lambda: shared)
+    monkeypatch.setattr(interface, 'get_config', lambda: shared)
     fragment, unsupported = build_server_model_config(shared)
     assert not unsupported and len(fragment['provider']) == 2
     config['opencode'].pop('model')
@@ -843,6 +844,9 @@ async def test_mcp_uses_existing_credentials_and_failed_mount_does_not_replace_s
             _ = [c async for c in app.process_message_stream(request(mcp=['bad']))]
         assert get_session_equipment('test-session')['mcp'] == ['probe']
         assert not any(c[1].endswith('/prompt_async') for c in calls[count:])
+        with pytest.raises(RuntimeError, match='equipment update was not confirmed'):
+            _ = [c async for c in app._adapter.process_message_stream_impl(request(), {'query': 'must not execute'})]
+        assert not any(c[1].endswith('/prompt_async') for c in calls[count:])
         _ = [c async for c in app.process_message_stream(request(mcp=[]))]
         assert configured[-1] == {} and get_session_equipment('test-session')['mcp'] == []
     finally:
@@ -904,11 +908,12 @@ async def test_owned_sessions_bind_ui_projects_across_equipment_http_and_cleanup
         async def close(self):
             self.closed = True
             await self.client.aclose()
-    async def resolve(params, *, directory, include_global_skills):
+    original_convert = opencode_equipment.convert_equipment
+    def convert(assets, *, directory):
         equipment_dirs.append(directory)
-        return opencode_equipment.Equipment()
+        return original_convert(assets, directory=directory)
     monkeypatch.setattr(opencode_service, 'SessionService', Service)
-    monkeypatch.setattr(opencode_equipment, 'resolve_equipment', resolve)
+    monkeypatch.setattr(opencode_equipment, 'convert_equipment', convert)
     config['opencode']['cli_path'] = __import__('sys').executable
     await app.create_instance(config, mode='code', sub_mode='normal')
     try:

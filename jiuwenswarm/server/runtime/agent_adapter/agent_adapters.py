@@ -47,6 +47,28 @@ def adapter_config_snapshot(sdk: str, config: dict) -> dict:
 
 
 @runtime_checkable
+class PreparedInputAdapter(Protocol):
+    """Optional host preparation; existing AgentAdapter implementations stay valid."""
+
+    def execution_input_policy(self, request: AgentRequest):
+        """Describe input needs without resolving host configuration or history."""
+        ...
+
+
+@runtime_checkable
+class EquipmentAwareAdapter(Protocol):
+    """Native conversion/readback only; the host commits effective selections."""
+
+    def equipment_input_policy(self, session_id, request, *, execution=None):
+        ...
+
+    async def apply_equipment(self, session_id, request, assets, *, directory,
+                              execution=None, ensure_current):
+        """Check ownership across awaits and refuse partial native configuration."""
+        ...
+
+
+@runtime_checkable
 class AgentAdapter(Protocol):
     """Minimal capability set every SDK adapter must satisfy.
 

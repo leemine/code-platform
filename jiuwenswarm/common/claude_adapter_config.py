@@ -55,24 +55,12 @@ def availability(config):
 
 
 def resolve_model(request):
-    from gateway.common.model_selection import ModelSelection, ResolvedModel
-    from jiuwenswarm.common.model_routing_registry import ModelExecutionContext, ModelSelectionResolver
-    from jiuwenswarm.common.reasoning_injector import inject_reasoning_params
-    from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+    from jiuwenswarm.server.runtime.agent_adapter.execution_input import resolve_model as resolve_host_model
+    return validate_model(resolve_host_model(request))
 
-    def defaults(*, model_client_config, model_config_obj, model_name):
-        result = inject_reasoning_params(model_client_config={**model_client_config, "model_name": model_name}, model_config_obj=model_config_obj)
-        for key in ("model", "model_name", "_source", "context_window"):
-            result.pop(key, None)
-        return result
 
-    saved = get_session_metadata(request.session_id or "", enable_writeback=False)
-    params = request.params or {}
-    raw = params.get("model_selection") or saved.get("model_selection")
-    model = ModelSelectionResolver(request_config_builder=defaults).resolve(
-        ModelSelection.model_validate(raw) if raw else None,
-        ModelExecutionContext(legacy_model_name=params.get("model_name") or saved.get("model")),
-    )
+def validate_model(model):
+    from gateway.common.model_selection import ResolvedModel
     if not isinstance(model, ResolvedModel):
         raise ValueError("Claude requires a single model from Swarm model services")
     parsed = urlparse(model.api_base)

@@ -19,6 +19,7 @@ import sys
 from . import opencode_transport as transport
 from .cli import resolve_cli
 from . import session_recovery as recovery
+from ..execution_input import AdapterCapabilities
 
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
@@ -109,6 +110,7 @@ class _Session:
     control_replied: asyncio.Event = field(default_factory=asyncio.Event)
     service: Any = None
     equipment: Any = None
+    equipment_error: bool = False
     desired_permission: str = "default"
     effective_permission: str | None = None
     permission_error: bool = False
@@ -142,6 +144,7 @@ def tool_payload(part: dict[str, Any]) -> dict[str, Any]:
 
 
 class OpenCodeAdapter:
+    capabilities = AdapterCapabilities(equipment=frozenset({"agent_template_name", "plugin_names", "skills", "mcp"}), main_instructions=True, user_questions=True, native_resume=True)
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -262,20 +265,36 @@ class OpenCodeAdapter:
             raise ValueError("OpenCode session workspace must match its configured binding")
         return directory
 
-    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None):
+    def execution_input_policy(self, request):
+        from ..execution_input import ExecutionInputPolicy
+        session = self._sessions.get(request.session_id or "default")
+        return ExecutionInputPolicy(
+            require_model=not self._model or bool(request.params.get("model_name") or request.params.get("model_selection")),
+            include_model_catalog=bool(self._executable), strip_agentos_max_tokens=True, catalog_settings_key="opencode",
+            bound_directory=session.directory if session else self._directory or None,
+        )
+
+    @staticmethod
+    def _set_service_models(session, execution):
+        if session.service and execution is not None:
+            from .opencode_models import build_server_model_config
+            session.service.model_config, _ = build_server_model_config(
+                models=execution.models, settings=execution.model_settings)
+
+    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None, execution=None):
         from gateway.common.mode_matrix import deprecate_mode, NEW_AGENT_WORK_NORMAL, NEW_AGENT_CODE_NORMAL
         if deprecate_mode(mode) not in {NEW_AGENT_WORK_NORMAL, NEW_AGENT_CODE_NORMAL}:
             raise ValueError("OpenCode adapter supports single Agent/code only")
         directory = self._resolve_session_directory(session_id, project_dir)
         if session_id not in self._sessions:
-            from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
-            records = read_session_history_records(session_id)
+            from ..execution_input import session_facts
+            facts = facts or session_facts(session_id)
             binding = recovery.load("opencode", session_id, directory)
             if binding:
                 if not self._executable:
                     raise ValueError("OpenCode recovery requires its original session-owned service")
                 recovery.require_settings(binding, self._recovery_settings)
-            elif any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in records):
+            elif facts.has_assistant_history:
                 raise ValueError("OpenCode cannot restore a released session without a recovery binding; its original native session cannot be identified")
             from .opencode_equipment import Equipment
             session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
@@ -289,6 +308,7 @@ class OpenCodeAdapter:
                     session.service = SessionService(self._executable, directory)
             try:
                 if session.service:
+                    self._set_service_models(session, execution)
                     await session.service.configure(session.equipment, permission_profile=session.desired_permission)
                 if binding:
                     native = await self._call("GET", f"/session/{session.native_id}", session=session)
@@ -321,47 +341,60 @@ class OpenCodeAdapter:
             session.service.retain_data = True
 
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
-        """Existing Facade equipment boundary; never reconfigure a borrowed server."""
+        """Compatibility entry; the host retains snapshot commit ownership."""
         if execution_request is None:
             raise ValueError("OpenCode equipment requires the original request")
-        from .opencode_equipment import resolve_equipment
-        from jiuwenswarm.server.runtime.session.session_metadata import save_session_equipment
-        request = execution_request
-        if request.params.get("answers"):
-            return  # A control reply must never mount equipment or restart its producer.
-        sid = session_id or "default"
-        current = self._sessions.get(sid)
+        from ..equipment import reconcile_equipment
+        await reconcile_equipment(self, session_id, execution_request)
+
+    def equipment_input_policy(self, session_id, request, *, execution=None):
+        from ..equipment import EquipmentPolicy
+        current = self._sessions.get(session_id)
         if current and (current.active or current.abort_failed):
             raise ValueError("OpenCode equipment cannot change during an active turn")
-        params = request.params
-        directory = self._resolve_session_directory(sid, params.get("project_dir") or params.get("cwd"))
-        equipment = await resolve_equipment(params, directory=directory,
-                                            include_global_skills=bool(self._executable))
+        directory = self._resolve_session_directory(session_id, execution.directory if execution else
+            request.params.get("workspace_dir") or request.params.get("project_dir") or request.params.get("cwd"))
+        return EquipmentPolicy(directory, include_global_skills=bool(self._executable))
+
+    async def apply_equipment(self, sid, request, assets, *, directory, execution=None, ensure_current):
+        from .opencode_equipment import convert_equipment
+        equipment = convert_equipment(assets, directory=directory)
         if (equipment.skills or equipment.mcps) and not self._executable:
             raise ValueError("OpenCode equipment Skill/MCP requires a session-owned CLI (automatic discovery or opencode.cli_path)")
+        ensure_current()
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
-                                   mode=params.get("mode", "agent"),
-                                   project_dir=params.get("project_dir") or params.get("cwd"))
+                                   mode=request.params.get("mode", "agent"), project_dir=directory,
+                                   facts=execution.session if execution else None, execution=execution)
         session = self._sessions[sid]
         async with session.configuration_lock:
             if session.active or session.abort_failed:
                 raise ValueError("OpenCode equipment cannot change during an active turn")
-            if session.service:
-                # Reapply the desired policy after equipment restarts; never reset to ask.
+            session.equipment_error = True
+            try:
+                ensure_current()
+                self._set_service_models(session, execution)
+                if session.service:
+                    session.effective_permission = None
+                    await session.service.configure(equipment, permission_profile=session.desired_permission)
+                    ensure_current()
+                    if equipment.skills:
+                        skills = await self._call("GET", "/skill", session=session)
+                        if set(equipment.skills) - {x.get("name") for x in skills}:
+                            raise ValueError("OpenCode did not load the requested equipment Skills")
+                    if equipment.mcps:
+                        statuses = await self._call("GET", "/mcp", session=session)
+                        if any(statuses.get(name, {}).get("status") != "connected" for name in equipment.mcps):
+                            raise ValueError("OpenCode equipment MCP connection failed")
+                ensure_current()
+                session.equipment = equipment
+                await self._apply_permissions(session)
+                ensure_current()
+            except BaseException:
+                # Partial native effects must not be used by a direct caller.
                 session.effective_permission = None
-                await session.service.configure(equipment, permission_profile=session.desired_permission)
-                if equipment.skills:
-                    skills = await self._call("GET", "/skill", session=session)
-                    actual = {x.get("name") for x in skills}
-                    if set(equipment.skills) - actual:
-                        raise ValueError("OpenCode did not load the requested equipment Skills")
-                if equipment.mcps:
-                    statuses = await self._call("GET", "/mcp", session=session)
-                    if any(statuses.get(name, {}).get("status") != "connected" for name in equipment.mcps):
-                        raise ValueError("OpenCode equipment MCP connection failed")
-            session.equipment = equipment
-            await self._apply_permissions(session)
-            save_session_equipment(sid, **equipment.snapshot)
+                raise
+            else:
+                session.equipment_error = False
 
     def has_session_runtime(self, session_id=None):
         return session_id in self._sessions if session_id else bool(self._sessions)
@@ -376,20 +409,25 @@ class OpenCodeAdapter:
     async def process_message_stream_impl(self, request, inputs):
         if request.req_method not in {None, ReqMethod.CHAT_SEND} or request.params.get("answers"):
             raise ValueError("Use the control input channel for active OpenCode interactions")
+        from ..execution_input import prepared_input
+        execution = prepared_input(request, inputs)
         sid = request.session_id or "default"
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
                                    mode=request.params.get("mode", "agent"),
-                                   project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
+                                   project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
+                                   facts=execution.session if execution else None, execution=execution)
         session = self._sessions[sid]
         selected_model = self._model
         if not selected_model or request.params.get("model_name") or request.params.get("model_selection"):
-            from .opencode_models import resolve_request_model
-            _, selected_model = resolve_request_model(request)
+            from .opencode_models import resolve_request_model, validate_request_model
+            _, selected_model = validate_request_model(execution.model) if execution else resolve_request_model(request)
             registered = await self._call("GET", "/provider", session=session)
             providers = registered.get("all", [])
             if not any(p.get("id") == selected_model["providerID"] and selected_model["modelID"] in p.get("models", {}) for p in providers):
                 raise ValueError("opencode_model_snapshot_stale: refresh the plugin service from Swarm model configuration")
         async with session.configuration_lock:
+            if session.equipment_error:
+                raise RuntimeError("OpenCode equipment update was not confirmed; reconcile before executing")
             if session.active:
                 raise RuntimeError("Session already has an active producer; use Runtime scheduling")
             model_revision = recovery.revision(selected_model)

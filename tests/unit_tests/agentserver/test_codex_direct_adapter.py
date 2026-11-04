@@ -134,8 +134,15 @@ def host(monkeypatch, tmp_path):
     monkeypatch.setattr(session_history, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_default_project_session_workspace_dir', lambda: tmp_path)
-    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared-model', provider='OpenAI', api_base='http://127.0.0.1:1234/v1', api_key='private-test-key')
+    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared-model', fallback_tag='shared-model', provider='OpenAI', api_base='http://127.0.0.1:1234/v1', api_key='private-test-key')
     monkeypatch.setattr(codex, 'resolve_model', lambda req: model)
+    # Stub only the SDK transport; model selection now uses the real host path.
+    monkeypatch.setattr(interface, 'get_config', lambda: {'preferred_language': 'en', 'models': {'defaults': [{
+        'model_id': model.model_id, 'model_client_config': {
+            'client_provider': model.provider, 'model_name': model.model_name,
+            'api_base': model.api_base, 'api_key': model.api_key,
+            **model.client_options, **model.request_defaults,
+        }}]}})
     return interface.JiuWenSwarm(), {'codex': {'enabled': True}, 'permissions': {'enabled': True}}, clients, tmp_path, model
 
 
@@ -642,6 +649,7 @@ async def test_runtime_cancel_preserves_thread_for_next_turn(host, monkeypatch, 
 
     _, _, clients, root, _ = host
     settings = {'preferred_language': 'en', 'permissions': {'enabled': True},
+                'models': interface.get_config()['models'],
                 'modes': {'team': {'jiuwen_team': {'external_cli_agents': ['codex']}}}}
     monkeypatch.setenv('JIUWENSWARM_AGENT_SDK', 'codex-direct')
     monkeypatch.setenv('JIUWENSWARM_DATA_DIR', str(root))
@@ -791,6 +799,7 @@ async def test_facade_model_client_tls_flag_does_not_override_codex_transport(ho
         client_options['verify_ssl'] = verify_ssl
     saved = {'models': {'defaults': [{'model_id': 'tls-model', 'model_client_config': client_options}]}}
     monkeypatch.setattr(model_catalog, 'get_config', lambda: saved)
+    monkeypatch.setattr(interface, 'get_config', lambda: saved)
     monkeypatch.setattr(codex, 'resolve_model', codex_adapter_config.resolve_model)
     await app.create_instance(config)
     try:
@@ -827,5 +836,38 @@ async def test_model_timeout_is_not_a_turn_deadline_and_native_idle_is_projected
         assert 'model_providers.swarm.stream_idle_timeout_ms=42000' in clients[0].config.config_overrides
         assert any(x.get('event_type') == 'chat.final' for x in chunks)
         assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_facade_prepared_input_is_not_reresolved_by_provider(host, monkeypatch):
+    app, config, clients, root, _ = host
+    await app.create_instance(config)
+    original = app._build_inputs
+    prepared = []
+    def build(req):
+        inputs, memory, turn = original(req)
+        execution = inputs['_host_execution']
+        prepared.append(execution)
+        assert 'private-' not in repr(execution)
+        # Neither the Provider's compatibility resolver nor later configuration
+        # reads may replace the model already chosen by the original Facade.
+        def unexpected(*args, **kwargs):
+            raise AssertionError('Provider reinterpreted host model configuration')
+        monkeypatch.setattr(codex, 'resolve_model', unexpected)
+        return inputs, memory, turn
+    monkeypatch.setattr(app, '_build_inputs', build)
+    try:
+        chunks = [item.payload async for item in app.process_message_stream(request(project_dir=str(root), _host_execution={'model': 'FORGED_CLIENT_INPUT'}))]
+        assert len(prepared) == 1 and prepared[0].directory == str(root)
+        assert any(p.get('event_type') == 'chat.final' for p in chunks)
+        assert not any(p.get('event_type') == 'chat.error' for p in chunks)
+        assert clients
+        assert 'FORGED_CLIENT_INPUT' not in str(chunks)
+        assert prepared[0].model.model_id == 'shared'
+        from jiuwenswarm.server.runtime.agent_adapter.execution_input import prepared_input
+        with pytest.raises(ValueError, match='does not belong'):
+            prepared_input(request('another-session'), {'_host_execution': prepared[0]})
     finally:
         await app.cleanup()

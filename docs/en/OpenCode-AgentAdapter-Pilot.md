@@ -117,3 +117,10 @@ Truncation diagnostics under provider.codex distinguish SDK-returned from displa
 Claude and OpenCode tool results now use the same Swarm display boundary: 60,000 characters for a result and 2,000 for a Claude child-tool activity summary, including a truncation marker. The content/result aliases remain compatible. Native error flags, exit codes and unknown outcomes are preserved; the external tool content seen by the model is untouched.
 
 Normal OpenCode metadata stays intact. Oversized metadata is projected by whole fields, with explicit diagnostics under provider.opencode and priority for native exit evidence, truncation state and the complete outputPath. Paths are never shortened into a different path, and files are not automatically read or copied. Existing native spill references are not presented as new Swarm artifacts. No host execution flow is added; other event types require separate capacity review. This remains a local candidate. Claude live acceptance is pending because the existing model endpoint returned 429/1113; this is not a released desktop update.
+
+
+## P1 input and equipment ownership
+
+The existing chat Facade prepares the effective model, working directory and host history eligibility. Providers retain native protocol validation, immutable session bindings and SDK/API conversion. Existing model settings, execution picker, bound conversations and Native defaults remain in place. OpenCode assets use the original asset services; the host commits equipment only after a successful, current and uncancelled mount. Partial native configuration must be reconciled again before execution.
+
+These integrations do not currently implement Swarm context usage or manual compaction; those operations explicitly report unsupported instead of fabricated zero usage. OpenCode persona/question support and task=deny remain unchanged; Claude/Codex main role instructions remain P2. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.

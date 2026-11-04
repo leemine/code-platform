@@ -45,9 +45,12 @@ class SessionService:
         self.process = None
         self.client = None
         self.revision = None
+        self.model_config = None
 
     async def configure(self, equipment, *, permission_profile="default"):
-        model_config, _ = build_server_model_config()
+        model_config = self.model_config
+        if model_config is None:  # Legacy direct SessionService API.
+            model_config, _ = build_server_model_config()
         config = {**model_config, "$schema": "https://opencode.ai/config.json", "autoupdate": False,
                   "permission": permission_config(equipment, permission_profile),
                   "skills": {"paths": [str(self.root / "skills")]}, "mcp": equipment.mcps}

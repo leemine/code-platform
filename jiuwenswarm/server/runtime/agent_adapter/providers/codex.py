@@ -22,6 +22,7 @@ from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
 from . import session_recovery as recovery
+from ..execution_input import AdapterCapabilities
 
 
 _CANCEL_TIMEOUT = 15
@@ -107,6 +108,7 @@ def command_result(item: dict) -> dict:
 
 
 class CodexAdapter:
+    capabilities = AdapterCapabilities(native_resume=True)
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -171,15 +173,20 @@ class CodexAdapter:
             pass
         return rendered, turn
 
+    def execution_input_policy(self, request):
+        from ..execution_input import ExecutionInputPolicy
+        session = self._sessions.get(request.session_id or "default")
+        return ExecutionInputPolicy(bound_directory=session.directory if session else None)
+
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
         if needed:
             raise ValueError("Codex Swarm MCP equipment is not supported yet")
 
-    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None):
+    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None):
         self._validate_mode(mode)
         if self._settings is None:
             raise RuntimeError("Codex adapter has not been configured")
-        from jiuwenswarm.common.utils import get_agent_sessions_dir, get_default_project_session_workspace_dir
+        from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
         current = self._sessions.get(session_id)
         directory = Path(project_dir or (current.directory if current else get_default_project_session_workspace_dir())).expanduser()
         if not directory.is_absolute() or not directory.is_dir():
@@ -189,7 +196,8 @@ class CodexAdapter:
             if directory != current.directory:
                 raise ValueError("Codex session workspace cannot change after binding")
             return
-        from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
+        from ..execution_input import session_facts
+        facts = facts or session_facts(session_id)
         binding = recovery.load("codex", session_id, directory)
         if binding:
             recovery.require_settings(binding, self._settings)
@@ -197,9 +205,9 @@ class CodexAdapter:
                 thread_id=binding["native_id"], model_revision=binding["model_revision"],
                 desired_permission=binding["permission"])
             return
-        if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in read_session_history_records(session_id)):
+        if facts.has_assistant_history:
             raise ValueError("Codex cannot restore a released session without a recovery binding; its original native thread cannot be identified")
-        parent = get_agent_sessions_dir() / ".codex-direct"
+        parent = facts.storage_dir / ".codex-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
         self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
@@ -406,14 +414,18 @@ class CodexAdapter:
     async def process_message_stream_impl(self, request, inputs):
         if request.req_method not in {None, ReqMethod.CHAT_SEND} or request.params.get("answers"):
             raise ValueError("Use the active Codex control input channel")
+        from ..execution_input import prepared_input
+        execution = prepared_input(request, inputs)
         sid = request.session_id or "default"
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
                                    mode=request.params.get("mode", "agent"),
-                                   project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
+                                   project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
+                                   facts=execution.session if execution else None)
         session = self._sessions[sid]
         if session.subagents is None:
             session.subagents = SubagentProjection("codex", sid)
-        model = resolve_model(request)
+        from jiuwenswarm.common.codex_adapter_config import validate_model
+        model = validate_model(execution.model) if execution else resolve_model(request)
         async with session.lock:
             if session.cancelled and not session.cancel_confirmed:
                 raise RuntimeError("Codex cancellation is not confirmed; retry cancel before continuing this session")
