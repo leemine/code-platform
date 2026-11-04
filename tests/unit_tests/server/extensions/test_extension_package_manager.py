@@ -1088,6 +1088,24 @@ class TestAgentGroupLifecycle:
 
 
 class TestCreateInstallUninstall:
+    def test_plain_agent_template_install_without_core(self, extension_workspace, monkeypatch):
+        import builtins
+
+        import_module = builtins.__import__
+
+        def without_core(name, *args, **kwargs):
+            if name == "openjiuwen" or name.startswith("openjiuwen."):
+                raise ModuleNotFoundError("openjiuwen is unavailable")
+            return import_module(name, *args, **kwargs)
+
+        catalog.create_agent_template({
+            "id": "persona-only", "name": "Reviewer", "description": "Review findings",
+            "persona": "Check evidence before concluding.", "skills": [],
+        })
+        monkeypatch.setattr(builtins, "__import__", without_core)
+        catalog.install_agent_template({"id": "persona-only"})
+        assert catalog.is_agent_template_installed("persona-only")
+
     """create → local/; install copy or flip flags; uninstall deletes user copy."""
 
     def test_install_external_runtime_preserves_typed_manifest(
