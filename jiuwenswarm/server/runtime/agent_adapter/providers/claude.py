@@ -16,13 +16,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from jiuwenswarm.common.external_adapter_factories import create_claude
 from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_model, native_timeout_env
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .subagent_projection import SubagentProjection
 from .claude_usage import ClaudeUsage
 from . import session_recovery as recovery
-from ..execution_input import AdapterCapabilities
 
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class Session:
 
 
 class ClaudeAdapter:
-    capabilities = AdapterCapabilities(native_resume=True)
+    capabilities = create_claude.capabilities
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -280,7 +280,7 @@ class ClaudeAdapter:
         session.pending.clear()
         session.control_ready.set()
 
-    def _options(self, session, model):
+    def _options(self, session, model, role: str | None = None):
         from claude_agent_sdk import ClaudeAgentOptions
         home = session.root / "home"
         home.mkdir(exist_ok=True, mode=0o700)
@@ -300,14 +300,19 @@ class ClaudeAdapter:
                 os.environ.get("NO_PROXY", ""), os.environ.get("no_proxy", ""), hostname,
             ) if value)
             env["NO_PROXY"] = env["no_proxy"] = bypass
+        extra_args = {"replay-user-messages": None}
+        if role is not None:
+            # The CLI otherwise reuses the original system prompt on resume.
+            extra_args["system-prompt-snapshot"] = "off"
         return ClaudeAgentOptions(cwd=session.directory, cli_path=self._settings.get("cli_path"),
             model=model.model_name, env=env, setting_sources=[], strict_mcp_config=True,
             session_id=None if session.started else session.native_id,
             resume=session.native_id if session.started else None,
-            extra_args={"replay-user-messages": None},
+            extra_args=extra_args,
             permission_mode="bypassPermissions" if session.desired_permission == "full_access" else "default",
             can_use_tool=lambda name, inputs, context: self._approval(session, name, inputs, context),
-            include_partial_messages=True)
+            include_partial_messages=True,
+            system_prompt={"type": "preset", "preset": "claude_code", "append": role} if role else None)
 
     async def process_message_stream_impl(self, request, inputs):
         from claude_agent_sdk import ClaudeSDKClient, AssistantMessage, UserMessage, SystemMessage, StreamEvent, ResultMessage, ToolUseBlock, ToolResultBlock, TextBlock
@@ -345,7 +350,9 @@ class ClaudeAdapter:
         started = time.monotonic()
         try:
             # Official connect/disconnect stay on this producer/AnyIO owner.
-            client = ClaudeSDKClient(self._options(session, model))
+            role = execution.main_agent_role if execution else None
+            options = self._options(session, model) if role is None else self._options(session, model, role.instructions)
+            client = ClaudeSDKClient(options)
             await client.connect()
             session.client = client
             phase = "permission_update"
@@ -385,6 +392,10 @@ class ClaudeAdapter:
                 if isinstance(message, UserMessage) and message.uuid == input_id:
                     # Resume can first emit an orphan task's zero-turn result.
                     # The official input echo identifies this request exactly.
+                    if not input_accepted:
+                        commit_role = inputs.get("_commit_role_selection")
+                        if commit_role is not None:
+                            commit_role()
                     input_accepted = True
                     result_message = None
                     tasks.idle = False

@@ -9,22 +9,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gateway.common.model_selection import ModelSelection, ResolvedModel
+from jiuwenswarm.common.adapter_capabilities import AdapterCapabilities
+
+from .main_agent_role import MainAgentRole
 
 
-@dataclass(frozen=True)
-class AdapterCapabilities:
-    """Implemented integration capabilities, not the native SDK's full feature set."""
-    equipment: frozenset[str] = frozenset()
-    main_instructions: bool = False
-    user_questions: bool = False
-    native_resume: bool = False
-    context_usage: bool = False
-    manual_compaction: bool = False
-
-
-def require_capability(adapter, name: str) -> None:
+def require_capability(adapter, name: str, *, declared_only: bool = False) -> None:
     capabilities = getattr(adapter, "capabilities", None)
-    if isinstance(capabilities, AdapterCapabilities) and not getattr(capabilities, name):
+    if not isinstance(capabilities, AdapterCapabilities):
+        if not declared_only:
+            return
+        capabilities = AdapterCapabilities()
+    if not getattr(capabilities, name):
         raise ValueError(f"provider_capability_unsupported: {name}")
 
 
@@ -60,6 +56,7 @@ class ExecutionInput:
     model: ResolvedModel | None = field(repr=False)
     models: tuple[ResolvedModel, ...] = field(default=(), repr=False)
     model_settings: dict = field(default_factory=dict, repr=False)
+    main_agent_role: MainAgentRole | None = field(default=None, repr=False)
 
 
 def session_facts(session_id: str, *, active: bool = False) -> SessionFacts:
@@ -105,9 +102,44 @@ def resolve_model(request, *, strip_agentos_max_tokens=False, catalog=None):
     )
 
 
-def prepare_execution_input(adapter, request, inputs, *, config=None) -> ExecutionInput:
+def resolve_turn_role(adapter, request) -> MainAgentRole | None:
+    """Use the existing equipment selection, with the create-time role as a fallback."""
+    from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+    from .main_agent_role import resolve_main_agent_role
+
+    sid = request.session_id
+    if not sid:
+        return None
+    saved = get_session_metadata(sid, cache_bust=True, enable_writeback=False)
+    binding = saved.get("main_agent_role")
+    capabilities = getattr(adapter, "capabilities", None)
+    if not isinstance(capabilities, AdapterCapabilities):
+        capabilities = AdapterCapabilities()
+    # Providers already mounting full templates keep that path outside P2 sessions.
+    if "main_agent_role" not in saved and (
+        not capabilities.main_instructions or "agent_template_name" in capabilities.equipment
+    ):
+        return None
+    require_capability(adapter, "main_instructions", declared_only=True)
+    params = request.params or {}
+    if "agent_template_name" in params:
+        ref = params["agent_template_name"]
+    elif isinstance(binding, dict):
+        ref = binding.get("template_ref")
+    elif "main_agent_role" in saved:
+        raise ValueError("Invalid Main Agent role binding")
+    else:
+        return None
+    if ref == "":
+        return MainAgentRole("", "")
+    return resolve_main_agent_role(ref, saved.get("execution_provider") or "")
+
+
+def prepare_execution_input(adapter, request, inputs, *, config=None,
+                            role: MainAgentRole | None = None) -> ExecutionInput:
     from copy import deepcopy
     from jiuwenswarm.common.model_catalog import ModelCatalog
+
     policy = adapter.execution_input_policy(request)
     sid = request.session_id or "default"
     directory = inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd") or policy.bound_directory
@@ -133,7 +165,7 @@ def prepare_execution_input(adapter, request, inputs, *, config=None) -> Executi
         str(path.resolve()),
         session_facts(sid, active=adapter.has_session_runtime(sid)),
         model.model_copy(deep=True) if isinstance(model, ResolvedModel) else model,
-        tuple(item.model_copy(deep=True) for item in models), settings,
+        tuple(item.model_copy(deep=True) for item in models), settings, role,
     )
 
 

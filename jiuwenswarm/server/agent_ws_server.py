@@ -13461,6 +13461,7 @@ class AgentWebSocketServer:
                         or ""
                     ).strip(),
                     execution_provider=params.get("execution_provider"),
+                    role_template_ref=params.get("role_template_ref"),
                     model_name=str(params.get("model_name") or "").strip(),
                     model_selection=params.get("model_selection"),
                     moa_enabled=params.get("moa_enabled"),

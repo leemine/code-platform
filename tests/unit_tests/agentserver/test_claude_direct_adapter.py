@@ -890,3 +890,53 @@ async def test_execution_crash_zeroed_native_totals_are_not_a_successful_zero_us
         assert any(c.get('event_type') == 'chat.error' for c in chunks)
     finally:
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_p2_role_appends_to_claude_preset_on_same_native_resume(host, monkeypatch):
+    from jiuwenswarm.server.runtime.agent_adapter import main_agent_role
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    app, config, clients, root, _ = host
+    monkeypatch.setattr(session_metadata, 'get_agent_sessions_dir', lambda: root / 'sessions')
+    role = main_agent_role.MainAgentRole('reviewer', 'P2_ROLE_CLAUDE')
+    def resolve(ref, _provider):
+        return role if ref == 'reviewer' else main_agent_role.MainAgentRole(ref, f'ROLE_{ref}')
+    monkeypatch.setattr(main_agent_role, 'resolve_main_agent_role', resolve)
+    sid = 'p2-claude'
+    session_metadata.init_session_metadata(session_id=sid, channel_id='web', execution_provider='claude-direct',
+                                           main_agent_role=role.binding())
+    await app.create_instance(config)
+    try:
+        for index in range(2):
+            role = main_agent_role.MainAgentRole('reviewer', f'P2_ROLE_CLAUDE_{index}')
+            chunks = [c async for c in app.process_message_stream(request(sid, query=f'question {index}'))]
+            assert any((c.payload or {}).get('event_type') == 'chat.final' for c in chunks)
+        assert len(clients) == 2 and clients[0].sid == clients[1].sid == clients[1].options.resume
+        assert [c.options.system_prompt for c in clients] == [
+            {'type': 'preset', 'preset': 'claude_code', 'append': f'P2_ROLE_CLAUDE_{index}'}
+            for index in range(2)
+        ]
+        async def send(**selection):
+            return [c.payload async for c in app.process_message_stream(request(sid, **selection))]
+
+        query = FakeClient.query
+        async def rejected_query(self, prompt, session_id):
+            raise RuntimeError('fixture rejects prompt before echo')
+
+        monkeypatch.setattr(FakeClient, 'query', rejected_query)
+        assert any(c.get('event_type') == 'chat.error' for c in await send(agent_template_name='tester'))
+        assert session_metadata.get_session_equipment(sid)['agent_template_name'] == 'reviewer'
+        monkeypatch.setattr(FakeClient, 'query', query)
+        assert any(c.get('event_type') == 'chat.final' for c in await send(agent_template_name='tester'))
+        assert session_metadata.get_session_equipment(sid)['agent_template_name'] == 'tester'
+        assert await app.cleanup_session_runtime(sid)
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert clients[-1].options.resume == clients[0].sid
+        assert clients[-1].options.system_prompt['append'] == 'ROLE_tester'
+        assert clients[-1].options.extra_args['system-prompt-snapshot'] == 'off'
+
+        history = session_history.read_session_history_records(sid)
+        assert 'P2_ROLE_CLAUDE' not in str([r for r in history if r.get('role') == 'user'])
+    finally:
+        await app.cleanup()

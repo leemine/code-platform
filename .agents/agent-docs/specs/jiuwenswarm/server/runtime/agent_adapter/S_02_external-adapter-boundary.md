@@ -150,7 +150,7 @@ Default 映射 workspace-write/on-request/user，Full Access 映射 danger-full-
 
 ### 2026-10-31 Codex 渠道收尾
 
-配置目录通过 common 中的轻量工厂元数据读取插件，只有创建执行实例时才导入 Runtime；旧 providers.create 导出兼容保留。Native 可用性读取安装分发元数据，Front 不导入 Core。Codex Goal 查询返回空快照，设置仍明确拒绝，不启动另一套持续执行流程。
+配置目录通过 common 中的轻量工厂元数据读取插件。工厂和 Runtime 共用 `jiuwenswarm.common.adapter_capabilities.AdapterCapabilities`，只有创建执行实例时才导入 Runtime；旧 providers.create 导出兼容保留。Native 可用性读取安装分发元数据，Front 不导入 Core。Codex Goal 查询返回空快照，设置仍明确拒绝，不启动另一套持续执行流程。
 
 Web 新页面恢复以当前 Worker 的 dispatch 快照区分已结束历史与活动请求；历史已负责呈现的终态 dispatch 不再追加到当前回复，活动事件/审批与已有游标仍走原 runtime_resume。不得重发 chat.send。无真实工具结果的历史调用使用原 unknown 展示；后续结果可更新为实际成功或失败，历史文件预览采用相同语义。
 
@@ -277,7 +277,7 @@ OpenCode 自有服务使用同一宿主模型快照生成原生配置，保留 a
 
 EquipmentAwareAdapter 是可选的原生装载接缝。原 Facade reconcile_session_mcp 中，宿主资产服务负责安装/启用/连接/凭据及有效选择，OpenCode 负责 persona/Skill/MCP 的原生转换、私有装载与查询核验；唯一 session_equipment 由宿主成功后保存。跨 await 校验原 Runtime 的 generation/关闭状态、当前任务取消及并发装备提交；失败、取消和失效不覆盖旧快照。原生部分配置失败时保留拒绝执行标记，须重新成功 reconcile，不新增 Turn 队列或取消状态机。控制答案不挂载装备；旧 Native reconcile 签名仍按原支持参数委托。
 
-AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 的 Swarm 装备和主角色提示词未实现，正常入口明确拒绝。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
+AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 在 P1 阶段仍拒绝未实现的 Swarm 装备，主角色指令见 P2 小节。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
 
 ## Codex 原生用量只读投影
 
@@ -295,3 +295,13 @@ session_usage 沿用现有schema_version=1/main/others/revision。外部调用�
 Claude 只从当前已接收输入且身份匹配的 ResultMessage.model_usage 投影跨模型同字段汇总，不叠加分块/步骤/主循环usage，不推算未返回总Tokens或调用次数。调用和续聊范围遵循原 CLI，旧CLI可能在恢复时重置，故不冒充完整产品累计。执行崩溃的全零可疑快照隐藏并保留源诊断；正常明确0保留。
 
 OpenCode 只按当前原生会话已完成 assistant message ID 覆盖去重；step-finish 不叠加。原生归一化已丢失0来源时隐藏该项，任一消息缺计数也不输出该字段的部分和作为完整总计。恢复绑定首次通过已有消息查询只读建立基线（5秒上限），失败只隐藏不可信累计，不改变聊天结果，不重发旧任务或新建会话，不增加持久账本。两家保留自身输入/输出/缓存分类，未确认的跨Provider口径不强行统一。主动上下文查询/压缩仍未因此开放。验证状态及服务限制以 feature/任务记录为准。
+
+## P2 主 Agent 角色指令
+
+原 `session.create` 可带可选 `role_template_ref`，仅用于已注册且工厂声明 `AdapterCapabilities.main_instructions=True` 的单 Agent Provider。它作为初始选择。同一创建令牌以初始模板 ID 和 Provider 核对请求，重试不会覆盖已生效的选择。实际执行器须声明该能力并实现 `PreparedInputAdapter`。初始角色绑定会话继续拒绝原通用分叉。
+
+沿用原专家选择器和 `chat.send.agent_template_name`。省略字段时恢复 `session_equipment.agent_template_name`，尚无装备记录才回退到初始引用。传入另一 ID 时下一轮切换，传入空字符串时清除专家。每轮读取已安装模板的当前 persona。宿主验证纯 persona、路径、预算和 Provider 兼容性，有实际装备或私有运行时配置的模板不进入纯角色路径。模板卸载或无效时拒绝该轮。控制回复沿用原轮。OpenCode 已有完整专家装备由原装备路径处理，使用 P2 初始引用的会话只选纯角色。
+
+复用 P1 的执行输入承载角色文本，并沿原装备快照保存 ID。OpenCode 的 prompt 接受、Codex 的原生 turn/start 接受或 Claude 的本轮输入回显确认后，宿主核对当前执行所有权和原装备快照再保存。拒绝和过期请求不能改写已确认的专家。模型生成结果与专家切换是否已获原生接收是两个状态。Swarm 只保存专家 ID，角色正文来自模板目录。
+
+Claude 通过 SDK 的 Claude Code preset append 传入当前正文。可切换角色会话通过官方 CLI 参数 `--system-prompt-snapshot off` 每轮重建提示词，包括清除角色后的首轮。该路径要求实际 CLI 支持此参数。未选择专家的普通 Claude 会话沿用默认 CLI 参数。Codex 新线程使用 developerInstructions，现有线程以 thread/inject_items 追加当前开发者角色；清除时追加明确的撤销指令。正文不变且当前连接已确认应用时复用。OpenCode 在 prompt_async 中传 system。三家沿用各自原生会话和对话历史，角色只适用于主 Agent。

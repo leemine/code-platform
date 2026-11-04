@@ -1680,3 +1680,68 @@ async def test_native_error_usage_precedes_terminal_without_claiming_success(hos
         assert not any(c.get('event_type') == 'chat.final' for c in chunks)
     finally:
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_role_switch_reaches_opencode_without_rewriting_user_turn(host, equipment_assets, monkeypatch):
+    from jiuwenswarm.server.runtime import extension_package_manager as packages
+    from jiuwenswarm.server.runtime.agent_adapter.main_agent_role import resolve_main_agent_role
+    from jiuwenswarm.server.runtime.session.session_metadata import get_session_equipment, init_session_metadata
+
+    app, config, calls, _, _ = host
+    template = equipment_assets('p2-role')
+    sid = 'p2-opencode'
+    role = resolve_main_agent_role('p2-role', 'opencode-direct')
+    init_session_metadata(session_id=sid, channel_id='web', execution_provider='opencode-direct',
+                          main_agent_role=role.binding())
+    await app.create_instance(config)
+    try:
+        for query, instructions in [('first question', 'Rule: p2-role'), ('follow-up question', 'changed')]:
+            (template / 'persona/rules.md').write_text(instructions, encoding='utf-8')
+            chunks = [c async for c in app.process_message_stream(request(sid, query=query))]
+            assert any((c.payload or {}).get('event_type') == 'chat.final' for c in chunks)
+            body = next(c[2] for c in reversed(calls) if c[1].endswith('/prompt_async'))
+            assert body['system'] == instructions
+            assert len(body['parts']) == 1 and body['parts'][0]['type'] == 'text'
+            rendered = json.loads(body['parts'][0]['text'].split("\n", 1)[1])
+            assert rendered['content'] == query
+            assert instructions not in body['parts'][0]['text']
+        equipment_assets('second-role')
+        count = len(calls)
+        with pytest.raises(ValueError, match='not installed'):
+            async for _ in app.process_message_stream(request(sid, agent_template_name='missing-role')):
+                pass
+        assert len(calls) == count
+        assert get_session_equipment(sid)['agent_template_name'] == 'p2-role'
+
+        original_call = OpenCodeAdapter._call
+
+        async def reject_prompt(self, method, path, **kwargs):
+            if path.endswith('/prompt_async'):
+                raise ValueError('fixture rejects OpenCode prompt')
+            return await original_call(self, method, path, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(OpenCodeAdapter, '_call', reject_prompt)
+            refused = [c.payload async for c in app.process_message_stream(
+                request(sid, agent_template_name='second-role'),
+            )]
+            assert any(c.get('event_type') == 'chat.error' and 'rejects OpenCode prompt' in str(c) for c in refused)
+        assert get_session_equipment(sid)['agent_template_name'] == 'p2-role'
+        chunks = [c.payload async for c in app.process_message_stream(request(sid, agent_template_name='second-role'))]
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        assert get_session_equipment(sid)['agent_template_name'] == 'second-role'
+        body = next(c[2] for c in reversed(calls) if c[1].endswith('/prompt_async'))
+        assert body['system'] == 'Rule: second-role'
+        packages.uninstall_agent_template({'id': 'second-role'})
+        count = len(calls)
+        with pytest.raises(ValueError, match='not installed'):
+            async for _ in app.process_message_stream(request(sid)):
+                pass
+        assert len(calls) == count
+        with pytest.raises(ValueError, match='session.create'):
+            async for _ in app.process_message_stream(request(sid, role_template_ref='other')):
+                pass
+        assert len(calls) == count
+    finally:
+        await app.cleanup()

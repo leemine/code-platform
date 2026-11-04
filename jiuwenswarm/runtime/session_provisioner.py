@@ -136,6 +136,7 @@ class SessionCreateInput:
     title: str = ""
     user_id: str = ""
     execution_provider: str | None = None
+    role_template_ref: str | None = None
     model_name: str = ""
     model_selection: dict[str, Any] | None = None
     moa_enabled: bool | None = None
@@ -773,7 +774,16 @@ class RuntimeSessionProvisioner:
 
             raw_selection = provision_input.model_selection or existing_metadata.get("model_selection")
             selection = ModelSelection.model_validate(raw_selection) if raw_selection is not None else None
+            role_binding = None
             try:
+                if provision_input.role_template_ref is not None:
+                    if is_swarm or provision_input.team_hint:
+                        raise ValueError("Main Agent roles require a single-agent session")
+                    from jiuwenswarm.server.runtime.agent_adapter.agent_adapters import require_adapter_capability
+                    from jiuwenswarm.server.runtime.agent_adapter.main_agent_role import resolve_main_agent_role
+
+                    require_adapter_capability(selected_provider, "main_instructions")
+                    role_binding = resolve_main_agent_role(provision_input.role_template_ref, selected_provider).binding()
                 if provision_input.cron_id and selection is not None:
                     from jiuwenswarm.server.runtime.model_routing_registry import ModelSelectionResolver
 
@@ -835,6 +845,15 @@ class RuntimeSessionProvisioner:
             metadata_exists = (
                 get_agent_sessions_dir() / session_id / "metadata.json"
             ).is_file()
+            if metadata_exists and role_binding is not None:
+                stored_role = get_session_metadata(session_id, cache_bust=True, enable_writeback=False)
+                saved_binding = stored_role.get("main_agent_role")
+                if (
+                    not isinstance(saved_binding, dict)
+                    or saved_binding.get("template_ref") != role_binding["template_ref"]
+                    or stored_role.get("execution_provider") != selected_provider
+                ):
+                    raise SessionProvisionError("Main Agent role is fixed; create a new session", code="CONFLICT")
             if metadata_exists and not explicit_tui_session:
                 self._agent_manager.activate_session_prewarm(session_id)
                 stored = get_session_metadata(session_id)
@@ -881,6 +900,7 @@ class RuntimeSessionProvisioner:
                     persist_session=persist_session,
                     work_mode=final_work_mode,
                     execution_provider=selected_provider,
+                    main_agent_role=role_binding,
                     model=str(provision_input.model_name or "").strip(),
                     moa_enabled=moa_enabled,
                     cron_id=str(provision_input.cron_id or "").strip(),
@@ -1288,6 +1308,15 @@ class RuntimeSessionProvisioner:
         if not source_session_id:
             raise SessionProvisionError(
                 "source_session_id is required",
+                code="BAD_REQUEST",
+            )
+
+        from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+        source_metadata = get_session_metadata(source_session_id, cache_bust=True, enable_writeback=False)
+        if "main_agent_role" in source_metadata:
+            raise SessionProvisionError(
+                "Role-bound session cannot be forked; create a new session",
                 code="BAD_REQUEST",
             )
 

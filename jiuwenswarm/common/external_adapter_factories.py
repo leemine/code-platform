@@ -1,4 +1,5 @@
 """Lightweight entry points; configuration reads never load execution modules."""
+from jiuwenswarm.common.adapter_capabilities import AdapterCapabilities
 from jiuwenswarm.common.codex_adapter_config import availability, config_snapshot
 
 
@@ -18,11 +19,18 @@ def opencode_config_snapshot(config):
 
 create_codex.display_name = "Codex"
 create_codex.supported_modes = ("agent", "code")
+create_codex.capabilities = AdapterCapabilities(main_instructions=True, native_resume=True)
 create_codex.permission_profiles = ("default", "full_access")
 create_codex.config_snapshot = config_snapshot
 create_codex.availability = availability
 create_opencode.display_name = "OpenCode"
 create_opencode.supported_modes = ("agent", "code")
+create_opencode.capabilities = AdapterCapabilities(
+    equipment=frozenset({"agent_template_name", "plugin_names", "skills", "mcp"}),
+    main_instructions=True,
+    user_questions=True,
+    native_resume=True,
+)
 create_opencode.permission_profiles = ("default", "full_access")
 create_opencode.config_snapshot = opencode_config_snapshot
 
@@ -36,6 +44,7 @@ def create_claude(*, mode):
 from jiuwenswarm.common import claude_adapter_config
 create_claude.display_name = "Claude Code"
 create_claude.supported_modes = ("agent", "code")
+create_claude.capabilities = AdapterCapabilities(main_instructions=True, native_resume=True)
 create_claude.permission_profiles = ("default", "full_access")
 create_claude.config_snapshot = claude_adapter_config.config_snapshot
 create_claude.availability = claude_adapter_config.availability

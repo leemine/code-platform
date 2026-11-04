@@ -16,6 +16,7 @@ from jiuwenswarm.runtime import AgentRuntime, RuntimeStateError
 from jiuwenswarm.runtime.session_provisioner import (
     RuntimeSessionProvisioner,
     SessionCreateInput,
+    SessionForkInput,
     SessionProvisionCommitContext,
     SessionProvisionCommitTiming,
     SessionProvisionError,
@@ -846,3 +847,88 @@ async def test_external_selection_persists_binding_without_native_prewarm(monkey
     assert claims[0]['prewarm_eligible'] is False
     assert get_session_metadata('created-session', cache_bust=True)['execution_provider'] == 'opencode-direct'
     await provisioner.commit_session_provision(prepared, timing=prepared.commit_timing, context=SessionProvisionCommitContext())
+
+
+@pytest.mark.parametrize("provider", ["codex-direct", "custom-provider"])
+@pytest.mark.asyncio
+async def test_session_create_pins_installed_role_and_rejects_rebinding(monkeypatch, tmp_path, provider):
+    import json
+
+    from jiuwenswarm.server.runtime import extension_package_manager as packages
+    from jiuwenswarm.server.runtime.agent_adapter import agent_adapters
+    from jiuwenswarm.server.runtime.agent_adapter.execution_input import AdapterCapabilities
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    state = _State()
+    _install_product_hooks(monkeypatch, tmp_path, state)
+    monkeypatch.setattr(packages, "get_agent_workspace_dir", lambda: tmp_path / "workspace")
+    packages.create_agent_template({
+        "id": "reviewer", "name": "Reviewer", "description": "Review findings",
+        "persona": "Review the evidence before giving a verdict.", "skills": [],
+    })
+    template = packages.resolve_agent_template_dir("reviewer")
+    manifest = template / "manifest.json"
+    fields = json.loads(manifest.read_text(encoding="utf-8"))
+    provisioner = _provisioner(state)
+    role = {"execution_provider": provider, "role_template_ref": "reviewer"}
+
+    with pytest.raises(SessionProvisionError, match="capability_unsupported"):
+        await provisioner.prepare_session_create(_input(role_template_ref="reviewer"))
+    if provider == "custom-provider":
+        def factory(*, mode):
+            pytest.fail("Session creation must not construct the execution adapter")
+
+        original_entry_points = agent_adapters.entry_points
+        monkeypatch.setattr(
+            agent_adapters, "entry_points",
+            lambda **kwargs: (SimpleNamespace(load=lambda: factory),)
+            if kwargs.get("name") == provider else original_entry_points(**kwargs),
+        )
+        with pytest.raises(SessionProvisionError, match="capability_unsupported"):
+            await provisioner.prepare_session_create(_input(**role))
+        factory.capabilities = AdapterCapabilities(main_instructions=True)
+    with pytest.raises(SessionProvisionError, match="not installed"):
+        await provisioner.prepare_session_create(_input(**role))
+    packages.install_agent_template({"id": "reviewer"})
+    with pytest.raises(SessionProvisionError, match="single-agent session"):
+        await provisioner.prepare_session_create(_input(is_swarm=True, **role))
+    manifest.write_text(json.dumps({**fields, "mcps": [{"connector": "private"}]}), encoding="utf-8")
+    with pytest.raises(SessionProvisionError, match="persona-only"):
+        await provisioner.prepare_session_create(_input(**role))
+    assert not state.events
+    assert not (tmp_path / "created-session").exists()
+
+    manifest.write_text(json.dumps(fields), encoding="utf-8")
+    prepared = await provisioner.prepare_session_create(_input(**role))
+    await provisioner.commit_session_provision(prepared, timing=prepared.commit_timing, context=SessionProvisionCommitContext())
+    sid = prepared.result.session_id
+    stored = session_metadata.get_session_metadata(sid, cache_bust=True, enable_writeback=False)
+    assert stored["main_agent_role"]["template_ref"] == "reviewer"
+    assert "Review the evidence" not in str(stored)
+    retry = await provisioner.prepare_session_create(_input(**role))
+    assert retry.result.session_id == sid and not retry.result.created
+    await provisioner.commit_session_provision(retry, timing=retry.commit_timing, context=SessionProvisionCommitContext())
+    with pytest.raises(SessionProvisionError, match="Role-bound session cannot be forked"):
+        await provisioner.prepare_session_fork(SessionForkInput(
+            channel_id="web", source_session_id=sid, target_session_id="role-fork",
+        ))
+    assert not (tmp_path / "role-fork").exists()
+    packages.update_agent_template({
+        "id": "reviewer", "name": "Reviewer", "description": "Review findings",
+        "persona": "A changed role", "skills": [],
+    })
+    retry = await provisioner.prepare_session_create(_input(**role))
+    assert retry.result.session_id == sid and not retry.result.created
+    await provisioner.commit_session_provision(
+        retry, timing=retry.commit_timing, context=SessionProvisionCommitContext(),
+    )
+    packages.create_agent_template({
+        "id": "different", "name": "Different", "description": "Other role",
+        "persona": "Another role", "skills": [],
+    })
+    packages.install_agent_template({"id": "different"})
+    with pytest.raises(SessionProvisionError, match="role is fixed"):
+        await provisioner.prepare_session_create(_input(
+            execution_provider=provider, role_template_ref="different",
+        ))
+    assert session_metadata.get_session_metadata(sid, cache_bust=True)["main_agent_role"] == stored["main_agent_role"]

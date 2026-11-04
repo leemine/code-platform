@@ -250,6 +250,8 @@ def agent_template_runtime(
     ``runtime.config`` only — no full package load), or a raw manifest dict.
     Which providers this host runs is host policy, checked here.
     """
+    if isinstance(manifest, dict) and manifest.get("runtime") is None:
+        return None
     from openjiuwen.harness.resources import AgentTemplateCard, AgentTemplateSpec, RuntimeSpec
 
     if isinstance(manifest, AgentTemplateSpec):
@@ -272,7 +274,7 @@ def agent_template_runtime(
             raise ValueError(
                 f"runtime.provider_name must be one of: {allowed}; got {raw_runtime.get('provider_name')!r}"
             )
-        runtime = None if raw_runtime is None else RuntimeSpec.model_validate(raw_runtime)
+        runtime = RuntimeSpec.model_validate(raw_runtime)
     else:
         raise TypeError("agent template manifest must be AgentTemplateSpec or dict")
 
