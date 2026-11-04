@@ -1,6 +1,6 @@
 """Lightweight entry points; configuration reads never load execution modules."""
+from jiuwenswarm.common.adapter_capabilities import AdapterCapabilities
 from jiuwenswarm.common.codex_adapter_config import availability, config_snapshot
-from jiuwenswarm.server.runtime.agent_adapter.execution_input import AdapterCapabilities
 
 
 def create_codex(*, mode):

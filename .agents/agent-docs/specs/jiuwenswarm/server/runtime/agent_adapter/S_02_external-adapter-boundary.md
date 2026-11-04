@@ -150,7 +150,7 @@ Default 映射 workspace-write/on-request/user，Full Access 映射 danger-full-
 
 ### 2026-10-31 Codex 渠道收尾
 
-配置目录通过 common 中的轻量工厂元数据读取插件，只有创建执行实例时才导入 Runtime；旧 providers.create 导出兼容保留。Native 可用性读取安装分发元数据，Front 不导入 Core。Codex Goal 查询返回空快照，设置仍明确拒绝，不启动另一套持续执行流程。
+配置目录通过 common 中的轻量工厂元数据读取插件。工厂和 Runtime 共用 `jiuwenswarm.common.adapter_capabilities.AdapterCapabilities`，只有创建执行实例时才导入 Runtime；旧 providers.create 导出兼容保留。Native 可用性读取安装分发元数据，Front 不导入 Core。Codex Goal 查询返回空快照，设置仍明确拒绝，不启动另一套持续执行流程。
 
 Web 新页面恢复以当前 Worker 的 dispatch 快照区分已结束历史与活动请求；历史已负责呈现的终态 dispatch 不再追加到当前回复，活动事件/审批与已有游标仍走原 runtime_resume。不得重发 chat.send。无真实工具结果的历史调用使用原 unknown 展示；后续结果可更新为实际成功或失败，历史文件预览采用相同语义。
 

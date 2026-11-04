@@ -9,19 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gateway.common.model_selection import ModelSelection, ResolvedModel
+from jiuwenswarm.common.adapter_capabilities import AdapterCapabilities
 
 from .main_agent_role import MainAgentRole
-
-
-@dataclass(frozen=True)
-class AdapterCapabilities:
-    """Implemented integration capabilities, not the native SDK's full feature set."""
-    equipment: frozenset[str] = frozenset()
-    main_instructions: bool = False
-    user_questions: bool = False
-    native_resume: bool = False
-    context_usage: bool = False
-    manual_compaction: bool = False
 
 
 def require_capability(adapter, name: str, *, declared_only: bool = False) -> None:
