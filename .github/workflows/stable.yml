@@ -80,9 +80,16 @@ jobs:
                   tests/unit_tests/agentserver/test_opencode_direct_adapter.py
                   tests/unit_tests/agentserver/test_opencode_equipment_encoding.py
                   tests/unit_tests/agentserver/test_provider_session_selection.py
+                  tests/unit_tests/agentserver/test_provider_capabilities.py
+                  tests/unit_tests/agentserver/test_provider_equipment_ownership.py
+                  tests/unit_tests/test_session_history_empty_filter.py
+                  tests/unit_tests/test_session_history_jsonl_read.py
+                  tests/unit_tests/test_session_history_cursor.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
-            suites+=(tests/unit_tests/agentserver/test_adapter_host_contract.py
+            suites+=(tests/unit_tests/agentserver/test_session_token_usage.py
+                     tests/unit_tests/agentserver/test_context_usage.py
+                     tests/unit_tests/agentserver/test_adapter_host_contract.py
                      tests/unit_tests/common/test_external_cli_catalog.py
                      tests/unit_tests/agentserver/test_command_workflows_handler.py
                      tests/unit_tests/test_reasoning_config.py
@@ -111,6 +118,7 @@ jobs:
         run: |
           npm run test:web-client-runtime-ack
           npm run test:subagent-history
+          npm run test:context-usage
           npm run test:settle-historical-tool-executions
           npm run test:auto-reviewer-events
           npm run test:chat-store-streaming
