@@ -31,12 +31,28 @@ export interface MediaItem {
 }
 
 export interface UsageSummary {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
   input_cost?: number;
   output_cost?: number;
   total_cost?: number;
+}
+
+/** Missing usage is absent, including during history hydration. Never fill zero. */
+export function parseUsageSummary(value: unknown): UsageSummary | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const usage: UsageSummary = {};
+  for (const key of ['input_tokens', 'output_tokens', 'total_tokens'] as const) {
+    const count = raw[key];
+    if (typeof count === 'number' && Number.isSafeInteger(count) && count >= 0) usage[key] = count;
+  }
+  for (const key of ['input_cost', 'output_cost', 'total_cost'] as const) {
+    const cost = raw[key];
+    if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) usage[key] = cost;
+  }
+  return Object.keys(usage).length > 0 ? usage : null;
 }
 
 export interface FileDownloadItem {

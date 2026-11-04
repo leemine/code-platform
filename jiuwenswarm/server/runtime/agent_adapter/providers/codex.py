@@ -21,10 +21,31 @@ from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
+from .codex_usage import CodexUsage
 from . import session_recovery as recovery
+from ..execution_input import AdapterCapabilities
 
 
 _CANCEL_TIMEOUT = 15
+_TOOL_OUTPUT_CHAR_LIMIT = 60000
+_ACTIVITY_CHAR_LIMIT = 2000
+
+
+def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
+    """Bound the Swarm projection, leaving the native tool/model context intact."""
+    if len(text) <= limit:
+        return text, {}
+    received_bytes = len(text.encode("utf-8"))
+    marker = (f"\n[Output truncated by Swarm; SDK returned {len(text)} characters / "
+              f"{received_bytes} UTF-8 bytes.]")
+    displayed = text[:limit - len(marker)] + marker
+    return displayed, {
+        "output_truncated": True,
+        "received_output_chars": len(text),
+        "received_output_bytes": received_bytes,
+        "displayed_output_chars": len(displayed),
+        "displayed_output_bytes": len(displayed.encode("utf-8")),
+    }
 
 
 class _Terminal(BaseModel):
@@ -68,6 +89,7 @@ class Session:
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     subagents: SubagentProjection | None = None
+    usage: CodexUsage = field(default_factory=CodexUsage)
 
 
 def command_result(item: dict) -> dict:
@@ -75,15 +97,20 @@ def command_result(item: dict) -> dict:
     code = code if type(code) is int else None
     native_status = item.get("status")
     output = item.get("aggregatedOutput") or ("Command was not executed: permission declined" if native_status == "declined" else "")
-    return {"event_type": "chat.tool_result", "tool_call_id": item["id"],
+    output, projection = _bounded_output(output, _TOOL_OUTPUT_CHAR_LIMIT)
+    result = {"event_type": "chat.tool_result", "tool_call_id": item["id"],
             "tool_name": "shell", "content": output,
             "result": output, "status": "error" if native_status == "declined" else native_status,
             "invocation_status": item.get("status"), "exit_code": code,
             "command_success": code == 0 if code is not None else None,
             "success": code == 0 if code is not None else None, "task_acceptance": "unknown"}
+    if projection:
+        result["provider"] = {"codex": projection}
+    return result
 
 
 class CodexAdapter:
+    capabilities = AdapterCapabilities(native_resume=True)
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -148,15 +175,20 @@ class CodexAdapter:
             pass
         return rendered, turn
 
+    def execution_input_policy(self, request):
+        from ..execution_input import ExecutionInputPolicy
+        session = self._sessions.get(request.session_id or "default")
+        return ExecutionInputPolicy(bound_directory=session.directory if session else None)
+
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
         if needed:
             raise ValueError("Codex Swarm MCP equipment is not supported yet")
 
-    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None):
+    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None):
         self._validate_mode(mode)
         if self._settings is None:
             raise RuntimeError("Codex adapter has not been configured")
-        from jiuwenswarm.common.utils import get_agent_sessions_dir, get_default_project_session_workspace_dir
+        from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
         current = self._sessions.get(session_id)
         directory = Path(project_dir or (current.directory if current else get_default_project_session_workspace_dir())).expanduser()
         if not directory.is_absolute() or not directory.is_dir():
@@ -166,7 +198,8 @@ class CodexAdapter:
             if directory != current.directory:
                 raise ValueError("Codex session workspace cannot change after binding")
             return
-        from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
+        from ..execution_input import session_facts
+        facts = facts or session_facts(session_id)
         binding = recovery.load("codex", session_id, directory)
         if binding:
             recovery.require_settings(binding, self._settings)
@@ -174,9 +207,9 @@ class CodexAdapter:
                 thread_id=binding["native_id"], model_revision=binding["model_revision"],
                 desired_permission=binding["permission"])
             return
-        if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in read_session_history_records(session_id)):
+        if facts.has_assistant_history:
             raise ValueError("Codex cannot restore a released session without a recovery binding; its original native thread cannot be identified")
-        parent = get_agent_sessions_dir() / ".codex-direct"
+        parent = facts.storage_dir / ".codex-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
         self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
@@ -369,6 +402,7 @@ class CodexAdapter:
                 if item.get("type") == "commandExecution":
                     done = item.get("status") in {"completed", "failed", "declined"}
                     summary = item.get("aggregatedOutput", "") if done else item.get("command", "")
+                    summary, _ = _bounded_output(summary or "", _ACTIVITY_CHAR_LIMIT)
                     activity = children.activity(native_id, "tool_result" if done else "tool_call", summary,
                         identity=item["id"], tool_name="shell", tool_call_id=item["id"],
                         ok=False if item.get("status") in {"failed", "declined"} else item["exitCode"] == 0 if type(item.get("exitCode")) is int else None)
@@ -382,19 +416,24 @@ class CodexAdapter:
     async def process_message_stream_impl(self, request, inputs):
         if request.req_method not in {None, ReqMethod.CHAT_SEND} or request.params.get("answers"):
             raise ValueError("Use the active Codex control input channel")
+        from ..execution_input import prepared_input
+        execution = prepared_input(request, inputs)
         sid = request.session_id or "default"
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
                                    mode=request.params.get("mode", "agent"),
-                                   project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
+                                   project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
+                                   facts=execution.session if execution else None)
         session = self._sessions[sid]
         if session.subagents is None:
             session.subagents = SubagentProjection("codex", sid)
-        model = resolve_model(request)
+        from jiuwenswarm.common.codex_adapter_config import validate_model
+        model = validate_model(execution.model) if execution else resolve_model(request)
         async with session.lock:
             if session.cancelled and not session.cancel_confirmed:
                 raise RuntimeError("Codex cancellation is not confirmed; retry cancel before continuing this session")
             if session.active:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
+            new_thread = not session.thread_id
             await self._connect(session, model)
             if session.desired_permission != session.effective_permission:
                 # Resume the same thread with the new policy; no conversation replacement.
@@ -419,6 +458,7 @@ class CodexAdapter:
             session.native_terminal = session.cancel_confirmed = False
             session.control_ready.clear()
             session.active, session.cancelled, session.cancel_acknowledged = True, False, False
+            session.usage.begin_turn(new_thread=new_thread)
         reader = None
         terminal = False
         text_parts = {}
@@ -458,7 +498,14 @@ class CodexAdapter:
                     # Native retries remain owned by Codex. Do not turn a
                     # retry notification into a second terminal event.
                     logging.getLogger(__name__).warning("Codex native error request=%s will_retry=%s elapsed=%.3fs", request.request_id, payload.get("willRetry"), time.monotonic() - started)
-                if method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
+                if method == "thread/tokenUsage/updated":
+                    # Preserve missing SDK fields (notably defaulted cache writes).
+                    native = notification.payload.model_dump(mode="json", by_alias=True, exclude_unset=True)
+                    for event in session.usage.project(native, session_id=sid,
+                                                       thread_id=session.thread_id, turn_id=session.turn_id,
+                                                       request_id=request.request_id):
+                        yield self._chunk(request, event)
+                elif method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
                     async for projected in self._collab_events(session, request, method, item):
                         yield projected
                 elif method == "item/agentMessage/delta":
@@ -480,6 +527,7 @@ class CodexAdapter:
                     session.native_terminal = True
                     session.turn_ended.set()
                     status = payload["turn"]["status"]
+                    session.usage.end_turn(completed=status == "completed" and not session.cancelled)
                     if status == "completed":
                         yield self._chunk(request, {"event_type": "chat.final", "content": self._final_response(text_parts), "invocation_status": status, "task_acceptance": "unknown"}, complete=True, outcome="completed")
                     else:

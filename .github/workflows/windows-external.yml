@@ -12,6 +12,8 @@ on:
           - windows
           - macos
           - both
+          - linux
+          - all
           - release-assets
       product_base_sha:
         description: Optional full product commit to verify before the macOS build
@@ -38,7 +40,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == '' }}
+    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == 'all' || inputs.platform == '' }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -141,7 +143,7 @@ jobs:
         run: python3 .github/scripts/transfer-release-assets.py
 
   macos:
-    if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' }}
+    if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' || inputs.platform == 'all' }}
     runs-on: macos-14
     timeout-minutes: 90
     defaults:
@@ -217,6 +219,76 @@ jobs:
             ci-evidence/source.json
           if-no-files-found: error
           compression-level: 0
+          retention-days: 14
+
+  linux:
+    if: ${{ inputs.platform == 'linux' || inputs.platform == 'all' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      JIUWENSWARM_BUILD_PROFILE: external
+      UV_PYTHON: '3.13'
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.12.0'
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+          enable-cache: false
+      - name: Record build source
+        run: |
+          set -euo pipefail
+          echo "JIUWENSWARM_DATA_DIR=$RUNNER_TEMP/swarm-build-data" >> "$GITHUB_ENV"
+          mkdir -p ci-evidence
+          python3 - <<'PY'
+          import hashlib, json, os, platform
+          from pathlib import Path
+          Path('ci-evidence/source.json').write_text(json.dumps({
+              'source_sha': os.environ['GITHUB_SHA'], 'profile': 'external',
+              'runner': os.environ['RUNNER_OS'], 'architecture': platform.machine(),
+              'uv_lock_sha256': hashlib.sha256(Path('uv.lock').read_bytes()).hexdigest(),
+              'signing': 'Debian test installer; no package signature',
+          }, indent=2) + '\n')
+          PY
+      - name: Build Linux amd64 installers
+        run: |
+          set -euo pipefail
+          bash scripts/build-electron-linux.sh external 2>&1 | tee ci-evidence/build.log
+          git diff --exit-code -- uv.lock
+          shopt -s nullglob
+          installers=(dist/*.deb dist/*.tar.gz)
+          test "${#installers[@]}" -eq 2
+          sha256sum "${installers[@]}" > ci-evidence/SHA256SUMS
+      - name: Upload Linux installers
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-amd64-external-installer-${{ github.sha }}
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            ci-evidence/SHA256SUMS
+            ci-evidence/source.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload Linux build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-external-build-log-${{ github.run_id }}
+          path: ci-evidence/
+          if-no-files-found: warn
           retention-days: 14
       - name: Upload macOS build diagnostics
         if: always()

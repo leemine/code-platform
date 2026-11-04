@@ -103,3 +103,41 @@ Claude maps model timeout to API_TIMEOUT_MS rather than a 180-second turn deadli
 
 
 For the tested Claude CLI 2.1.274, the independent first-byte deadline is not active on the custom model endpoint route, although its setting reaches the CLI. The native request timeout remains effective. A supervised 300-second stalled-stream probe closed both connections and exited cleanly with code 0; the earlier unexplained 143 remains historical evidence, not a confirmed adapter defect.
+
+
+## Large Codex tool output
+
+Swarm projects at most 60,000 characters for a Codex command result and 2,000 for a child-agent command activity summary, including an explicit truncation marker. Short output is unchanged. The existing content/result aliases continue to carry identical bounded text. This only limits Swarm display and history: the official tool output seen by the model is untouched, and no command is repeated. Native exit codes, command success/failure/unknown and task acceptance keep their separate meanings.
+
+Truncation diagnostics under provider.codex distinguish SDK-returned from displayed quantities. The SDK may already have truncated its output; these counts do not establish the full command output size. Swarm history does not store another full copy or invent an artifact link. The original send guard remains; other Providers and event types require separate review. This is a local fix candidate, not a released desktop update.
+
+
+## Claude/OpenCode tool-output protection
+
+Claude and OpenCode tool results now use the same Swarm display boundary: 60,000 characters for a result and 2,000 for a Claude child-tool activity summary, including a truncation marker. The content/result aliases remain compatible. Native error flags, exit codes and unknown outcomes are preserved; the external tool content seen by the model is untouched.
+
+Normal OpenCode metadata stays intact. Oversized metadata is projected by whole fields, with explicit diagnostics under provider.opencode and priority for native exit evidence, truncation state and the complete outputPath. Paths are never shortened into a different path, and files are not automatically read or copied. Existing native spill references are not presented as new Swarm artifacts. No host execution flow is added; other event types require separate capacity review. This remains a local candidate. Claude live acceptance is pending because the existing model endpoint returned 429/1113; this is not a released desktop update.
+
+
+## P1 input and equipment ownership
+
+The existing chat Facade prepares the effective model, working directory and host history eligibility. Providers retain native protocol validation, immutable session bindings and SDK/API conversion. Existing model settings, execution picker, bound conversations and Native defaults remain in place. OpenCode assets use the original asset services; the host commits equipment only after a successful, current and uncancelled mount. Partial native configuration must be reconciled again before execution.
+
+Active Swarm context queries and manual compaction remain unsupported rather than returning fabricated zero usage; passive Codex native counters are described in the section below. OpenCode persona/question support and task=deny remain unchanged; Claude/Codex main role instructions remain P2. No new settings page or execution scheduler was added. See F_20261104_1030_provider-input-ownership for evidence and validation limits. This candidate has not been committed or released and does not update an installed desktop application.
+
+## Codex native usage observation
+
+The Codex candidate reuses the existing bottom statistics control for reported main-thread input, output, cached input, cache write, reasoning output and total tokens. Only returned, interpretable counters are shown. Window capacity may appear independently; context occupancy and cache hit rates are not guessed. Missing metrics are hidden, while explicitly reported zero remains visible. A resumed or post-cancellation turn without a trustworthy baseline has no invented turn usage. Cumulative snapshots replace previous values rather than being added again.
+
+The original chat, history and controls remain in use, with no additional compaction, page or execution flow. Native behavior is preserved; Claude/OpenCode extension status is described below. See F_20261104_1230_codex-native-usage-observation. This local, unpublished candidate does not update an installed desktop application.
+
+
+## Claude / OpenCode native usage and Tokens
+
+The single-row label for all three external executors is Tokens. Missing fields stay hidden in the existing statistics control and history. Claude uses native model_usage, including subagents, without adding main-loop usage or synthesizing an unreturned total. Native CLI versions can change resume accounting, so these snapshots are labeled Native usage, not a complete Swarm session total. OpenCode counts completed message identities once and ignores duplicate step views. Unknown zero provenance or a missing count in any message hides that aggregate field. Native input, output and cache semantics remain distinct; occupancy and cache hit rates are not inferred.
+
+Real OpenCode two-turn execution, same-native-session continuation after a Worker restart, database reconciliation and UI refresh have passed. Claude deterministic mappings passed; its existing model service returned HTTP429, leaving real channel acceptance pending. No new execution, approval or compaction flow was introduced. Native statistics remain available. This uncommitted candidate has not updated any installer. See F_20261104_1230_codex-native-usage-observation.
+
+### beta5 test release scope (2026-11-04)
+
+beta5 groups bounded tool output, P1 execution/equipment ownership, and native Tokens observation, reusing the existing chat, history, and usage UI. All desktop builds use the same merged commit and exclude user model configuration. Claude live acceptance remains blocked by HTTP 429 from the original service. Windows is unsigned; macOS arm64 has no Developer ID signature or notarization. A successful build is not an end-to-end desktop chat acceptance result. Only this project's version changes in the lock; external SDK/Core revisions remain fixed. See F_20261104_1430_provider-beta5-release.

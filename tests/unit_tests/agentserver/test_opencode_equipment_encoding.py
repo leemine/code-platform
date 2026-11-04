@@ -1,34 +1,15 @@
 """Exercise portable equipment files with a GBK platform default."""
-import importlib.util
 import json
-import sys
-import types
 from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture
-def modules(monkeypatch):
-    # Load the file boundary without starting the application or model catalog.
-    root = Path(__file__).resolve().parents[3]
-    directory = root / 'jiuwenswarm/server/runtime/agent_adapter/providers'
-    package = '_opencode_encoding_test'
-    namespace = types.ModuleType(package)
-    namespace.__path__ = [str(directory)]
-    monkeypatch.setitem(sys.modules, package, namespace)
-    for name in ['opencode_transport', 'opencode_models']:
-        module = types.ModuleType(f'{package}.{name}')
-        monkeypatch.setitem(sys.modules, module.__name__, module)
-    sys.modules[f'{package}.opencode_models'].build_server_model_config = lambda: ({}, None)
-    result = []
-    for name in ['opencode_equipment', 'opencode_service']:
-        spec = importlib.util.spec_from_file_location(f'{package}.{name}', directory / f'{name}.py')
-        module = importlib.util.module_from_spec(spec)
-        monkeypatch.setitem(sys.modules, spec.name, module)
-        spec.loader.exec_module(module)
-        result.append(module)
-    return result
+def modules():
+    # Use the installed production package, including its host input seam.
+    from jiuwenswarm.server.runtime.agent_adapter.providers import opencode_equipment, opencode_service
+    return opencode_equipment, opencode_service
 
 
 def gbk_default(monkeypatch):
@@ -56,6 +37,7 @@ async def test_skill_and_config_written_as_utf8(modules, monkeypatch, tmp_path):
     service.root = tmp_path / 'session'
     service.root.mkdir()
     service.process = service.client = service.revision = None
+    service.model_config = {}
     service.executable = 'unused-cli'
     service.directory = str(tmp_path)
 

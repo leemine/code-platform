@@ -5,18 +5,18 @@ type: S
 author: leemine
 author_email: leewanlong@gmail.com
 modules: [agent_adapter, runtime]
-files: [jiuwenswarm/runtime/session/coordinator.py, jiuwenswarm/runtime/plan.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_equipment.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, jiuwenswarm/server/control/config_service.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, jiuwenswarm/server/runtime/agent_adapter/agent_adapters.py, jiuwenswarm/server/runtime/agent_adapter/interface.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/runtime/service.py]
+files: [jiuwenswarm/runtime/session/coordinator.py, jiuwenswarm/runtime/plan.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_equipment.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, jiuwenswarm/server/control/config_service.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, jiuwenswarm/server/runtime/agent_adapter/agent_adapters.py, jiuwenswarm/server/runtime/agent_adapter/interface.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/runtime/service.py, jiuwenswarm/server/runtime/agent_adapter/execution_input.py, jiuwenswarm/server/runtime/agent_adapter/equipment.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py]
 ---
 
 # 外部 AgentAdapter 单 Agent 边界规约
 
 ## 范围与依赖
 
-本规约描述隔离候选中已实现的 Runtime-direct 单 Agent 接缝；尚未发布。公共对象复用 common.schema 的 AgentRequest/AgentResponse/AgentResponseChunk，底层继续使用已有独立协议包；不新建协议、Turn 队列或调度器。Native 保留 Core 实现。OpenCode 插件直连官方 HTTP/SSE，外部单 Agent 执行无需导入 Core；主包安装仍声明 Core，不能据此宣称正常安装已经可选 Core。
+本规约描述当前 code-platform 单 Agent 的可选 AgentAdapter 接缝，使用原 Runtime、Facade 与渠道。公共对象复用 common.schema 的 AgentRequest/AgentResponse/AgentResponseChunk，底层继续使用已有独立协议包；不新建协议、Turn 队列或调度器。Native 保留 Core 实现；基础外部安装无需 Core，uv 默认组合及显式 native extra 保留固定 Core。OpenCode 直连官方 HTTP/SSE，Codex/Claude 使用官方 SDK。已合入能力与本地未发布增量分别以任务/feature 记录为准，历史验证章节不作为当前发布状态源。
 
 UI在新会话选择Provider，已有会话绑定不可变。execution_provider存于原metadata；刷新、后续请求和取消读取绑定，已有Native历史不改绑。JIUWENSWARM_AGENT_SDK只保留兼容默认，未配置仍为harness。Manager/Facade对每个执行实例固定选择，缓存区分Provider与连接配置；已有活跃会话保留其所有者。外部默认Runtime首次显式选择Native时复用原共享初始化。运行中会话不支持热切换。
 
-entry point group为jiuwenswarm.agent_adapters，工厂签名create(*, mode)；未知、重复或无效工厂拒绝，不静默改引擎。OpenCode目前通过实验安装元数据注册，独立插件未发布。聊天仅增加Provider下拉，复用原模型菜单和model_selection。连接由插件正常配置，模型从Swarm目录生成官方服务启动快照；不新增设置表单，不在聊天中PATCH服务配置。请求不传密钥，配置摘要不匹配时失败。ModelSelectionResolver默认Native构造不变，OpenCode配置转换使用无Core副作用的构造函数。其session.create不使用Native预热。连接配置只为新执行实例取快照；当前未持久化配置版本，未执行空会话首次执行使用当时配置，冷恢复仍不支持。
+entry point group为jiuwenswarm.agent_adapters，工厂签名create(*, mode)；未知、重复或无效工厂拒绝，不静默改引擎。OpenCode 通过正式内置 entry point 注册，独立 wheel 插件尚未发布。聊天仅增加Provider下拉，复用原模型菜单和model_selection。连接由插件正常配置，模型从Swarm目录生成官方服务启动快照；不新增设置表单，不在聊天中PATCH服务配置。请求不传密钥，配置摘要不匹配时失败。ModelSelectionResolver默认Native构造不变，OpenCode配置转换使用无Core副作用的构造函数。其session.create不使用Native预热。连接配置只为新执行实例取快照；空会话首次执行使用当时配置；已执行会话沿既有 Provider 恢复绑定/模型指纹校验后恢复原生身份，不重放宿主历史、不静默创建新会话，运行中强杀后的异常接管不在此承诺。
 
 Native输入、控制恢复及原Facade答案转换兼容导出保留。
 
@@ -249,3 +249,49 @@ Claude仅在本轮精确输入回显后接收task_started证明的子Agent。tas
 Codex在原父Turn协作工具通知中接受senderThreadId匹配且spawnAgent确认的子线程，其他目标不自动加入名册或读取。已确认子线程在实际协作item/completed时使用公开thread_read(include_turns=True)快照；没有第二事件读者或定时查询。工具活动和已完成子Turn正文进入原子历史，agentsStates.message保持来源；尚未可读的快照仅记录脱敏诊断，不阻断父任务或补造正文。完成子Turn是idle，只有原生shutdown/notFound才投影关闭；不开放尚未接入的子Agent控制。更新范围受原父producer生命周期限制，不建立父Turn之外的后台监听器。
 
 Web继续复用原活动、结果、历史恢复与只读控件；不改Runtime调度/审批、公共协议或Native实现。OpenCode仍保持原task=deny，子Agent开放须先验证权限继承、审批、取消及终态，此能力作为后续任务，不把观察映射模拟测试当作当前桌面已支持。
+
+
+## Codex 工具正文的有界显示投影
+
+CodexAdapter.command_result 只在现有原生 commandExecution → chat.tool_result 映射处约束 Swarm 显示与历史正文。content/result 继续作为内容一致的兼容别名长期保留；两者均最多60000个Python字符，包含截断提示。短输出不变，不新增 rendered_result，也不改写官方 SDK/CLI 的工具结果、模型上下文、线程或 Turn 控制。provider.codex 中仅在发生截断时带 output_truncated、received_output_chars/bytes、displayed_output_chars/bytes；received 表示 SDK 实际返回的 aggregatedOutput，不能解释为命令完整输出，displayed 包括提示文字，字节数按 UTF-8 计。
+
+已确认子线程的 commandExecution 活动仍走原 _child_snapshot 与 SubagentProjection；工具正文和进行中命令摘要最多2000字符，包含同样的提示，官方可空输出按空摘要呈现。摘要裁剪不改变子线程归属、工具身份、实际退出码、活动幂等或任务终态。命令成功/失败/未知及 task_acceptance 语义保持；截断本身不表示执行失败或验收通过。
+
+AgentServer 原6MiB发送预算保持。此约束局限于 Codex 命令正文及子命令摘要，不宣称所有事件或 Claude/OpenCode 正文均已统一有界；不新增完整输出存储、宿主治理、二次执行或自动重试。故障依据与回归见 B_20261103_2148_codex-output-bound。
+
+
+## Claude/OpenCode 工具返回的有界显示投影
+
+Claude 主工具结果和 OpenCode tool_payload 的 output/error 经各自现有映射裁至60000个Python字符（含提示），content/result仍是同一有界正文的长期兼容别名。Claude子工具调用/返回活动摘要最多2000字符；原子任务归属、幂等和历史桶保留。普通短输出不增加截断标志；不伪造rendered_result，不改SDK/CLI及原生模型上下文。各自provider命名空间在发生截断时记录received/displayed输出字符和UTF-8字节数；计数对象为适配器已取得并映射为字符串的正文，不是原始网络包大小或全部命令输出。
+
+OpenCode原生metadata在JSON序列化文本不超过60000字符时完整保留；超限时按字段整体选择到同一预算，优先exit、truncated、outputPath，其余能容纳的字段仍保留。路径不会截断成另一条路径；单字段自身无法纳入预算时省略并计入诊断。provider.opencode中metadata_truncated/omitted_metadata_fields及received/displayed_metadata_bytes明确标记此投影，不覆盖原生metadata.truncated的含义，不读回或另存被省略字段。原生exit从未经裁剪的事实提取；is_error、缺码/未知、命令成功和任务验收语义不变。
+
+该限制只覆盖这两家的工具结果、Claude子工具摘要及OpenCode结果metadata；工具输入、任务最终正文、其它事件和多模态接入仍按既有边界，不据此宣称全局事件均受限。宿主Runtime/Facade/历史schema/UI生产代码/协议及6MiB发送保护保持；不依赖Core的渲染私有实现，不新增共用执行流程或公共模块。来源和验证限制见B_20261103_2208_claude-opencode-output-bound。
+
+
+## P1：宿主执行输入与装备提交
+
+外部 Adapter 可选择实现 PreparedInputAdapter.execution_input_policy；Native 必需 AgentAdapter 接口不变。原 Facade 在 build_inputs 内用原 ModelCatalog/ModelSelectionResolver 准备当前请求的模型、规范化目录、宿主存储目录及是否存在无法识别原生身份的助手历史。ExecutionInput 是进程内事实，不是新增线协议/会话状态机；不从客户端 params 接受该对象，不写历史或 UI，校验 request/session 归属，凭据字段不参与 repr。原生模型协议校验、指纹、恢复绑定和 SDK/服务资源仍归 Provider。公开旧模型解析/prepare_session/resolve_equipment 入口兼容保留，委托同一宿主解析规则；正常准备后的执行不重新解析全局模型或宿主历史。
+
+OpenCode 自有服务使用同一宿主模型快照生成原生配置，保留 agentos max_tokens 规则和既有模型指纹。旧直接 SessionService 调用保留配置解析兼容；借用服务仍不能被写配置/关闭。配置更改、原生恢复条件与目录不可变绑定继续检查，不把正常恢复重构成重发历史。
+
+EquipmentAwareAdapter 是可选的原生装载接缝。原 Facade reconcile_session_mcp 中，宿主资产服务负责安装/启用/连接/凭据及有效选择，OpenCode 负责 persona/Skill/MCP 的原生转换、私有装载与查询核验；唯一 session_equipment 由宿主成功后保存。跨 await 校验原 Runtime 的 generation/关闭状态、当前任务取消及并发装备提交；失败、取消和失效不覆盖旧快照。原生部分配置失败时保留拒绝执行标记，须重新成功 reconcile，不新增 Turn 队列或取消状态机。控制答案不挂载装备；旧 Native reconcile 签名仍按原支持参数委托。
+
+AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 的 Swarm 装备和主角色提示词未实现，正常入口明确拒绝。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
+
+## Codex 原生用量只读投影
+
+Codex 原通知消费者将匹配当前 threadId/turnId 的 thread/tokenUsage/updated 投影到原 chat.usage_summary；total 为覆盖快照，last 仅作专有来源，不直接当整轮或当前上下文。本轮 usage 只有在基线明确时提供；恢复、取消/失败后的首轮不猜差额；已观察到计数倒退时隐藏不可信累计，保留专有诊断。可选SDK字段须保留是否原生提供，不能将默认0变为返回事实。
+
+session_usage 沿用现有schema_version=1/main/others/revision。外部调用数未知可为null，主线程以外类别不伪造计数；主类别可附total_tokens、cached_input_tokens、cache_write_input_tokens、reasoning_output_tokens。修订号为观察修订，不代表调用次数。没有把累计快照写入逐模型调用Ledger，也没有第二持久账本。原历史须保留没有本轮usage但具有session_usage的事件；实时与恢复均不补0，原底部控件隐藏缺失字段，保留确切返回的0。
+
+原生modelContextWindow仅作为原context.usage窗口容量；当前占用、比例、分类和缓存率未明确返回则保持缺失并隐藏。Facade主动查询能力与手动压缩均未因此开放；Native原统计/压缩保持。见F_20261104_1230_codex-native-usage-observation；交付状态及测试证据以feature/任务记录为准。
+
+
+## Claude / OpenCode 原生只读统计
+
+复用原 chat.usage_summary/session_usage schema_version=1，scope 可选 native 表示原生报告范围，不保证跨进程产品会话累计。原 Native 不带此字段时不改变行为。单行分类显示 Tokens；数据缺失隐藏，不把 SDK/上游默认0当返回事实；Native多行分类保留。原生会话标识须命名 native_session_id，避免与递归历史边界校验中的产品 session_id 混淆。
+
+Claude 只从当前已接收输入且身份匹配的 ResultMessage.model_usage 投影跨模型同字段汇总，不叠加分块/步骤/主循环usage，不推算未返回总Tokens或调用次数。调用和续聊范围遵循原 CLI，旧CLI可能在恢复时重置，故不冒充完整产品累计。执行崩溃的全零可疑快照隐藏并保留源诊断；正常明确0保留。
+
+OpenCode 只按当前原生会话已完成 assistant message ID 覆盖去重；step-finish 不叠加。原生归一化已丢失0来源时隐藏该项，任一消息缺计数也不输出该字段的部分和作为完整总计。恢复绑定首次通过已有消息查询只读建立基线（5秒上限），失败只隐藏不可信累计，不改变聊天结果，不重发旧任务或新建会话，不增加持久账本。两家保留自身输入/输出/缓存分类，未确认的跨Provider口径不强行统一。主动上下文查询/压缩仍未因此开放。验证状态及服务限制以 feature/任务记录为准。

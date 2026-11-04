@@ -594,6 +594,7 @@ async def test_shared_model_selection_uses_real_swarm_resolver_and_official_prom
         {'model_id': 'beta', 'model_client_config': {'client_provider': 'OpenAI', 'model_name': 'model-b', 'api_base': 'https://example.invalid/v1', 'api_key': 'private-b'}},
     ]}}
     monkeypatch.setattr(model_catalog, 'get_config', lambda: shared)
+    monkeypatch.setattr(interface, 'get_config', lambda: shared)
     fragment, unsupported = build_server_model_config(shared)
     assert not unsupported and len(fragment['provider']) == 2
     config['opencode'].pop('model')
@@ -843,6 +844,9 @@ async def test_mcp_uses_existing_credentials_and_failed_mount_does_not_replace_s
             _ = [c async for c in app.process_message_stream(request(mcp=['bad']))]
         assert get_session_equipment('test-session')['mcp'] == ['probe']
         assert not any(c[1].endswith('/prompt_async') for c in calls[count:])
+        with pytest.raises(RuntimeError, match='equipment update was not confirmed'):
+            _ = [c async for c in app._adapter.process_message_stream_impl(request(), {'query': 'must not execute'})]
+        assert not any(c[1].endswith('/prompt_async') for c in calls[count:])
         _ = [c async for c in app.process_message_stream(request(mcp=[]))]
         assert configured[-1] == {} and get_session_equipment('test-session')['mcp'] == []
     finally:
@@ -904,11 +908,12 @@ async def test_owned_sessions_bind_ui_projects_across_equipment_http_and_cleanup
         async def close(self):
             self.closed = True
             await self.client.aclose()
-    async def resolve(params, *, directory, include_global_skills):
+    original_convert = opencode_equipment.convert_equipment
+    def convert(assets, *, directory):
         equipment_dirs.append(directory)
-        return opencode_equipment.Equipment()
+        return original_convert(assets, directory=directory)
     monkeypatch.setattr(opencode_service, 'SessionService', Service)
-    monkeypatch.setattr(opencode_equipment, 'resolve_equipment', resolve)
+    monkeypatch.setattr(opencode_equipment, 'convert_equipment', convert)
     config['opencode']['cli_path'] = __import__('sys').executable
     await app.create_instance(config, mode='code', sub_mode='normal')
     try:
@@ -1469,3 +1474,209 @@ async def test_timeout_abort_ack_without_idle_keeps_execution_owner(host, monkey
         _ = [x async for x in app.process_message_stream(request())]
     monkeypatch.setattr(app._adapter, '_call', original)
     await app.cleanup()
+
+
+@pytest.mark.parametrize('size', [0,60000,60001])
+def test_output_boundary_preserves_native_metadata_and_short_text(size):
+    metadata={'exit':7,'truncated':True,'outputPath':'/native/output/tool-42','other':{'flag':True}}
+    output='x'*size
+    native={'id':'p','callID':'c','tool':'bash','state':{'status':'completed','output':output,'metadata':metadata}}
+    p=tool_payload(native)
+    assert p['content']==p['result'] and len(p['result'])<=60000
+    assert p['provider']['opencode']['metadata']==metadata
+    assert p['exit_code']==7 and p['success'] is False and p['task_acceptance']=='unknown'
+    assert native['state']['output']==output
+    if size<=60000:
+        assert p['result']==output and 'output_truncated' not in p['provider']['opencode']
+    else: assert 'Output truncated' in p['result']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('status', ['completed','error'])
+@pytest.mark.parametrize('code', [0,7,None])
+@pytest.mark.parametrize('shape', ['controls','unicode','metadata-only'])
+async def test_large_output_and_metadata_original_sse_facade_history_and_wire(host,status,code,shape):
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.server.ws_send import send_wire_payload
+    from gateway.common.ws_limits import AGENT_WS_SEND_BUDGET_BYTES
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app,config,calls,events,_=host
+    text='\x00'*1048610 if shape=='controls' else '原生工具🙂'*30000
+    output='short result' if shape=='metadata-only' else text
+    metadata={'exit':code,'truncated':True,'outputPath':'/native/output/tool-42','extra':{'text':text},'output':text,'future':{'small':True}}
+    state={'status':status,'metadata':metadata,('output' if status=='completed' else 'error'):output}
+    native={'id':'p-tool','callID':'tool-42','tool':'bash','sessionID':'ses_test','messageID':'msg_agent','type':'tool','state':state}
+    original=json.dumps(native,ensure_ascii=False)
+    events.insert(3,event('message.part.updated',part=native))
+    class WebSocket:
+        async def send(self,value):self.sent=value
+    await app.create_instance(config)
+    try:
+        chunks=[x async for x in app.process_message_stream(request())]
+        chunk=next(x for x in chunks if x.payload.get('event_type')=='chat.tool_result')
+        p=chunk.payload; projected=p['provider']['opencode']
+        assert p['content']==p['result'] and len(p['result'])<=60000
+        assert p['result']=='short result' if shape=='metadata-only' else 'Output truncated' in p['result']
+        assert projected['metadata']['outputPath']=='/native/output/tool-42'
+        assert projected['metadata']['truncated'] is True and projected['metadata']['exit']==code
+        assert projected['metadata']['future']=={'small':True}
+        assert projected['metadata_truncated'] is True and projected['omitted_metadata_fields']==2
+        assert len(json.dumps(projected['metadata'],ensure_ascii=False))<=60000
+        assert p['invocation_status']==status and p['exit_code']==code
+        assert p['success'] is (False if status=='error' else None if code is None else code==0)
+        assert p['task_acceptance']=='unknown' and 'rendered_result' not in p
+        assert original==json.dumps(native,ensure_ascii=False)
+        ws=WebSocket()
+        assert await send_wire_payload(ws,encode_agent_chunk_for_wire(chunk,response_id='bounded',sequence=1))
+        assert len(ws.sent.encode('utf-8'))<AGENT_WS_SEND_BUDGET_BYTES
+        assert parse_agent_server_wire_chunk(json.loads(ws.sent)).payload==p
+        session_history.flush_history_writes()
+        row=next(x for x in load_history_page('test-session',1)['messages'] if x.get('tool_call_id')=='tool-42')
+        assert row['result']==row['content']==p['result'] and row['provider']==p['provider']
+        assert any(x.payload.get('content')=='PUBLIC_REPLY' for x in chunks)
+        events[:]=completed_events()
+        follow=[x.payload async for x in app.process_message_stream(request())]
+        assert any(x.get('content')=='PUBLIC_REPLY' for x in follow)
+        assert sum(method=='POST' and path=='/session' for method,path,_ in calls)==1
+    finally:await app.cleanup()
+
+
+def test_metadata_total_budget_preserves_reference_before_optional_fields():
+    metadata={**{f'field-{i}':'x'*1000 for i in range(100)},'exit':7,'truncated':True,'outputPath':'/native/'+'p'*3000}
+    native={'id':'p','callID':'c','tool':'bash','state':{'status':'completed','output':'short','metadata':metadata}}
+    p=tool_payload(native);projection=p['provider']['opencode']
+    assert p['result']=='short' and 'output_truncated' not in projection
+    assert len(json.dumps(projection['metadata'],ensure_ascii=False))<=60000
+    assert projection['metadata']['outputPath']==metadata['outputPath']
+    assert projection['metadata']['exit']==7 and projection['metadata']['truncated'] is True
+    assert projection['omitted_metadata_fields']==len(metadata)-len(projection['metadata'])>0
+    assert metadata['field-99']=='x'*1000
+
+
+def usage_info(identity, **tokens):
+    return {'id': identity, 'sessionID': 'ses_test', 'role': 'assistant',
+            'time': {'completed': 1}, 'finish': 'stop', 'tokens': tokens}
+
+
+@pytest.mark.asyncio
+async def test_completed_message_usage_deduplicates_steps_and_replay_in_original_facade(host):
+    app, config, calls, events, root = host
+    events[:] = completed_events()[:-2] + [
+        event('message.updated', info=usage_info('msg_agent', input=100, output=20, total=125,
+            reasoning=5, cache={'read': 0, 'write': 0})),
+        event('message.updated', info=usage_info('msg_agent', input=100, output=20, total=125,
+            reasoning=5, cache={'read': 0, 'write': 0})),
+        event('message.part.updated', part={'id': 'same-step', 'sessionID': 'ses_test',
+            'messageID': 'msg_agent', 'type': 'step-finish', 'tokens': {'input': 99999, 'output': 99999}}),
+        event('message.updated', info=usage_info('second-response', input=200, output=30, total=236,
+            reasoning=6, cache={'read': 0, 'write': 0})),
+        event('session.idle'),
+    ]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        latest = snapshots[-1]
+        assert latest['session_usage']['scope'] == 'native'
+        assert latest['session_usage']['main'] == {'input_tokens': 300, 'output_tokens': 50,
+            'total_tokens': 361, 'reasoning_output_tokens': 11,
+            'input_calls': None, 'output_calls': None, 'calls_total': None}
+        assert 'cached_input_tokens' not in latest['session_usage']['main']
+        assert latest['provider']['opencode']['zero_provenance'] == 'not_available'
+        assert 'usage' not in latest
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        records = session_history.read_session_history_records('test-session')
+        assert max((r['session_usage'] for r in records if r.get('session_usage')), key=lambda r: r['revision']) == latest['session_usage']
+        # Replay is the same native message identity; it is not new model spend.
+        repeated = [c.payload async for c in app.process_message_stream(request())]
+        assert not [c for c in repeated if c.get('event_type') == 'chat.usage_summary']
+        assert any(c.get('event_type') == 'chat.final' for c in repeated)
+        assert not any(path.endswith('/message') for _, path, _ in calls)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_missing_usage_hides_incomplete_aggregate_without_failing_execution(host):
+    app, config, calls, events, root = host
+    events[:] = [
+        event('message.updated', info=usage_info('known', input=100, output=10, total=110)),
+        event('message.updated', info=usage_info('unreported', input=0, output=None)),
+        event('message.updated', info={'id': 'partial', 'sessionID': 'ses_test', 'role': 'assistant',
+            'tokens': {'input': 999999}}),
+        event('message.updated', info={**usage_info('foreign', input=999999), 'sessionID': 'other-session'}),
+        event('message.updated', info=usage_info('finish')),
+        event('session.idle'),
+    ]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        assert all(v is None for v in snapshots[-1]['session_usage']['main'].values())
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('unavailable', [False, True])
+async def test_usage_restore_uses_original_native_identity_and_never_blocks_chat(owned_permissions, monkeypatch, unavailable):
+    first, config, services = owned_permissions
+    await first.create_instance(config)
+    try:
+        _ = [chunk async for chunk in first.process_message_stream(request('usage-recovery'))]
+        identity = first._adapter._sessions['usage-recovery'].native_id
+    finally:
+        await first.cleanup()
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    original_call = second._adapter._call
+    reads = []
+    async def call(method, path, **kw):
+        if method == 'GET' and path == f'/session/{identity}/message':
+            reads.append((path, kw['session'].native_id))
+            if unavailable:
+                raise RuntimeError('fixture observation unavailable')
+            # An old message appears twice in history; identity still counts once.
+            info = usage_info('historical', input=100, output=10, total=110)
+            return [{'info': info}, {'info': info}]
+        return await original_call(method, path, **kw)
+    monkeypatch.setattr(second._adapter, '_call', call)
+    try:
+        await second.prepare_session(session_id='usage-recovery', channel_id='web', mode='agent')
+        services[-1].events[:] = [
+            event('message.updated', info=usage_info('new', input=200, output=20, total=220)),
+            event('session.idle'),
+        ]
+        chunks = [chunk.payload async for chunk in second.process_message_stream(request('usage-recovery'))]
+        assert reads == [(f'/session/{identity}/message', identity)]
+        assert second._adapter._sessions['usage-recovery'].native_id == identity
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        if unavailable:
+            assert not snapshots
+        else:
+            assert snapshots[-1]['session_usage']['main']['input_tokens'] == 300
+            assert snapshots[-1]['session_usage']['main']['output_tokens'] == 30
+            assert snapshots[-1]['session_usage']['main']['total_tokens'] == 330
+    finally:
+        await second.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error_name', ['MessageAbortedError', 'ApiError'])
+async def test_native_error_usage_precedes_terminal_without_claiming_success(host, error_name):
+    app, config, calls, events, root = host
+    info = usage_info('failed-message', input=40, output=3, total=43)
+    info['error'] = {'name': error_name, 'data': {'message': 'fixture'}}
+    events[:] = [event('message.updated', info=info)]
+    await app.create_instance(config)
+    try:
+        chunks = [c.payload async for c in app.process_message_stream(request())]
+        assert [c['event_type'] for c in chunks if c.get('event_type') in {'chat.usage_summary', 'chat.error'}] == ['chat.usage_summary','chat.error']
+        assert next(c['session_usage']['main']['input_tokens'] for c in chunks if c.get('event_type') == 'chat.usage_summary') == 40
+        assert not any(c.get('event_type') == 'chat.final' for c in chunks)
+    finally:
+        await app.cleanup()

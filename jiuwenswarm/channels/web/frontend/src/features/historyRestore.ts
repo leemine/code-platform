@@ -1,5 +1,6 @@
 import { readOutputOrder, isSuppressedOutput } from './sessionOutput';
 import type { OutputOrder } from '../types/message';
+import { parseUsageSummary } from '../types/message';
 import { Message, MessageRole, UsageSummary, FileDownloadItem, MediaItem, WsEvent, ToolExecution, AskUserQuestionPayload, Question, UserAnswer, SessionTokenUsageSnapshot, parseSessionTokenUsageSnapshot } from '../types';
 import { webClient } from '../services/webClient';
 import { normalizeFinalContent } from '../utils/finalContent';
@@ -482,7 +483,7 @@ type HistoryTimelineEntry =
   | { kind: 'message'; message: Message }
   | { kind: 'tool_call'; at: string; payload: Record<string, unknown> }
   | { kind: 'tool_result'; at: string; payload: Record<string, unknown> }
-  | { kind: 'usage_summary'; at: string; usage: UsageSummary; tokenUsageSnapshot: SessionTokenUsageSnapshot | null }
+  | { kind: 'usage_summary'; at: string; usage: UsageSummary | null; tokenUsageSnapshot: SessionTokenUsageSnapshot | null }
   | { kind: 'context_usage'; at: string; payload: Record<string, unknown> }
   | { kind: 'file_items'; at: string; files: FileDownloadItem[] }
   | { kind: 'team_member'; at: string; payload: { event: Record<string, unknown> } }
@@ -1367,21 +1368,14 @@ function parseSessionHistoryTimelineEntry(
   }
 
   if (eventType === 'chat.usage_summary') {
-    const rawUsage = payload.usage;
-    if (isRecord(rawUsage)) {
-      const usage: UsageSummary = {
-        input_tokens: typeof rawUsage.input_tokens === 'number' ? rawUsage.input_tokens : 0,
-        output_tokens: typeof rawUsage.output_tokens === 'number' ? rawUsage.output_tokens : 0,
-        total_tokens: typeof rawUsage.total_tokens === 'number' ? rawUsage.total_tokens : 0,
-      };
-      if (typeof rawUsage.input_cost === 'number') usage.input_cost = rawUsage.input_cost;
-      if (typeof rawUsage.output_cost === 'number') usage.output_cost = rawUsage.output_cost;
-      if (typeof rawUsage.total_cost === 'number') usage.total_cost = rawUsage.total_cost;
+    const usage = parseUsageSummary(payload.usage);
+    const tokenUsageSnapshot = sessionTokenUsageSnapshotForHistory(payload.session_usage, sessionId, subagentId);
+    if (usage || tokenUsageSnapshot) {
       return {
         kind: 'usage_summary',
         at,
         usage,
-        tokenUsageSnapshot: sessionTokenUsageSnapshotForHistory(payload.session_usage, sessionId, subagentId),
+        tokenUsageSnapshot,
       };
     }
     return null;
@@ -1873,7 +1867,7 @@ function materializeHistoryTimeline(
       }
       for (let i = messages.length - 1; i >= 0; i -= 1) {
         if (messages[i].role === 'assistant') {
-          messages[i] = { ...messages[i], usageSummary: e.usage };
+          if (e.usage) messages[i] = { ...messages[i], usageSummary: e.usage };
           break;
         }
       }

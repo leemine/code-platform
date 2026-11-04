@@ -61,7 +61,7 @@ class FakeClient:
         if self.ask:
             self.decision = await self.options.can_use_tool('Bash', {'command': 'fixture'}, sdk.ToolPermissionContext(tool_use_id='cmd'))
         denied = isinstance(self.decision, sdk.PermissionResultDeny)
-        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', 'output', True if denied else self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
+        await self.queue.put(sdk.UserMessage([sdk.ToolResultBlock('cmd', getattr(self, 'output', 'output'), True if denied else self.tool_error)], tool_use_result=self.metadata if self.metadata is not None else {'exit_code': self.exit_code}))
         if not self.eof:
             await self.queue.put(sdk.ResultMessage('success', 1, 1, self.interrupted, 1, self.sid, result='reply'))
         await self.queue.put(None)
@@ -101,8 +101,15 @@ def host(monkeypatch, tmp_path):
     monkeypatch.setattr(session_history, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(utils, 'get_default_project_session_workspace_dir', lambda: tmp_path)
-    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared', provider='Anthropic', api_base='http://127.0.0.1:1234', api_key='private-fixture-key')
+    model = ResolvedModel(model_id='shared', source='defaults', model_name='shared', fallback_tag='shared', provider='Anthropic', api_base='http://127.0.0.1:1234', api_key='private-fixture-key')
     monkeypatch.setattr(claude, 'resolve_model', lambda req: model)
+    # Stub only the SDK transport; model selection now uses the real host path.
+    monkeypatch.setattr(interface, 'get_config', lambda: {'preferred_language': 'en', 'models': {'defaults': [{
+        'model_id': model.model_id, 'model_client_config': {
+            'client_provider': model.provider, 'model_name': model.model_name,
+            'api_base': model.api_base, 'api_key': model.api_key,
+            **model.client_options, **model.request_defaults,
+        }}]}})
     return interface.JiuWenSwarm(), {'claude': {'enabled': True}, 'permissions': {'enabled': True}}, clients, tmp_path, settings
 
 
@@ -364,7 +371,8 @@ async def test_facade_explicit_tool_error_is_not_overridden_by_zero_exit(host):
 async def test_model_transport_timeout_does_not_limit_whole_turn(host, monkeypatch):
     app, config, clients, _, _ = host
     original = claude.resolve_model
-    model = original(request()).model_copy(update={'client_options': {'timeout': 0.01}})
+    model = original(request())
+    model.client_options['timeout'] = 0.01
     monkeypatch.setattr(claude, 'resolve_model', lambda req: model)
     execute = FakeClient.execute
     async def slow_tool(self):
@@ -650,15 +658,16 @@ async def test_cancel_control_waits_for_same_owner_sdk_close(host, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_child_activity_and_summary_restore_through_existing_history(host, monkeypatch):
+@pytest.mark.parametrize('child_output', ['CHILD TOOL OUTPUT', '子输出🙂' * 30000, None], ids=['short','large','empty'])
+async def test_child_activity_and_summary_restore_through_existing_history(host, monkeypatch, child_output):
     app, config, _, _, _ = host
     async def execute(client):
         frames = [native_system(client, 'session_state_changed', state='running'),
             native_system(client, 'task_started', task_id='child', task_type='local_agent', tool_use_id='launch', description='Inspect architecture'),
             native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
             native_system(client, 'task_progress', task_id='child', description='Reading entrypoint', last_tool_name='Read', uuid='progress'),
-            sdk.AssistantMessage([sdk.ToolUseBlock('read-1','Read',{'file_path':'entry.py'})], 'shared', parent_tool_use_id='launch'),
-            sdk.UserMessage([sdk.ToolResultBlock('read-1','CHILD TOOL OUTPUT',False)], parent_tool_use_id='launch'),
+            sdk.AssistantMessage([sdk.ToolUseBlock('read-1','Read',{'file_path':'entry.py','note':child_output or ''})], 'shared', parent_tool_use_id='launch'),
+            sdk.UserMessage([sdk.ToolResultBlock('read-1',child_output,False)], parent_tool_use_id='launch'),
             sdk.UserMessage([sdk.ToolResultBlock('foreign','FOREIGN SECRET',False)], parent_tool_use_id='unrelated'),
             native_system(client,'task_notification',task_id='child',status='completed',summary='CHILD SUMMARY'),
             sdk.ResultMessage('success',1,1,False,1,client.sid,result='PARENT SUMMARY'),
@@ -669,9 +678,15 @@ async def test_child_activity_and_summary_restore_through_existing_history(host,
     try:
         chunks=[x.payload async for x in app.process_message_stream(request())]
         activities=[x for x in chunks if x.get('event_type')=='chat.subagent_activity']
-        assert any(x.get('summary')=='CHILD TOOL OUTPUT' for x in activities)
+        tool_output = next(x['summary'] for x in activities if x.get('tool_call_id')=='read-1' and x['kind']=='tool_result')
+        assert len(tool_output) <= 2000
+        if child_output and len(child_output)>2000:
+            assert 'Output truncated' in tool_output
+        else:
+            assert tool_output == (child_output or '')
         paired=[x for x in activities if x.get('tool_call_id')=='read-1']
         assert {x['kind']for x in paired}=={'tool_call','tool_result'}
+        assert all(len(x['summary'])<=2000 for x in paired)
         assert len({x['activity_id']for x in paired})==2
         assert len([x for x in activities if x.get('summary')=='Reading entrypoint'])==1
         assert next(x for x in activities if x.get('summary')=='Reading entrypoint')['kind']=='thinking'
@@ -681,6 +696,197 @@ async def test_child_activity_and_summary_restore_through_existing_history(host,
         session_history.flush_history_writes()
         page=load_history_page('one',1,subagent_id='claude-child')
         assert any(x.get('content')=='CHILD SUMMARY' for x in page['messages'])
-        assert any(x.get('event_type')=='chat.subagent_activity' for x in page['messages'])
+        assert any(x.get('event_type')=='chat.subagent_activity' and x.get('content')==tool_output for x in page['messages'])
         assert 'claude-child' in session_history.list_session_subagent_ids('one')
     finally:await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('shape', ['controls','unicode','blocks'])
+@pytest.mark.parametrize('code', [0,7,None])
+async def test_large_tool_result_original_facade_history_and_wire(host, shape, code):
+    from jiuwenswarm.common.e2a.wire_codec import encode_agent_chunk_for_wire, parse_agent_server_wire_chunk
+    from jiuwenswarm.server.ws_send import send_wire_payload
+    from gateway.common.ws_limits import AGENT_WS_SEND_BUDGET_BYTES
+    from jiuwenswarm.server.control.history_service import load_history_page
+    app, config, clients, _, settings = host
+    text = '\x00' * 1048610 if shape=='controls' else '工具输出🙂' * 30000
+    output = [{'type':'text','text':text}] if shape=='blocks' else text
+    settings.update(output=output, exit_code=code)
+    native_text = output if isinstance(output,str) else json.dumps(output,ensure_ascii=False)
+    original = json.dumps(output,ensure_ascii=False)
+    class WebSocket:
+        async def send(self, value): self.sent=value
+    await app.create_instance(config)
+    try:
+        chunks=[x async for x in app.process_message_stream(request())]
+        chunk=next(x for x in chunks if x.payload.get('event_type')=='chat.tool_result')
+        p=chunk.payload
+        assert p['content']==p['result'] and len(p['result'])==60000
+        assert 'Output truncated' in p['result']
+        assert p['provider']['claude']['is_error'] is False
+        assert p['provider']['claude']['received_output_bytes']==len(native_text.encode('utf-8'))
+        assert p['provider']['claude']['displayed_output_chars']==60000
+        assert p['exit_code']==code and p['command_success'] is (None if code is None else code==0)
+        assert p['success'] is (True if code is None else code==0)
+        assert p['task_acceptance']=='unknown' and 'rendered_result' not in p
+        assert json.dumps(settings['output'],ensure_ascii=False)==original
+        ws=WebSocket()
+        assert await send_wire_payload(ws,encode_agent_chunk_for_wire(chunk,response_id='bounded',sequence=1))
+        assert len(ws.sent.encode('utf-8'))<AGENT_WS_SEND_BUDGET_BYTES
+        assert parse_agent_server_wire_chunk(json.loads(ws.sent)).payload==p
+        session_history.flush_history_writes()
+        row=next(x for x in load_history_page('one',1)['messages'] if x.get('tool_call_id')=='cmd')
+        assert row['content']==row['result']==p['result'] and row['provider']==p['provider']
+        assert next(x.payload['content'] for x in chunks if x.payload.get('event_type')=='chat.final')=='reply'
+        settings['output']='short next turn'
+        follow=[x.payload async for x in app.process_message_stream(request())]
+        assert next(x for x in follow if x.get('event_type')=='chat.tool_result')['result']=='short next turn'
+        assert clients[1].options.resume==clients[0].sid
+    finally: await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('size',[0,60000,60001])
+async def test_noncommand_boundary_keeps_unknown_success_and_short_text(host,size):
+    app,config,_,_,settings=host
+    text='x'*size
+    settings.update(tool_name='Read',tool_error=None,output=text)
+    await app.create_instance(config)
+    try:
+        chunks=[x.payload async for x in app.process_message_stream(request())]
+        p=next(x for x in chunks if x.get('event_type')=='chat.tool_result')
+        assert p['success'] is None and p['provider']['claude']['is_error'] is None
+        assert 'exit_code' not in p and 'command_success' not in p
+        assert p['content']==p['result'] and len(p['result'])<=60000
+        if size<=60000:
+            assert p['result']==text and 'output_truncated' not in p['provider']['claude']
+        else:assert p['provider']['claude']['output_truncated'] is True
+    finally:await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_facade_prepared_input_is_not_reresolved_by_provider(host, monkeypatch):
+    app, config, clients, root, _ = host
+    await app.create_instance(config)
+    original = app._build_inputs
+    prepared = []
+    def build(req):
+        inputs, memory, turn = original(req)
+        execution = inputs['_host_execution']
+        prepared.append(execution)
+        assert 'private-' not in repr(execution)
+        # Neither the Provider's compatibility resolver nor later configuration
+        # reads may replace the model already chosen by the original Facade.
+        def unexpected(*args, **kwargs):
+            raise AssertionError('Provider reinterpreted host model configuration')
+        monkeypatch.setattr(claude, 'resolve_model', unexpected)
+        return inputs, memory, turn
+    monkeypatch.setattr(app, '_build_inputs', build)
+    try:
+        chunks = [item.payload async for item in app.process_message_stream(request(project_dir=str(root), _host_execution={'model': 'FORGED_CLIENT_INPUT'}))]
+        assert len(prepared) == 1 and prepared[0].directory == str(root)
+        assert any(p.get('event_type') == 'chat.final' for p in chunks)
+        assert not any(p.get('event_type') == 'chat.error' for p in chunks)
+        assert clients
+        assert 'FORGED_CLIENT_INPUT' not in str(chunks)
+        assert prepared[0].model.model_id == 'shared'
+        from jiuwenswarm.server.runtime.agent_adapter.execution_input import prepared_input
+        with pytest.raises(ValueError, match='does not belong'):
+            prepared_input(request('another-session'), {'_host_execution': prepared[0]})
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_native_model_usage_replaces_snapshots_and_preserves_original_history(host, monkeypatch):
+    app, config, clients, root, settings = host
+    native = {
+        'main-model': {'inputTokens': 10, 'outputTokens': 5, 'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 3},
+        'child-model': {'inputTokens': 20, 'outputTokens': 6, 'cacheReadInputTokens': 2, 'cacheCreationInputTokens': 0},
+    }
+
+    async def execute(self):
+        await self.queue.put(sdk.SystemMessage('session_state_changed', {'session_id': self.sid, 'state': 'working'}))
+        duplicate = sdk.AssistantMessage([sdk.TextBlock('partial')], 'main-model',
+            message_id='one-response', usage={'input_tokens': 999999, 'output_tokens': 1})
+        await self.queue.put(duplicate)
+        await self.queue.put(duplicate)
+        # First result followed by an automatic native follow-up, on the same reader.
+        for models in [dict(list(native.items())[:1]), native, native]:
+            await self.queue.put(sdk.ResultMessage('success', 1, 1, False, 1, self.sid,
+                result='native reply', model_usage=models, usage={'input_tokens': 999999}))
+        await self.queue.put(sdk.SystemMessage('session_state_changed', {'session_id': self.sid, 'state': 'idle'}))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        snapshots = [c for c in chunks if c.get('event_type') == 'chat.usage_summary']
+        assert len(snapshots) == 2
+        latest = snapshots[-1]
+        assert latest['session_usage']['scope'] == 'native'
+        assert latest['session_usage']['main'] == {
+            'input_tokens': 30, 'output_tokens': 11, 'cached_input_tokens': 2,
+            'cache_write_input_tokens': 3,
+            'input_calls': None, 'output_calls': None, 'calls_total': None,
+        }
+        assert all(v is None for v in latest['session_usage']['others'].values())
+        assert latest['provider']['claude']['includes_subagents'] is True
+        assert 'usage' not in latest
+        assert any(c.get('event_type') == 'chat.final' for c in chunks)
+        records = session_history.read_session_history_records('one')
+        restored = max((r['session_usage'] for r in records if r.get('event_type') == 'chat.usage_summary'), key=lambda r: r['revision'])
+        assert restored == latest['session_usage']
+        # New SDK calls may reset counters on older CLIs: do not add prior snapshots.
+        native.clear()
+        native['same-model'] = {'inputTokens': 4, 'outputTokens': 0, 'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 0}
+        again = [chunk.payload async for chunk in app.process_message_stream(request())]
+        latest = [c for c in again if c.get('event_type') == 'chat.usage_summary'][-1]
+        assert latest['session_usage']['main']['input_tokens'] == 4
+        assert latest['session_usage']['main']['output_tokens'] == 0
+        assert 'total_tokens' not in latest['session_usage']['main']
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('error', [False, True])
+async def test_native_usage_missing_fields_and_error_result_do_not_invent_counts(host, monkeypatch, error):
+    app, config, _, _, _ = host
+    async def execute(self):
+        models = {'a': {'inputTokens': 100, 'outputTokens': 2, 'cacheReadInputTokens': 0},
+                  'b': {'inputTokens': 200, 'outputTokens': None, 'cacheReadInputTokens': 0}}
+        await self.queue.put(sdk.ResultMessage('error_during_execution' if error else 'success', 1, 1, error, 1,
+            self.sid, model_usage=models, usage={'output_tokens': 500}, result='reply'))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        main = next(c['session_usage']['main'] for c in chunks if c.get('event_type') == 'chat.usage_summary')
+        assert main['input_tokens'] == 300
+        assert main['output_tokens'] is None
+        assert main['cached_input_tokens'] == 0
+        assert 'total_tokens' not in main and 'cache_write_input_tokens' not in main
+        assert any(c.get('event_type') == ('chat.error' if error else 'chat.final') for c in chunks)
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_execution_crash_zeroed_native_totals_are_not_a_successful_zero_usage(host, monkeypatch):
+    app, config, _, _, _ = host
+    async def execute(self):
+        await self.queue.put(sdk.ResultMessage('error_during_execution', 1, 1, True, 1, self.sid,
+            model_usage={'model': {'inputTokens': 0, 'outputTokens': 0,
+                'cacheReadInputTokens': 0, 'cacheCreationInputTokens': 0}}))
+    monkeypatch.setattr(FakeClient, 'execute', execute)
+    await app.create_instance(config)
+    try:
+        chunks = [chunk.payload async for chunk in app.process_message_stream(request())]
+        event = next(c for c in chunks if c.get('event_type') == 'chat.usage_summary')
+        assert all(v is None for v in event['session_usage']['main'].values())
+        assert event['provider']['claude']['counter_continuity'] == 'unknown'
+        assert event['provider']['claude']['reported_counts']['input_tokens'] == 0
+        assert any(c.get('event_type') == 'chat.error' for c in chunks)
+    finally:
+        await app.cleanup()

@@ -21,12 +21,7 @@ class Equipment:
     snapshot: dict = field(default_factory=dict)
 
 
-def names(value, field_name):
-    if value is None:
-        return []
-    if not isinstance(value, list) or any(not isinstance(x, str) or not x.strip() for x in value):
-        raise ValueError(f"Invalid equipment field: {field_name}")
-    return list(dict.fromkeys(x.strip() for x in value))
+from ..equipment import names
 
 
 def contained(root: Path, relative: str) -> Path:
@@ -117,10 +112,6 @@ def read_package(result: Equipment, directory: Path, *, template: bool):
 
 
 def mcp_config(name, entry, directory):
-    from jiuwenswarm.server.runtime.mcp.credential import CredentialStore, resolve_placeholders
-    entry = resolve_placeholders(entry, CredentialStore(), name)
-    if "${" in json.dumps(entry):
-        raise ValueError(f"MCP credentials are unresolved: {name}")
     transport = entry.get("transport")
     if transport == "stdio":
         if entry.get("cwd") and Path(entry["cwd"]).resolve() != Path(directory).resolve():
@@ -141,53 +132,24 @@ def mcp_config(name, entry, directory):
     return config
 
 
-async def resolve_equipment(params, *, directory, include_global_skills):
-    from jiuwenswarm.server.runtime import extension_package_manager as packages
-    from jiuwenswarm.common.config import get_mcp_server_config
-
-    template = params.get("agent_template_name", "")
-    if not isinstance(template, str):
-        raise ValueError("Invalid equipment field: agent_template_name")
-    plugins = names(params.get("plugin_names"), "plugin_names")
-    explicit_mcps = names(params.get("mcp"), "mcp")
-    result = Equipment(snapshot={"agent_template_name": template, "plugin_names": plugins, "mcp": explicit_mcps})
-    if template:
-        if not packages.is_agent_template_installed(template):
-            raise ValueError(f"agent_template not installed: {template}")
-        read_package(result, packages.resolve_agent_template_dir(template), template=True)
-    for name in plugins:
-        if not packages.is_plugin_allowed(name):
-            raise ValueError(f"plugin not installed: {name}")
-        read_package(result, packages.resolve_plugin_dir(name), template=False)
-    needed = list(dict.fromkeys(explicit_mcps + packages.collect_connectors_for_packages(
-        agent_template_id=template or None, plugin_ids=plugins)))
-    pending = packages.unready_connectors(needed)
-    if pending:
-        raise ValueError("equipment connector not connected: " + ", ".join(pending))
-    for name in needed:
-        entry = get_mcp_server_config(name)
-        if not entry:
-            raise ValueError(f"MCP has no portable connection configuration: {name}")
+def convert_equipment(assets, *, directory):
+    """Convert prepared assets; do not read Swarm configuration or credentials."""
+    result = Equipment(snapshot=dict(assets.snapshot))
+    for path, template in assets.packages:
+        read_package(result, path, template=template)
+    if set(result.skills) & assets.disabled_skills:
+        raise ValueError("Equipment package references a disabled Skill")
+    for path, detail in assets.skills:
+        add_skill(result, path, detail)
+    if set(assets.selected_skills) - set(result.skills):
+        raise ValueError("Requested equipment Skill is unavailable or disabled")
+    for name, entry in assets.connectors.items():
         result.mcps[name] = mcp_config(name, entry, directory)
-    selected = names(params.get("skills"), "skills")
-    if include_global_skills or selected:
-        from jiuwenswarm.server.runtime.skill.skill_manager import SkillManager
-        manager = SkillManager()
-        if any(not manager.get_skill_enabled(name) for name in result.skills):
-            raise ValueError("Equipment package references a disabled Skill")
-        catalog = await manager.handle_skills_list({})
-        available = set(result.skills)
-        for item in catalog.get("skills", []):
-            if not item.get("installed") or item.get("enabled") is False or item.get("skill_type") == "swarm_skill":
-                continue
-            detail = await manager.handle_skills_get({"name": item["name"]})
-            file = detail.get("file_path")
-            if not file:
-                if item["name"] in selected:
-                    raise ValueError("Container Skill packs require an explicit portable Skill")
-                continue
-            add_skill(result, Path(file).parent, detail)
-            available.add(item["name"])
-        if set(selected) - available:
-            raise ValueError("Requested equipment Skill is unavailable or disabled")
     return result
+
+
+async def resolve_equipment(params, *, directory, include_global_skills):
+    """Compatibility entry; production Facade prepares assets before conversion."""
+    from ..equipment import resolve_assets
+    assets = await resolve_assets(params, include_global_skills=include_global_skills)
+    return convert_equipment(assets, directory=directory)

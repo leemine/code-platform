@@ -466,8 +466,10 @@ def _has_persistable_assistant_payload(
         return isinstance(payload.get("context_window"), dict) and isinstance(
             payload.get("parts"), dict
         )
-    if et == "chat.usage_summary" and isinstance(payload.get("usage"), dict):
-        return bool(payload["usage"])
+    if et == "chat.usage_summary":
+        return (isinstance(payload.get("usage"), dict) and bool(payload["usage"])) or (
+            isinstance(payload.get("session_usage"), dict) and bool(payload["session_usage"])
+        )
     if et == "chat.file" and payload.get("files"):
         return True
     if et == "chat.tool_call" and (

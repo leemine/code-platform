@@ -20,10 +20,33 @@ from jiuwenswarm.common.claude_adapter_config import config_snapshot, resolve_mo
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
 from .subagent_projection import SubagentProjection
+from .claude_usage import ClaudeUsage
 from . import session_recovery as recovery
+from ..execution_input import AdapterCapabilities
 
 
 logger = logging.getLogger(__name__)
+
+
+_TOOL_OUTPUT_CHAR_LIMIT = 60000
+_ACTIVITY_CHAR_LIMIT = 2000
+
+
+def _bounded_output(text: str, limit: int) -> tuple[str, dict]:
+    """Bound the Swarm projection, leaving the native tool/model context intact."""
+    if len(text) <= limit:
+        return text, {}
+    received_bytes = len(text.encode("utf-8"))
+    marker = (f"\n[Output truncated by Swarm; SDK returned {len(text)} characters / "
+              f"{received_bytes} UTF-8 bytes.]")
+    displayed = text[:limit - len(marker)] + marker
+    return displayed, {
+        "output_truncated": True,
+        "received_output_chars": len(text),
+        "received_output_bytes": received_bytes,
+        "displayed_output_chars": len(displayed),
+        "displayed_output_bytes": len(displayed.encode("utf-8")),
+    }
 
 
 @dataclass
@@ -111,9 +134,11 @@ class Session:
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     native_tasks: _NativeTasks = field(default_factory=_NativeTasks)
     producer_done: asyncio.Event = field(default_factory=asyncio.Event)
+    usage: ClaudeUsage = field(default_factory=ClaudeUsage)
 
 
 class ClaudeAdapter:
+    capabilities = AdapterCapabilities(native_resume=True)
     permission_profiles = ("default", "full_access")
     supports_native_model_forks = False
     supports_native_plan_state = False
@@ -174,16 +199,20 @@ class ClaudeAdapter:
             pass
         return rendered, turn
 
+    def execution_input_policy(self, request):
+        from ..execution_input import ExecutionInputPolicy
+        session = self._sessions.get(request.session_id or "default")
+        return ExecutionInputPolicy(bound_directory=session.directory if session else None)
+
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
         if needed:
             raise ValueError("Claude Swarm MCP equipment is not supported yet")
 
-    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None):
+    async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None):
         self._validate_mode(mode)
         if self._settings is None:
             raise RuntimeError("Claude adapter has not been configured")
-        from jiuwenswarm.common.utils import get_agent_sessions_dir, get_default_project_session_workspace_dir
-        from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
+        from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
         current = self._sessions.get(session_id)
         directory = Path(project_dir or (current.directory if current else get_default_project_session_workspace_dir())).expanduser()
         if not directory.is_absolute() or not directory.is_dir():
@@ -195,6 +224,8 @@ class ClaudeAdapter:
             if current.directory != directory:
                 raise ValueError("Claude session workspace cannot change after binding")
             return
+        from ..execution_input import session_facts
+        facts = facts or session_facts(session_id)
         binding = recovery.load("claude", session_id, directory)
         if binding:
             recovery.require_settings(binding, self._settings)
@@ -202,9 +233,9 @@ class ClaudeAdapter:
                 native_id=binding["native_id"], started=True, model_revision=binding["model_revision"],
                 desired_permission=binding["permission"])
             return
-        if any(row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed" for row in read_session_history_records(session_id)):
+        if facts.has_assistant_history:
             raise ValueError("Claude cannot restore a released session without a recovery binding; its original native session cannot be identified")
-        parent = get_agent_sessions_dir() / ".claude-direct"
+        parent = facts.storage_dir / ".claude-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
         self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
@@ -282,11 +313,15 @@ class ClaudeAdapter:
         from claude_agent_sdk import ClaudeSDKClient, AssistantMessage, UserMessage, SystemMessage, StreamEvent, ResultMessage, ToolUseBlock, ToolResultBlock, TextBlock
         if request.req_method not in {None, ReqMethod.CHAT_SEND} or request.params.get("answers"):
             raise ValueError("Use the active Claude control input channel")
+        from ..execution_input import prepared_input
+        execution = prepared_input(request, inputs)
         sid = request.session_id or "default"
         await self.prepare_session(session_id=sid, channel_id=request.channel_id, mode=request.params.get("mode", "agent"),
-                                   project_dir=inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"))
+                                   project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
+                                   facts=execution.session if execution else None)
         session = self._sessions[sid]
-        model = resolve_model(request)
+        from jiuwenswarm.common.claude_adapter_config import validate_model
+        model = validate_model(execution.model) if execution else resolve_model(request)
         revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
         if session.model_revision and session.model_revision != revision:
             raise ValueError("Claude model configuration changed; create a new session")
@@ -389,12 +424,13 @@ class ClaudeAdapter:
                         for block in message.content:
                             if isinstance(block, ToolUseBlock):
                                 tools[block.id] = block.name
-                                activity = children.activity(task["task_id"], "tool_call",
-                                    block.name + ": " + json.dumps(block.input, ensure_ascii=False),
+                                summary, _ = _bounded_output(block.name + ": " + json.dumps(block.input, ensure_ascii=False), _ACTIVITY_CHAR_LIMIT)
+                                activity = children.activity(task["task_id"], "tool_call", summary,
                                     identity=block.id, tool_name=block.name, tool_call_id=block.id)
                             elif isinstance(block, ToolResultBlock):
                                 content = block.content if isinstance(block.content, str) else "\n".join(
                                     c.get("text", "") for c in (block.content or []) if isinstance(c, dict) and c.get("type") == "text")
+                                content, _ = _bounded_output(content, _ACTIVITY_CHAR_LIMIT)
                                 activity = children.activity(task["task_id"], "tool_result", content,
                                     identity=block.tool_use_id, tool_name=tools.get(block.tool_use_id),
                                     tool_call_id=block.tool_use_id, ok=False if block.is_error else None)
@@ -430,9 +466,10 @@ class ClaudeAdapter:
                         if code is not None and not block.is_error:
                             success = code == 0
                         content = block.content if isinstance(block.content, str) else json.dumps(block.content, ensure_ascii=False)
+                        content, projection = _bounded_output(content, _TOOL_OUTPUT_CHAR_LIMIT)
                         result = {"event_type": "chat.tool_result", "tool_call_id": block.tool_use_id, "tool_name": name,
                             "content": content, "result": content, "status": "error" if block.is_error else "completed", "invocation_status": "completed",
-                            "provider": {"claude": {"is_error": block.is_error}}, "success": success, "task_acceptance": "unknown"}
+                            "provider": {"claude": {"is_error": block.is_error, **projection}}, "success": success, "task_acceptance": "unknown"}
                         if name == "Bash":
                             result.update(exit_code=code, command_success=code == 0 if code is not None else None)
                         yield self._chunk(request, result)
@@ -444,6 +481,11 @@ class ClaudeAdapter:
                     if not input_accepted and not message.is_error:
                         logger.info("Claude pre-input result ignored request=%s native_session=%s", request.request_id, session.native_id)
                         continue
+                    if input_accepted:
+                        usage = session.usage.project(message.model_usage, session_id=sid, native_id=session.native_id,
+                            crashed=message.subtype == "error_during_execution")
+                        if usage is not None:
+                            yield self._chunk(request, usage)
                     result_message = message
                     if message.is_error and not session.cancelled:
                         terminal = True

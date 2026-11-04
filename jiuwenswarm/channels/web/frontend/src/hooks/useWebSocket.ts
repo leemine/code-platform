@@ -36,7 +36,7 @@ import {
   Session,
   ToolResult,
   ToolCall,
-  UsageSummary,
+  parseUsageSummary,
   FileDownloadItem,
   ContextCompressionRuntime,
   ContextCompressionSummary,
@@ -5608,7 +5608,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (payload.session_usage) {
           useSessionStore.getState().receiveSessionTokenUsage(payload.session_usage);
         }
-        const usage = payload.usage as UsageSummary | undefined;
+        const usage = parseUsageSummary(payload.usage);
         if (!usage) {
           console.log('[usage_summary] no usage field in payload');
           return;

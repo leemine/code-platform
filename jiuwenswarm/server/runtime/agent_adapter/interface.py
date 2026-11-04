@@ -1991,6 +1991,8 @@ class JiuWenSwarm:
         )
 
         adapter = self._ensure_adapter(mode=self._adapter_mode_for_request(request))
+        from .execution_input import admit_equipment
+        admit_equipment(adapter, params)
         final_query, turn = adapter.build_query(request, turn)
 
         inputs: dict[str, Any] = {
@@ -2079,6 +2081,11 @@ class JiuWenSwarm:
         # The turn carries both the user's own words (``turn.text``, needed by
         # the team path for directive / ``$member`` / slash parsing) and the
         # single renderer that produced ``inputs["query"]``.
+        from .agent_adapters import PreparedInputAdapter
+        if (request.req_method in {None, ReqMethod.CHAT_SEND} and not params.get("answers")
+                and isinstance(self._adapter, PreparedInputAdapter)):
+            from .execution_input import prepare_execution_input
+            inputs["_host_execution"] = prepare_execution_input(self._adapter, request, inputs, config=config_base)
         return inputs, memory_mode, turn
 
     def _make_retry_without_a2ui_call(
@@ -3330,6 +3337,8 @@ class JiuWenSwarm:
         if callable(moa_access):
             reconcile_kwargs.update(moa_access(request))
         reconcile_kwargs["execution_request"] = request
+        if "_host_execution" in inputs:
+            reconcile_kwargs["execution_input"] = inputs["_host_execution"]
         try:
             await self.reconcile_session_mcp(
                 request.session_id,
@@ -4056,6 +4065,8 @@ class JiuWenSwarm:
         if callable(moa_access):
             reconcile_kwargs.update(moa_access(request))
         reconcile_kwargs["execution_request"] = request
+        if "_host_execution" in inputs:
+            reconcile_kwargs["execution_input"] = inputs["_host_execution"]
         try:
             await self.reconcile_session_mcp(
                 request.session_id,
@@ -5499,6 +5510,7 @@ class JiuWenSwarm:
         model_name: str | None = None,
         history_before_request_id: str | None = None,
         execution_request: AgentRequest | None = None,
+        execution_input: Any = None,
         runtime_binding: dict[str, Any] | None = None,
         moa_enabled: bool | None = None,
         model_selection: Any = None,
@@ -5517,6 +5529,11 @@ class JiuWenSwarm:
         """
         adapter = self._adapter
         if adapter is None:
+            return
+        from .agent_adapters import EquipmentAwareAdapter
+        if isinstance(adapter, EquipmentAwareAdapter) and execution_request is not None:
+            from .equipment import reconcile_equipment
+            await reconcile_equipment(adapter, session_id, execution_request, execution=execution_input)
             return
         reconcile = getattr(adapter, "reconcile_session_mcp", None)
         if reconcile is None:
@@ -5717,6 +5734,8 @@ class JiuWenSwarm:
         adapter = self._adapter
         if adapter is None:
             raise ValueError("Agent adapter not available")
+        from .execution_input import require_capability
+        require_capability(adapter, "context_usage")
         return await adapter.get_context_usage(session_id=session_id)
 
     async def get_context_usage_event(
@@ -5784,6 +5803,8 @@ class JiuWenSwarm:
         adapter = self._adapter
         if adapter is None:
             raise ValueError("Agent adapter not available")
+        from .execution_input import require_capability
+        require_capability(adapter, "manual_compaction")
         return await adapter.compact_partial(
             session_id=session_id,
             turn_index=turn_index,
