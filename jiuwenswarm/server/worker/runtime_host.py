@@ -79,11 +79,9 @@ class WorkerRuntime:
         )
         if not all(flushed):
             raise RuntimeError("Worker shutdown persistence barrier did not complete")
-        from jiuwenswarm.server.runtime.session.kv_cache.kv_cache_application_owner import (
-            get_kv_cache_application_owner,
-        )
-
-        await get_kv_cache_application_owner().close()
+        close_kv_cache = getattr(self.server, "close_application_kv_cache", None)
+        if callable(close_kv_cache):
+            await close_kv_cache()
         telemetry.shutdown_runtime_observability()
         from jiuwenswarm.runtime.kernel import process_kernel
 

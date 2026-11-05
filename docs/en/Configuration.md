@@ -289,6 +289,8 @@ KV Cache compute affinity manages Session cache through the unified `agent_hint`
 - **Default**: `false` (disabled)
 - **Purpose**: When enabled, the system prefetches, offloads, and evicts KV Cache along the Session lifecycle.
 
+On final Worker shutdown, Swarm closes its existing KV Cache owner after session history and metadata are flushed. An installation without Core has no KV Cache owner and skips that step.
+
 **KV Cache Explanation**:
 - KV Cache is a cache used by large language models during inference to store intermediate computation results
 - As conversation rounds increase, KV Cache continues to grow, consuming significant GPU memory

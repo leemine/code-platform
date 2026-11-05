@@ -2312,6 +2312,12 @@ class AgentWebSocketServer:
         self._runtime_services_started = False
         logger.info("[AgentWebSocketServer] 已停止")
 
+    async def close_application_kv_cache(self) -> None:
+        """Close the existing KVC owner during final Worker shutdown."""
+        owner = self._kv_cache_application_owner
+        if owner is not None:
+            await owner.close()
+
     async def _suspend_kv_cache(self) -> None:
         """Detach KVC locally without sending management requests during stop."""
         owner = getattr(self, "_kv_cache_application_owner", None)
