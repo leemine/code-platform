@@ -188,9 +188,6 @@ def shutdown_resources(monkeypatch):
         "jiuwenswarm.server.runtime.session.session_metadata": SimpleNamespace(
             flush_pending_writes=lambda timeout: flush("metadata", timeout),
         ),
-        "jiuwenswarm.server.runtime.session.kv_cache.kv_cache_application_owner": SimpleNamespace(
-            get_kv_cache_application_owner=lambda: SimpleNamespace(close=close_kv),
-        ),
         "jiuwenswarm.agents.harness.team.team_manager": SimpleNamespace(
             shutdown_team_observability=lambda: events.append("team.close"),
         ),
@@ -203,7 +200,7 @@ def shutdown_resources(monkeypatch):
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
-    return SimpleNamespace(events=events, outcomes=outcomes)
+    return SimpleNamespace(events=events, outcomes=outcomes, close_kv=close_kv)
 
 
 @pytest.mark.asyncio
@@ -226,7 +223,8 @@ async def test_shutdown_cancels_owned_tasks_before_server_and_joins_persistence(
         resources.events.append("server.stop")
 
     runtime = WorkerRuntime(
-        server=SimpleNamespace(stop=stop_server), stop_event=asyncio.Event(),
+        server=SimpleNamespace(stop=stop_server, close_application_kv_cache=resources.close_kv),
+        stop_event=asyncio.Event(),
         image_task=tasks["image"], proactive_task=tasks["proactive"],
         teammate_task=tasks["teammate"], zen_task=tasks["zen"],
     )
@@ -259,7 +257,10 @@ async def test_shutdown_reports_incomplete_persistence_before_releasing_stores(
     async def stop_server():
         resources.events.append("server.stop")
 
-    runtime = WorkerRuntime(server=SimpleNamespace(stop=stop_server), stop_event=asyncio.Event())
+    runtime = WorkerRuntime(
+        server=SimpleNamespace(stop=stop_server, close_application_kv_cache=resources.close_kv),
+        stop_event=asyncio.Event(),
+    )
     with pytest.raises(RuntimeError, match="persistence barrier did not complete"):
         await runtime.shutdown()
 

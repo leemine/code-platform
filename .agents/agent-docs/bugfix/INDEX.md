@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 21 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 22 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -32,10 +32,11 @@ generated: true
 | [jiuwenswarm/server](#module-15) | 1 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-16) | 6 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-17) | 6 |
-| [scripts](#module-18) | 1 |
-| [server/worker](#module-19) | 1 |
-| [settings](#module-20) | 1 |
-| [未分类](#module-21) | 3 |
+| [jiuwenswarm/server/worker](#module-18) | 1 |
+| [scripts](#module-19) | 1 |
+| [server/worker](#module-20) | 1 |
+| [settings](#module-21) | 1 |
+| [未分类](#module-22) | 3 |
 
 <a id="module-1"></a>
 
@@ -187,13 +188,21 @@ generated: true
 
 <a id="module-18"></a>
 
+## jiuwenswarm/server/worker
+
+| ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
+|---|---|---|---|---|---|---|
+| [B_20261105_1239_kvc-shutdown-without-core](jiuwenswarm/server/worker/B_20261105_1239_kvc-shutdown-without-core.md) | B | 无 Core Worker 的 KV Cache 退出修复 | leemine | jiuwenswarm/server/worker | jiuwenswarm/server/worker/runtime_host.py, jiuwenswarm/server/agent_ws_server.py, tests/unit_tests/agentserver/test_worker_runtime_ownership.py | 无独立 D：用户确认只修 KV Cache 的退出路径，保留 Native 释放流程，分别验证三家外部 Provider。 |
+
+<a id="module-19"></a>
+
 ## scripts
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B_20261030_2041_opencode-cli-discovery](agent_adapter/B_20261030_2041_opencode-cli-discovery.md) | B | OpenCode 桌面 PATH 缺口与传输边界收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, scripts | jiuwenswarm/server/runtime/agent_adapter/providers/cli.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_transport.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, tests/unit_tests/agentserver/test_opencode_direct_adapter.py, scripts/assemble-electron-linux.py | 无独立 D：用户确认保留官方 HTTP/SSE 并隔离传输边界；延续管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 的外部 Provider 桌面候选。 |
 
-<a id="module-19"></a>
+<a id="module-20"></a>
 
 ## server/worker
 
@@ -201,7 +210,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [B_20261030_1607_opencode-permission-profiles](agent_adapter/B_20261030_1607_opencode-permission-profiles.md) | B | OpenCode Full Access 与原生权限、生效状态接入 | leemine | agent_adapter, server/worker, channels/web/frontend | jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, jiuwenswarm/server/runtime/agent_adapter/agent_adapters.py, jiuwenswarm/server/runtime/agent_adapter/interface.py, jiuwenswarm/server/worker/dispatcher.py, jiuwenswarm/common/config_panel/execution_provider_settings.py, jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/config/permissionProfiles.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/index.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/InputArea.tsx | 无独立 D：用户确认复用既有 reload/Runtime/权限下拉的最小接入方案，无独立子仓设计。 |
 
-<a id="module-20"></a>
+<a id="module-21"></a>
 
 ## settings
 
@@ -209,7 +218,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [B_20261031_1930_optional-provider-menu](desktop/B_20261031_1930_optional-provider-menu.md) | B | 桌面安装 SDK 后执行引擎不可选 | leemine | desktop, config_panel, settings | jiuwenswarm/common/config_panel/execution_provider_settings.py, jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/features/settings/modules/agent/useExternalCliInstallCompletion.ts, jiuwenswarm/channels/web/frontend/src/features/settings/modules/agent/ExternalCliAgentsSettings.tsx, jiuwenswarm/channels/web/frontend/src/components/ExternalCliAgentsSection.tsx | 无独立 D：沿原 Third-party Agents 配置/安装和 Front 执行器目录职责修复；不增加执行流程。 |
 
-<a id="module-21"></a>
+<a id="module-22"></a>
 
 ## 未分类
 
