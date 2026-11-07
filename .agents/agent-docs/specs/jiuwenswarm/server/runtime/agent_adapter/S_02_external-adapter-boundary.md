@@ -277,7 +277,13 @@ OpenCode 自有服务使用同一宿主模型快照生成原生配置，保留 a
 
 EquipmentAwareAdapter 是可选的原生装载接缝。原 Facade reconcile_session_mcp 中，宿主资产服务负责安装/启用/连接/凭据及有效选择，OpenCode 负责 persona/Skill/MCP 的原生转换、私有装载与查询核验；唯一 session_equipment 由宿主成功后保存。跨 await 校验原 Runtime 的 generation/关闭状态、当前任务取消及并发装备提交；失败、取消和失效不覆盖旧快照。原生部分配置失败时保留拒绝执行标记，须重新成功 reconcile，不新增 Turn 队列或取消状态机。控制答案不挂载装备；旧 Native reconcile 签名仍按原支持参数委托。
 
-AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude/Codex 在 P1 阶段仍拒绝未实现的 Swarm 装备，主角色指令见 P2 小节。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
+AdapterCapabilities 描述接入实现而非官方 SDK 全能力。OpenCode 现有模板/Skill/MCP 与 persona/用户提问保留；Claude 仍拒绝未实现的 Swarm 装备；Codex 仅声明会话显式选择的 MCP，细节见下节。主角色指令见 P2 小节。三家正常原生 resume 复用既有实现，不承诺运行中强杀接管。主动上下文查询和 Swarm 手动压缩尚未实现，相应 Facade 入口明确 provider_capability_unsupported，不冒充零用量或已压缩；Codex被动用量/窗口投影见下节。无声明的 Native/旧插件保持原行为，不新增前端控件。
+
+## Codex 会话 MCP
+
+Codex 单 Agent／Code 复用 `EquipmentAwareAdapter` 和原 `chat.send.mcp`。已连接的 Streamable HTTP 连接器由用户显式选择，省略沿用，空列表清除。支持 HTTPS 和回环 HTTP 的静态请求头；旧 SSE、stdio、OAuth、插件或专家模板附带资源当前不装载。凭据沿原连接器服务解析，通过每个 Codex App Server 的环境传给原生 HTTP 请求，配置只传环境变量引用。
+
+在空闲会话中，选择或连接配置变化会重建该会话拥有的 App Server，按原绑定恢复相同线程。适配器用 `mcpServerStatus/list` 确认所选工具已发现且移除的 Swarm 管理工具不再存在，然后交给原装备提交。装载失败时本轮不发模型请求，已确认的选择保留。原生确认型空表单在默认权限下走原工具审批通道，核对当前线程、轮次及连接器；复杂表单和 URL 授权拒绝。工具开始、结果与失败沿原事件和有界历史投影。
 
 ## Codex 原生用量只读投影
 

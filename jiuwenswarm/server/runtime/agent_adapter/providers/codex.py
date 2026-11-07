@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict
 from jiuwenswarm.common.external_adapter_factories import create_codex
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
+from .codex_mcp import ELICITATION, McpSelection, approval_reply, confirm_mcp, is_confirmation, prepare_mcp
 from .codex_config import availability, config_snapshot, model_overrides, resolve_model
 from .subagent_projection import SubagentProjection
 from .codex_usage import CodexUsage
@@ -76,6 +77,8 @@ class Session:
     model_revision: str = ""
     role_instructions: str | None = field(default=None, repr=False)
     role_refresh_uncertain: bool = False
+    mcp: McpSelection | None = field(default=None, repr=False)
+    new_thread: bool = False
     active: bool = False
     cancelled: bool = False
     cancel_acknowledged: bool = False
@@ -183,8 +186,46 @@ class CodexAdapter:
         return ExecutionInputPolicy(bound_directory=session.directory if session else None)
 
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
-        if needed:
-            raise ValueError("Codex Swarm MCP equipment is not supported yet")
+        if execution_request is None:
+            if needed:
+                raise ValueError("Codex MCP equipment requires the original request")
+            return
+        from ..equipment import reconcile_equipment
+        return await reconcile_equipment(self, session_id, execution_request)
+
+    def equipment_input_policy(self, session_id, request, *, execution=None):
+        from ..equipment import EquipmentPolicy
+        session = self._sessions.get(session_id)
+        directory = (execution.directory if execution else
+                     request.params.get("workspace_dir") or request.params.get("project_dir") or request.params.get("cwd"))
+        return EquipmentPolicy(directory or (session.directory if session else None))
+
+    async def apply_equipment(self, sid, request, assets, *, directory, execution=None, ensure_current):
+        selection = prepare_mcp(assets)
+        current = self._sessions.get(sid)
+        if not selection.servers and (current is None or current.mcp is None):
+            return  # Ordinary sessions have no Swarm MCP connection to change.
+        await self.prepare_session(session_id=sid, channel_id=request.channel_id,
+                                   mode=request.params.get("mode", "agent"), project_dir=directory,
+                                   facts=execution.session if execution else None)
+        session = self._sessions[sid]
+        from jiuwenswarm.common.codex_adapter_config import validate_model
+        model = validate_model(execution.model) if execution else resolve_model(request)
+        role = execution.main_agent_role.instructions if execution and execution.main_agent_role else ""
+        async with session.lock:
+            if session.active or (session.cancelled and not session.cancel_confirmed):
+                raise RuntimeError("Codex MCP cannot change before the current turn stops")
+            ensure_current()
+            if session.client and selection == session.mcp:
+                return
+            self._model_revision(session, model)
+            if session.client:
+                # Same-client thread/resume retains the old MCP runtime.
+                await asyncio.to_thread(session.client.close)
+                session.client = None
+            ensure_current()
+            await self._connect(session, model, role, selection=selection, ensure_current=ensure_current)
+            session.mcp = selection
 
     async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None):
         self._validate_mode(mode)
@@ -234,7 +275,10 @@ class CodexAdapter:
 
     def _approval(self, session, loop, method, params):
         params = params or {}
-        if method not in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+        if method == ELICITATION:
+            if not is_confirmation(params, session.mcp):
+                return approval_reply(method, "decline")
+        elif method not in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
             # Unknown permissions/tools never inherit the SDK's accept-all default.
             if method == "item/permissions/requestApproval":
                 return {"permissions": {}, "scope": "turn"}
@@ -246,10 +290,11 @@ class CodexAdapter:
             if future.done():
                 return
             if not session.active or session.cancelled or params.get("threadId") != session.thread_id:
-                future.set_result({"decision": "cancel"})
+                future.set_result(approval_reply(method, "cancel"))
                 return
-            if session.turn_id and params.get("turnId") != session.turn_id:
-                future.set_result({"decision": "cancel"})
+            if ((method == ELICITATION and not params.get("turnId"))
+                    or (session.turn_id and params.get("turnId") != session.turn_id)):
+                future.set_result(approval_reply(method, "cancel"))
                 return
             session.pending[identity] = (future, method, params)
             session.control_ready.set()
@@ -260,13 +305,13 @@ class CodexAdapter:
         except concurrent.futures.TimeoutError:
             future.cancel()
             loop.call_soon_threadsafe(session.pending.pop, identity, None)
-            return {"decision": "cancel"}
+            return approval_reply(method, "cancel")
 
     @staticmethod
     def _release_controls(session):
-        for future, _, _ in session.pending.values():
+        for future, method, _ in session.pending.values():
             if not future.done():
-                future.set_result({"decision": "cancel"})
+                future.set_result(approval_reply(method, "cancel"))
         session.pending.clear()
         session.control_ready.set()
 
@@ -293,14 +338,17 @@ class CodexAdapter:
         session.role_instructions = role
         session.role_refresh_uncertain = False
 
-    async def _connect(self, session, model, role: str = ""):
-        from openai_codex.client import CodexClient, CodexConfig
+    @staticmethod
+    def _model_revision(session, model):
         revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
         if session.model_revision and revision != session.model_revision:
             raise ValueError("Codex model configuration changed; restore the original configuration before resuming")
+        return revision
+
+    async def _connect(self, session, model, role: str = "", *, selection=None, ensure_current=None):
+        from openai_codex.client import CodexClient, CodexConfig
+        revision = self._model_revision(session, model)
         if session.client:
-            if revision != session.model_revision:
-                raise ValueError("Codex model configuration changed; create a new session")
             return
         loop = asyncio.get_running_loop()
         home = session.root / "home"
@@ -311,8 +359,12 @@ class CodexAdapter:
                "XDG_CACHE_HOME": str(session.root / "cache"), "APPDATA": str(session.root / "appdata"),
                "LOCALAPPDATA": str(session.root / "localappdata"), "OPENAI_API_KEY": "", "CODEX_API_KEY": "",
                "SWARM_CODEX_MODEL_KEY": model.api_key}
+        overrides = model_overrides(model, self._settings)
+        if selection is not None and selection.env:
+            env.update(selection.env)
+            overrides += ('shell_environment_policy.exclude=["SWARM_CODEX_MCP_*"]',)
         config = CodexConfig(codex_bin=self._settings.get("cli_path"), cwd=session.directory, env=env,
-                             config_overrides=model_overrides(model, self._settings), client_name="swarm_agent_adapter")
+                             config_overrides=overrides, client_name="swarm_agent_adapter")
         if model.client_options.get("timeout") is not None:
             logging.getLogger(__name__).info("Codex model HTTP timeout is not mapped to a Turn deadline; native stream idle policy applies")
         try:
@@ -324,6 +376,7 @@ class CodexAdapter:
             await asyncio.wait_for(asyncio.to_thread(client.initialize), 30)
             options = {
                 "cwd": session.directory, "model": model.model_name, "modelProvider": "swarm",
+                "config": {"mcp_servers": selection.servers if selection is not None else {}},
                 **self._permission_options(session.desired_permission),
             }
             resumed = bool(session.thread_id)
@@ -340,28 +393,34 @@ class CodexAdapter:
                 if role:
                     options["developerInstructions"] = role
                 response = await asyncio.wait_for(asyncio.to_thread(client.thread_start, options), 30)
-            session.thread_id = response.thread.id
             effective = response.model_dump(mode="json", by_alias=True)
             expected = self._permission_options(session.desired_permission)
             if effective.get("approvalPolicy") != expected["approvalPolicy"] or effective.get("approvalsReviewer") != "user" or effective.get("sandbox", {}).get("type") != ("dangerFullAccess" if session.desired_permission == "full_access" else "workspaceWrite"):
                 raise ValueError("Codex did not confirm the requested permission policy")
+            if selection is not None:
+                await asyncio.wait_for(asyncio.to_thread(confirm_mcp, client, response.thread.id, selection), 15)
+                ensure_current()
         except BaseException as exc:
             self._release_controls(session)
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(client.close)
             if isinstance(exc, (asyncio.CancelledError, GeneratorExit)):
                 raise
+            if selection is not None:
+                raise RuntimeError("Codex could not confirm the selected MCP configuration; execution was not started") from None
             raise RuntimeError("Codex initialization failed; check the configured CLI and model service") from None
-        session.client = client
-        session.role_instructions = role if "developerInstructions" in options else None if resumed else ""
-        session.model_revision = revision
-        session.effective_permission = session.desired_permission
+        previous_id, previous_revision = session.thread_id, session.model_revision
+        session.thread_id, session.model_revision = response.thread.id, revision
         try:
             self._save_binding(session)
         except BaseException:
+            session.thread_id, session.model_revision = previous_id, previous_revision
             await asyncio.to_thread(client.close)
-            session.client = None
             raise
+        session.client = client
+        session.new_thread = not resumed
+        session.role_instructions = role if "developerInstructions" in options else None if resumed else ""
+        session.effective_permission = session.desired_permission
 
     @staticmethod
     def _permission_options(profile):
@@ -496,7 +555,8 @@ class CodexAdapter:
             session.native_terminal = session.cancel_confirmed = False
             session.control_ready.clear()
             session.active, session.cancelled, session.cancel_acknowledged = True, False, False
-            session.usage.begin_turn(new_thread=new_thread)
+            session.usage.begin_turn(new_thread=new_thread or session.new_thread)
+            session.new_thread = False
         reader = None
         terminal = False
         text_parts = {}
@@ -523,7 +583,16 @@ class CodexAdapter:
                     for identity, (future, method, params) in list(session.pending.items()):
                         if future.done():
                             continue
-                        description = params.get("command") or params.get("reason") or "file change"
+                        if method == ELICITATION:
+                            if params.get("turnId") != session.turn_id:
+                                del session.pending[identity]
+                                future.set_result(approval_reply(method, "cancel"))
+                                continue
+                            name = session.mcp.names[params["serverName"]]
+                            description = f"MCP {name}: {params.get('message') or '确认工具调用'}"
+                            description = description[:_ACTIVITY_CHAR_LIMIT]
+                        else:
+                            description = params.get("command") or params.get("reason") or "file change"
                         yield self._chunk(request, {"event_type": "chat.ask_user_question", "request_id": identity,
                             "source": "permission_interrupt", "questions": [{"question": "Codex: " + str(description),
                             "options": [{"label": "允许一次", "value": "allow_once"}, {"label": "拒绝", "value": "reject"}], "multiSelect": False}]})
@@ -549,6 +618,25 @@ class CodexAdapter:
                 elif method in {"item/started", "item/completed"} and item.get("type") == "collabAgentToolCall":
                     async for projected in self._collab_events(session, request, method, item):
                         yield projected
+                elif (method in {"item/started", "item/completed"} and item.get("type") == "mcpToolCall"
+                      and session.mcp is not None and item.get("server") in session.mcp.names):
+                    name = f'{session.mcp.names[item["server"]]} / {item["tool"]}'
+                    if method == "item/started":
+                        arguments = item.get("arguments")
+                        encoded = json.dumps(arguments, ensure_ascii=False)
+                        if len(encoded) > _ACTIVITY_CHAR_LIMIT:
+                            arguments, _ = _bounded_output(encoded, _ACTIVITY_CHAR_LIMIT)
+                        yield self._chunk(request, {"event_type": "chat.tool_call", "tool_call": {
+                            "id": item["id"], "name": name, "arguments": arguments}})
+                    else:
+                        status = item["status"]
+                        result = item.get("result") or item.get("error")
+                        output, projection = _bounded_output(json.dumps(result, ensure_ascii=False), _TOOL_OUTPUT_CHAR_LIMIT)
+                        yield self._chunk(request, {"event_type": "chat.tool_result", "tool_call_id": item["id"],
+                            "tool_name": name, "content": output, "invocation_status": status,
+                            "status": "completed" if status == "completed" else "error",
+                            "success": status == "completed", "task_acceptance": "unknown",
+                            "provider": {"codex": projection}})
                 elif method == "item/agentMessage/delta":
                     yield self._chunk(request, {"event_type": "chat.delta", "content": payload.get("delta", "")})
                 elif method == "item/started" and item.get("type") == "commandExecution":
@@ -622,7 +710,9 @@ class CodexAdapter:
             raise ValueError("Codex control input must answer the active permission request")
         if session is None or not session.active or identity not in session.pending:
             raise ValueError("No matching active Codex approval")
-        future, _, _ = session.pending[identity]
+        future, method, params = session.pending[identity]
+        if method == ELICITATION and (session.cancelled or params.get("turnId") != session.turn_id):
+            raise ValueError("No matching active Codex MCP approval")
         answers = request.params.get("answers", [])
         if len(answers) != 1 or future.done():
             raise ValueError("Codex requires one answer to an active approval")
@@ -635,7 +725,7 @@ class CodexAdapter:
         if decision is None:
             raise ValueError("Codex supports allow_once or reject")
         del session.pending[identity]
-        future.set_result({"decision": decision})
+        future.set_result(approval_reply(method, decision))
         yield self._chunk(request, {"event_type": "runtime.accepted", "control_request_id": identity}, complete=True)
 
     async def process_interrupt(self, request):

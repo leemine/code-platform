@@ -19,7 +19,7 @@ def opencode_config_snapshot(config):
 
 create_codex.display_name = "Codex"
 create_codex.supported_modes = ("agent", "code")
-create_codex.capabilities = AdapterCapabilities(main_instructions=True, native_resume=True)
+create_codex.capabilities = AdapterCapabilities(equipment=frozenset({"mcp"}), main_instructions=True, native_resume=True)
 create_codex.permission_profiles = ("default", "full_access")
 create_codex.config_snapshot = config_snapshot
 create_codex.availability = availability
