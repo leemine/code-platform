@@ -159,3 +159,9 @@ beta5 整理三家工具输出保护、P1 输入/装备职责及原生 Tokens �
 Codex 在角色更新、清除或 Worker 恢复原线程时，通过原生接口更新角色指令。同一连接中已确认且正文不变时复用。Swarm 沿用原会话装备保存专家 ID。
 
 Claude Code 可切换角色路径要求实际 CLI 支持 `--system-prompt-snapshot off`，以便恢复会话后应用本轮角色。此配置会重建系统提示词，可能影响原生提示词缓存。
+
+## Codex 会话 MCP
+
+在 Codex 单 Agent 或 Code 会话中，从输入框「+ → 扩展」选择已连接的 Streamable HTTP MCP。选中后在下一轮生效，关闭开关后下一轮移除。切换装备和正常重启 Worker 后仍可续聊原 Codex 线程；装载失败会保留上一次生效的选择。
+
+默认权限下，Codex 发出的工具调用确认使用原审批卡片。支持 HTTPS、回环 HTTP 和静态请求头凭据。OAuth、旧 SSE、stdio 以及插件或专家附带的 MCP 留在后续范围。

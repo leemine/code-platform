@@ -1102,3 +1102,119 @@ async def test_p2_role_is_thread_instruction_not_turn_text(host, monkeypatch):
         assert 'selection is cleared' in clients[-1].role_updates[-1]['content'][0]['text']
     finally:
         await app.cleanup()
+
+
+@pytest.mark.parametrize("overrides", [
+    {"transport": "sse"},
+    {"transport": "stdio"},
+    {"url": "http://example.com/mcp"},
+    {"url": "https://user:secret@example.com/mcp"},
+    {"url": "https://example.com/mcp?token=secret"},
+    {"headers": {"Authorization": "Bearer token\nInjected: true"}},
+])
+def test_codex_mcp_rejects_unsupported_or_unsafe_connector(monkeypatch, overrides):
+    from jiuwenswarm.server.runtime.agent_adapter.equipment import EquipmentAssets
+    from jiuwenswarm.server.runtime.agent_adapter.providers.codex_mcp import prepare_mcp
+    from jiuwenswarm.server.runtime.mcp import credential
+
+    monkeypatch.setattr(credential, "detect_credential_kind", lambda name: credential.KIND_TOKEN)
+    entry = {"url": "https://example.com/mcp", "transport": "streamable-http", **overrides}
+    assets = EquipmentAssets((), (), (), frozenset(), {"mcp": entry}, {"mcp": ["mcp"]})
+    with pytest.raises(ValueError) as error:
+        prepare_mcp(assets)
+    assert "secret" not in str(error.value)
+
+
+def test_codex_mcp_projects_credentials_outside_config_and_declines_complex_requests(monkeypatch):
+    from jiuwenswarm.server.runtime.agent_adapter.equipment import EquipmentAssets
+    from jiuwenswarm.server.runtime.agent_adapter.providers.codex_mcp import ELICITATION, prepare_mcp
+    from jiuwenswarm.server.runtime.mcp import credential
+
+    monkeypatch.setattr(credential, "detect_credential_kind", lambda name: credential.KIND_TOKEN)
+    entry = {"url": "http://127.0.0.1:8787/mcp", "transport": "streamable-http",
+             "headers": {"Authorization": "Bearer fixture-secret"}}
+    assets = EquipmentAssets((), (), (), frozenset(), {"probe": entry}, {"mcp": ["probe"]})
+    selection = prepare_mcp(assets)
+    server, = selection.servers
+    variable = selection.servers[server]["env_http_headers"]["Authorization"]
+    assert selection.env[variable] == "Bearer fixture-secret"
+    assert "fixture-secret" not in repr(selection)
+    adapter = codex.CodexAdapter()
+    session = codex.Session("/work", Path("/data"), mcp=selection)
+    confirmation = {"serverName": server, "mode": "form",
+                    "requestedSchema": {"type": "object", "properties": {}}}
+    for params in ({**confirmation, "mode": "url"}, {**confirmation, "serverName": "unselected"},
+                   {**confirmation, "requestedSchema": {"type": "object", "properties": {"answer": {}}}}):
+        assert adapter._approval(session, None, ELICITATION, params) == {"action": "decline", "content": None}
+
+    monkeypatch.setattr(credential, "detect_credential_kind", lambda name: credential.KIND_OAUTH)
+    with pytest.raises(ValueError, match="does not support OAuth"):
+        prepare_mcp(assets)
+
+
+@pytest.mark.asyncio
+async def test_codex_mcp_facade_preserves_selection_on_failure_and_clear_after_restart(host, monkeypatch):
+    from jiuwenswarm.server.runtime.agent_adapter import equipment
+    from jiuwenswarm.server.runtime.mcp import credential
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    app, config, clients, root, _ = host
+    monkeypatch.setattr(session_metadata, 'get_agent_sessions_dir', lambda: root / 'sessions')
+    monkeypatch.setattr(credential, 'detect_credential_kind', lambda name: credential.KIND_TOKEN)
+
+    async def assets(params, *, include_global_skills):
+        assert not include_global_skills
+        selected = params.get('mcp', [])
+        return equipment.EquipmentAssets((), (), (), frozenset(), {
+            name: {'url': f'https://example.com/{name}', 'transport': 'streamable-http'}
+            for name in selected
+        }, {'agent_template_name': '', 'plugin_names': [], 'mcp': selected})
+
+    monkeypatch.setattr(equipment, 'resolve_assets', assets)
+    native_request = FakeClient.request
+
+    def status(client, method, params, *, response_model):
+        if method != 'mcpServerStatus/list':
+            return native_request(client, method, params, response_model=response_model)
+        assert params['threadId'] == client.thread_id
+        servers = client.options['config']['mcp_servers']
+        if any(item['url'].endswith('/broken') for item in servers.values()):
+            raise RuntimeError('fixture native MCP load failed')
+        return response_model.model_validate({'data': [
+            {'name': name, 'authStatus': 'unsupported', 'runtimeStatus': 'connected',
+             'serverCapabilities': {'tools': {}}, 'resources': [], 'resourceTemplates': [],
+             'tools': {'probe': {'name': 'probe', 'inputSchema': {'type': 'object'}}}}
+            for name in servers
+        ]})
+
+    monkeypatch.setattr(FakeClient, 'request', status)
+    sid = 'mcp-facade'
+    session_metadata.init_session_metadata(session_id=sid, channel_id='web', execution_provider='codex-direct')
+
+    async def send(**selection):
+        async with asyncio.timeout(10):
+            return [c.payload async for c in app.process_message_stream(request(sid, **selection))]
+
+    def saved():
+        return session_metadata.get_session_equipment(sid, cache_bust=True)['mcp']
+
+    await app.create_instance(config)
+    try:
+        assert any(c.get('event_type') == 'chat.final' for c in await send(mcp=['good']))
+        thread_id = clients[-1].thread_id
+        assert saved() == ['good'] and clients[-1].turns == 1
+        with pytest.raises(RuntimeError, match='could not confirm the selected MCP configuration'):
+            await send(mcp=['broken'])
+        assert saved() == ['good'] and sum(c.turns for c in clients) == 1
+        assert clients[-1].closed
+
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert saved() == ['good']
+        assert any(c.get('event_type') == 'chat.final' for c in await send(mcp=[]))
+        assert saved() == [] and clients[-1].options['config']['mcp_servers'] == {}
+        assert await app.cleanup_session_runtime(sid)
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert saved() == [] and not clients[-1].options['config'].get('mcp_servers')
+        assert {client.thread_id for client in clients} == {thread_id}
+    finally:
+        await app.cleanup()

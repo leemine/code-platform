@@ -157,3 +157,9 @@ Select another compatible expert in the existing picker for a single-agent sessi
 Codex uses its native thread API when the role changes, is cleared, or the Worker resumes the thread. An unchanged role is reused on the same connection after confirmation. Swarm stores the selected expert ID in its existing session equipment.
 
 Claude Code needs a CLI that supports `--system-prompt-snapshot off` to apply the current expert in a resumed session. This rebuilds the system prompt and can affect the native prompt cache.
+
+## Codex session MCP
+
+In a Codex single-agent or Code session, use **+ → Extensions** in the composer to select a connected Streamable HTTP MCP server. Changes apply on the next turn. Swarm resumes the original Codex thread after equipment changes or a regular Worker restart. If loading fails, Swarm keeps the last confirmed selection.
+
+With Default permissions, Codex tool confirmations use the existing approval card. HTTPS, loopback HTTP and static request-header credentials are supported. OAuth, legacy SSE, stdio and MCP inherited from plugins or expert templates are outside the current scope.
