@@ -437,7 +437,8 @@ class CodexAdapter:
                 raise ValueError("Codex did not confirm the requested permission policy")
             if selection is not None:
                 await asyncio.wait_for(asyncio.to_thread(confirm_mcp, client, response.thread.id, selection), 15)
-                ensure_current()
+                if ensure_current is not None:
+                    ensure_current()
         except BaseException as exc:
             self._release_controls(session)
             with contextlib.suppress(Exception):
@@ -561,26 +562,14 @@ class CodexAdapter:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
             new_thread = not session.thread_id
             role = execution.main_agent_role.instructions if execution and execution.main_agent_role else ""
-            if role:
-                await self._connect(session, model, role)
-            else:
-                await self._connect(session, model)
-            if session.desired_permission != session.effective_permission:
-                # Resume the same thread with the new policy; no conversation replacement.
-                try:
-                    response = await asyncio.wait_for(asyncio.to_thread(
-                        session.client.thread_resume, session.thread_id,
-                        self._permission_options(session.desired_permission)), 30)
-                except Exception:
-                    raise RuntimeError("Codex permission update could not be confirmed; execution was not started") from None
-                if response.thread.id != session.thread_id:
-                    raise ValueError("Codex resumed a different thread")
-                effective = response.model_dump(mode="json", by_alias=True)
-                expected = self._permission_options(session.desired_permission)
-                if effective.get("approvalPolicy") != expected["approvalPolicy"] or effective.get("approvalsReviewer") != "user" or effective.get("sandbox", {}).get("type") != ("dangerFullAccess" if session.desired_permission == "full_access" else "workspaceWrite"):
-                    raise ValueError("Codex permission update was not confirmed")
-                session.effective_permission = session.desired_permission
-                self._save_binding(session)
+            if session.client and session.desired_permission != session.effective_permission:
+                # Loaded thread/resume retains its original policy. Reconnect the
+                # owned client and verify the same persisted thread before a Turn.
+                await asyncio.to_thread(session.client.close)
+                session.client = None
+            # Retain the already selected MCP snapshot across a policy reconnect;
+            # fresh equipment changes still use apply_equipment's generation guard.
+            await self._connect(session, model, role, selection=session.mcp)
             if session.role_refresh_uncertain or (
                 role != session.role_instructions
                 and ((execution and execution.main_agent_role is not None) or session.role_instructions)

@@ -67,6 +67,9 @@ class FakeClient:
 
     def thread_resume(self, thread_id, options):
         assert self.native_threads[thread_id] == self.config.env['CODEX_HOME']
+        if hasattr(self, 'options'):
+            assert self.thread_id == thread_id
+            return self._policy()  # Loaded native threads retain the original policy.
         self.thread_id = thread_id
         self.options = options
         return self._policy()
@@ -482,8 +485,39 @@ async def test_permission_update_preserves_thread_and_waits_for_next_turn(host):
         await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id='one', reload_scopes=['permissions'])
         assert clients[0].options['approvalPolicy'] == 'on-request'
         await consume(app.process_message_stream(request()))
-        assert clients[0].thread_id == original
-        assert clients[0].options['approvalPolicy'] == 'never'
+        assert clients[0].closed and clients[0].turns == 1
+        assert clients[1].thread_id == original
+        assert clients[1].options['approvalPolicy'] == 'never'
+        assert app.runtime_permission_status('one')['effective_profile'] == 'full_access'
+        await app.reload_agent_config(config_base={'permissions': {'enabled': True}}, target_session_id='one', reload_scopes=['permissions'])
+        await consume(app.process_message_stream(request()))
+        assert clients[1].closed and clients[2].thread_id == original
+        assert clients[2].options['approvalPolicy'] == 'on-request'
+        assert app.runtime_permission_status('one')['effective_profile'] == 'default'
+        assert len({c.config.env['CODEX_HOME'] for c in clients}) == 1
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_permission_reconnect_rejects_unconfirmed_policy_without_starting_turn(host, monkeypatch):
+    app, config, clients, _, _ = host
+    await app.create_instance(config)
+    try:
+        await consume(app.process_message_stream(request()))
+        await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id='one', reload_scopes=['permissions'])
+        resume = FakeClient.thread_resume
+        def wrong_policy(client, thread_id, options):
+            return resume(client, thread_id, {**options, 'approvalPolicy': 'on-request'})
+        monkeypatch.setattr(FakeClient, 'thread_resume', wrong_policy)
+        chunks = await consume(app.process_message_stream(request()))
+        assert any((c.payload or {}).get('event_type') == 'chat.error' for c in chunks)
+        assert clients[0].closed and clients[1].closed
+        assert sum(c.turns for c in clients) == 1
+        assert app.runtime_permission_status('one')['effective_profile'] != 'full_access'
+        monkeypatch.setattr(FakeClient, 'thread_resume', resume)
+        await consume(app.process_message_stream(request()))
+        assert clients[-1].thread_id == clients[0].thread_id
         assert app.runtime_permission_status('one')['effective_profile'] == 'full_access'
     finally:
         await app.cleanup()
@@ -1203,9 +1237,14 @@ async def test_codex_mcp_facade_preserves_selection_on_failure_and_clear_after_r
         assert any(c.get('event_type') == 'chat.final' for c in await send(mcp=['good']))
         thread_id = clients[-1].thread_id
         assert saved() == ['good'] and clients[-1].turns == 1
+        await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id=sid, reload_scopes=['permissions'])
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert saved() == ['good'] and clients[-1].options['config']['mcp_servers']
+        assert clients[-1].options['approvalPolicy'] == 'never'
+        assert clients[-2].closed and clients[-1].thread_id == thread_id
         with pytest.raises(RuntimeError, match='could not confirm the selected MCP configuration'):
             await send(mcp=['broken'])
-        assert saved() == ['good'] and sum(c.turns for c in clients) == 1
+        assert saved() == ['good'] and sum(c.turns for c in clients) == 2
         assert clients[-1].closed
 
         assert any(c.get('event_type') == 'chat.final' for c in await send())

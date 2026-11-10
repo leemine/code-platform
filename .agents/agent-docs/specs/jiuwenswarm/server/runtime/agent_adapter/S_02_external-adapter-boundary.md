@@ -143,7 +143,7 @@ Codex 启用和显式 CLI 路径来自原 `modes.team.jiuwen_team.external_cli_a
 
 官方 SDK 的公开 `CodexClient(config, approval_handler=...)` 拥有 JSON-RPC 传输；同一 Turn 仅一个事件读者。Swarm Runtime/Facade 仍拥有队列、控制、历史与生命周期。同步审批 callback 转接原 `permission_interrupt` 通道，取消先释放 callback 再调用原生 interrupt，未知交互失败关闭。每会话私有 HOME/CODEX_HOME，初始化及权限确认有界；未完整消费的 producer 关闭后不可复用不确定状态。
 
-Default 映射 workspace-write/on-request/user，Full Access 映射 danger-full-access/never/user，官方读回确认；Automatic 明确不支持。档位更新作用于下次 Turn，以同一 thread resume 并读回，不自动回答正在等待的审批。命令退出码只取原生整数，缺失仍未知，Turn completed 不等同任务验收。原生 declined 映射既有 `status=error`，`invocation_status=declined` 保留事实，command_success/exit_code 仍未知，避免工具 UI 误显示成功。
+Default 映射 workspace-write/on-request/user，Full Access 映射 danger-full-access/never/user，官方读回确认；Automatic 明确不支持。档位更新作用于下次 Turn：空闲且取消已确认后关闭自有客户端，用同一私有 CODEX_HOME 恢复同一 thread，校验线程、工作区、空闲状态及权限读回；不能对已加载线程重复 resume 后假定新权限生效。保留已选择的 MCP 快照并重新确认，失败不开始 Turn，不自动回答正在等待的审批。命令退出码只取原生整数，缺失仍未知，Turn completed 不等同任务验收。原生 declined 映射既有 `status=error`，`invocation_status=declined` 保留事实，command_success/exit_code 仍未知，避免工具 UI 误显示成功。
 
 当前支持文本、单 Agent/Code、同生命周期续聊、原审批/取消/历史。Codex 的 Skill/MCP/模板/附件、Team、Goal、完整用量和冷恢复未交付，显式装备请求拒绝，不能把 OpenCode 已有装备能力转记为 Codex 已支持。桌面默认下载清单随当前验证锁更新；Linux路径入口已补齐。Windows/macOS真机与新冻结安装包尚未验收。
 
