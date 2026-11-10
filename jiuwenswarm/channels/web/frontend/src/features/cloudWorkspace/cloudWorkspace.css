@@ -14,3 +14,17 @@
 .cloud-workspace-account { display: grid; gap: 4px; padding: 8px; overflow: hidden; font-size: 11px; text-align: center; }
 .cloud-workspace-account span { overflow: hidden; text-overflow: ellipsis; }
 .cloud-workspace-account .ui-button { padding: 4px; font-size: 11px; }
+.cloud-workspace-account .cloud-workspace-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-account-avatar-surface);
+  color: var(--color-account-avatar-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}

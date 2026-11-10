@@ -135,7 +135,10 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     {t('cloudWorkspace.logout')}
   </Button>;
   const footer = <div className="cloud-workspace-account" data-testid="cloud-workspace-account" title={identity?.username}>
-    <span data-testid="cloud-workspace-identity">{identity?.username}</span>
+    <span className="cloud-workspace-avatar" role="img" aria-label={identity?.username}
+      data-testid="cloud-workspace-identity">
+      {Array.from((identity?.username || '?').trim().toUpperCase()).slice(0, 2).join('')}
+    </span>
     <span className="text-text-muted">{t('cloudWorkspace.ready')}</span>
     {logoutButton}
   </div>;

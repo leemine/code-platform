@@ -85,6 +85,8 @@
   --color-tool-panel-divider: #ededed;
 
   /* Actions and brand */
+  --color-account-avatar-surface: #bb3528;
+  --color-account-avatar-text: #ffffff;
   --color-action-primary: #2563eb;
   --color-action-primary-rgb: 37, 99, 235;
   --color-action-primary-disabled-surface: rgb(133.9606, 173.3011, 249.229);
