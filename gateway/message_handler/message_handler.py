@@ -4262,7 +4262,7 @@ class MessageHandler(ABC):
             msg.session_id,
             (msg.params or {}).get("request_id") if isinstance(msg.params, dict) else None,
         ):
-            self._user_messages.put_nowait(
+            self.publish_user_messages_nowait(
                 replace(msg, req_method=ReqMethod.CHAT_SEND, is_stream=True)
             )
             return
@@ -4328,7 +4328,7 @@ class MessageHandler(ABC):
                 queued_attachments if isinstance(queued_attachments, list) else None,
                 self._get_session_last_user_query(msg.session_id),
             )
-            self._user_messages.put_nowait(queued_msg)
+            self.publish_user_messages_nowait(queued_msg)
             logger.info(
                 "[MessageHandler] evolution approval answered (resolved), "
                 "queued supplement dispatched: id=%s session_id=%s",
@@ -4383,7 +4383,7 @@ class MessageHandler(ABC):
             auto_save_enabled=auto_save_enabled,
         )
         if decision.user_message is not None:
-            self._user_messages.put_nowait(decision.user_message)
+            self.publish_user_messages_nowait(decision.user_message)
         return decision.should_publish_chunk
 
     def _clear_session_evolution_states(self, session_id: str | None) -> None:
@@ -4990,7 +4990,7 @@ class MessageHandler(ABC):
                             bot_id=msg.bot_id,
                             metadata=sup_meta,
                         )
-                        self._user_messages.put_nowait(new_msg)
+                        self.publish_user_messages_nowait(new_msg)
                         logger.info(
                             "[MessageHandler] supplement: 旧任务已取消，新任务已入队: id=%s session_id=%s",
                             new_msg.id, msg.session_id,

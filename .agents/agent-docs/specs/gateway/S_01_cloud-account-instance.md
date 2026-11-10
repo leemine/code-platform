@@ -67,3 +67,5 @@ NEW→CREATING→ALLOCATED；未知结果→UNKNOWN，清单零匹配不授权�
 显式配置 `resource_reconciler_socket` 的新绑定固定 `physical_verification=true`；禁止运行时静默关闭或给旧绑定自动补入。原Router两个删除入口均在元戎确认不存在后调用可选 `confirm_deleted`，成功才注销/移除内存实例并落DELETED。策略使用持久绑定校验instance_id/epoch/DELETING，向受限部署接口提交工作区、凭据目录、固定镜像、执行用户和实例ID；未确认时保持DELETING，ensure继续原回收步骤，不新建。SDK/Runtime/账号权威不变；无该能力的历史部署沿用旧行为，不能宣称已获得物理保护。
 
 部署实现与退出契约集中于 `deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md`。Gateway不访问Docker API。临时部署模块通过工作区唯一Docker名称、代次scope与持久派发回执防止重复派发；仅对完整归属匹配且从未启动的残留执行原删除流程的同步补偿。未知派发结果、运行过的残留或检查失败均拒绝完成确认；没有后台扫描/新创建器。
+
+所有用户消息入队（包括补充输入、演进审批回答和自动审批派生消息）必须复用现有 publish_user_messages / publish_user_messages_nowait 身份捕获入口；出队恢复原作用域，发送时仍查账号权威。无作用域的后台事件不借用其他请求身份，令牌不写入消息或持久化。

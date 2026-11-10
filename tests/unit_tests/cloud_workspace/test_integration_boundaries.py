@@ -310,3 +310,74 @@ async def test_account_outage_is_not_reported_as_logout_and_logout_is_idempotent
         plugin.authenticator = AccountAuthenticator(Down())
         response = await client.get(prefix + "/status")
         assert response.status_code == 503 and response.json()["code"] == "AUTHORITY_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["interrupt", "queued_supplement", "automatic_approval"])
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_internal_requeue_preserves_authority_at_original_signer(config, route, revoked):
+    from jiuwenswarm.common.schema import Message
+    from jiuwenswarm.common.schema.message import ReqMethod
+
+    accounts, app = service(config, Infrastructure())
+    actor = await registered(app)
+    app.store.prepare(actor["user_id"])
+    token = accounts.login("test-user", "long-test-password")["token"]
+    await AccountAuthenticator(accounts).authenticate(AuthContext(headers={"Authorization": "Bearer " + token}))
+    principal = current_account()
+    handler = object.__new__(MessageHandler)
+    handler._user_messages = asyncio.Queue()
+    msg = Message(id="approval", type="req", channel_id="web", session_id="session", timestamp=0, ok=True,
+                  user_id=actor["user_id"], params={"request_id": "pending"},
+                  req_method=ReqMethod.CHAT_SEND, is_stream=True)
+    if route == "interrupt":
+        handler._is_current_pending_evolution_approval = lambda *args: True
+        await handler._dispatch_interrupt_evolution_approval_as_chat_send(msg)
+    elif route == "queued_supplement":
+        handler._evolution_approval = SimpleNamespace(finish_if_current=lambda *args: SimpleNamespace(
+            promoted_approval=None, queued_supplement={"new_input": "continue"}))
+        handler._get_session_last_user_query = lambda *args: "original"
+        handler._build_queued_chat_send_message = lambda *args: msg
+        handler._send_processing_status = AsyncMock()
+        await handler._complete_evolution_approval_if_current(msg, "pending")
+    else:
+        handler._evolution_approval = SimpleNamespace(handle_chunk=lambda *args, **kwargs: SimpleNamespace(
+            user_message=msg, should_publish_chunk=True))
+        await handler._handle_evolution_chunk(SimpleNamespace(payload={}), "session")
+    current_scope.set(None)
+    queued = await handler.consume_user_messages()
+    assert current_account() is principal
+    wire = E2AEnvelope(request_id=queued.id, channel="web", user_id=actor["user_id"],
+                       method="chat.send", params={"query": "continue"}).to_dict()
+    if revoked:
+        accounts.logout(token)
+        with pytest.raises(PermissionError):
+            await app.instances._instance_lifecycle.sign_request(actor["user_id"], wire)
+    else:
+        signed = await app.instances._instance_lifecycle.sign_request(actor["user_id"], wire)
+        assert signed["_organization_assertion"]["claims"]["purpose"] == "user"
+        assert token not in json.dumps(signed)
+
+
+@pytest.mark.asyncio
+async def test_forward_loop_supplement_preserves_account_scope(config, monkeypatch):
+    from tests.unit_tests.gateway import test_message_handler_evolution as original
+
+    accounts, app = service(config, Infrastructure())
+    actor = await registered(app)
+    app.store.prepare(actor["user_id"])
+    token = accounts.login("test-user", "long-test-password")["token"]
+    await AccountAuthenticator(accounts).authenticate(AuthContext(headers={"Authorization": "Bearer " + token}))
+    principal = current_account()
+    original_stream = original._FakeAgentClient.send_request_stream
+    scopes = []
+
+    async def checked_stream(envelope):
+        scopes.append(current_account())
+        await app.instances._instance_lifecycle.sign_request(actor["user_id"], envelope.to_dict())
+        async for chunk in original_stream(envelope):
+            yield chunk
+
+    monkeypatch.setattr(original._FakeAgentClient, "send_request_stream", staticmethod(checked_stream))
+    await original.test_forward_loop_supplement_forwards_new_input_to_interrupt(monkeypatch, False)
+    assert scopes == [principal]
