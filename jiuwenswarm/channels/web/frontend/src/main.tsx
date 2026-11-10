@@ -4,6 +4,7 @@ import { A2UIProvider } from '@a2ui/react';
 import type { A2UIClientEventMessage } from '@a2ui/react';
 import { injectStyles } from '@a2ui/react/styles';
 import App from './App.tsx'
+import { CloudWorkspaceGate } from './features/cloudWorkspace/CloudWorkspaceGate'
 import { ShareImageExportRunner } from './features/shareImageExport'
 import { openSourceSettingsPageDefinition } from './features/settings/registry/openSourceDefinition'
 import type { SettingsRequest } from './features/settings/services/settingsContract'
@@ -64,10 +65,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         client={browserRunner}
       />
     ) : (
-      <App
+      <CloudWorkspaceGate>{(sidebarFooter) => <App
+        sidebarFooter={sidebarFooter}
         settingsPageDefinition={openSourceSettingsPageDefinition}
         resolveSettingsRequest={resolveOpenSourceSettingsRequest}
-      />
+      />}</CloudWorkspaceGate>
     )}
   </A2UIProvider>,
 )

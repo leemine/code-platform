@@ -1,6 +1,7 @@
 """Thin account/environment entry points on the existing Gateway host."""
 from __future__ import annotations
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -140,7 +141,8 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
             identity = await principal.check()
             if op == "/status":
                 return JSONResponse({**identity, "authenticated": True, "enabled": True, "actor_id": identity["user_id"],
-                                     "subject_id": identity["user_id"], "auth_backend": "builtin", "execution_mode": "user_instance"})
+                                     "subject_id": identity["user_id"], "auth_backend": "builtin", "execution_mode": "user_instance",
+                                     "session_revision": hashlib.sha256(token.encode()).hexdigest()[:24]})
             if body:
                 raise ValueError("no client-selectable identity or infrastructure")
             if op == "/logout":

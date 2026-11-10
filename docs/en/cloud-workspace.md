@@ -51,3 +51,9 @@ New dedicated deployments may explicitly enable a restricted physical completion
 The current candidate has passed isolated physical-reconciliation acceptance. Earlier lost-response failures describe the previous candidate, not an open blocker for this scoped repair. See the [candidate handoff and recovery guide](../../deploy/cloud-workspace/CANDIDATE_HANDOFF.md) for configuration, per-state recovery and rollback boundaries. Production operations and broader business acceptance remain separate; no production deployment is included.
 
 Internal supplement and evolution-approval requeues preserve the original account scope. Sending still checks session revocation; user requests never fall back to maintenance authorization.
+
+## Candidate cloud sign-in and environment entry
+
+The Web entry extracts codeswarm's builtin username/password login, identity invalidation and logout. Account Kit still owns existing model authorization. Serve static UI, account HTTP and WebSocket from the same HTTPS origin matching `public_origin`; the default account path is `/api/v1/auth/organization`. Show registration only when `registration_enabled=true`.
+
+First entry explicitly prepares the cloud environment; an existing allocation goes through the original ensure/readiness path before mounting the application. Authentication and environment failures expose retry instead of indefinite config loading. Logout closes the connection before revocation; unconfirmed revocation shows an error. Real UI/Provider acceptance on this candidate remains in progress; previous-version evidence is not a substitute.

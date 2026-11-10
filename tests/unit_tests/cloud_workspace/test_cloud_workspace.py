@@ -278,6 +278,17 @@ async def test_plugin_uses_original_http_contributions_and_leaves_session_option
         assert response.status_code == 200
         cookie = response.headers["set-cookie"].lower()
         assert all(value in cookie for value in ("secure", "httponly", "samesite=strict"))
+        status = await client.get(base + "/status")
+        first = status.json()
+        assert status.headers["cache-control"] == "no-store"
+        assert first["actor_id"] == first["subject_id"]
+        assert len(first["session_revision"]) == 24
+        assert "token" not in first
+        assert (await client.get(base + "/status")).json()["session_revision"] == first["session_revision"]
+        assert (await client.post(base + "/login", json=body, headers=headers)).status_code == 200
+        second = (await client.get(base + "/status")).json()
+        assert second["actor_id"] == first["actor_id"]
+        assert second["session_revision"] != first["session_revision"]
         assert (await client.post(base + "/environment/ensure", json={"user_id": "forged"}, headers=headers)).status_code == 400
         assert (await client.get(base + "/environment")).status_code == 200
         assert (await client.post(base + "/logout", json={}, headers=headers)).status_code == 200

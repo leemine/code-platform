@@ -113,6 +113,7 @@
 | `components/HeartbeatPanel` | `heartbeat-panel` | 心跳任务面板;抽屉;状态徽章;调度编辑器 |
 | `components/ConnectorMarket` | `connector-market` | 连接器市场;详情/创建/注册页;各类弹窗;卡片 |
 | `features/settings` | `settings` | 设置页;模块导航;各设置模块;渠道/模型列表/对话框 |
+| `features/cloudWorkspace` | `cloud-workspace` | 云环境入口、就绪与身份门控 |
 | `features/auth` | `auth` | 登录页;登出按钮 |
 | `components/subagent` | `subagent` | 子代理面板(紧凑/展开);列表+详情;活动列表 |
 | `components/AgentManagementPanel` | `agent-management` | Agent 管理面板;tabs+搜索+创建菜单 |

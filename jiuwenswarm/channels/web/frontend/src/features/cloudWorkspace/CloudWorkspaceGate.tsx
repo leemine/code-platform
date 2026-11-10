@@ -1,0 +1,152 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Button } from '../../components/ui/Button/Button';
+import { webClient } from '../../services/webClient';
+import {
+  clearAccountCaches, notifyOrganizationCredentialChange, onOrganizationCredentialChange,
+  organizationCredentialReloadUrl, readOrganizationStatus, type OrganizationStatus,
+} from '../../services/organizationCredentialEvents';
+import { LoginPage } from '../auth/LoginPage';
+import { cloudRequest, environmentState } from './client';
+import './cloudWorkspace.css';
+
+type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 'unavailable' | 'environmentError' | 'logoutFailed';
+
+/** UI composition only: the original environment service and Runtime retain ownership. */
+export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode) => ReactNode }) {
+  const { t } = useTranslation();
+  const [phase, setPhase] = useState<Phase>('checking');
+  const [identity, setIdentity] = useState<OrganizationStatus | null>(null);
+  const epoch = useRef(0);
+  const entering = useRef(false);
+  const identityRef = useRef<OrganizationStatus | null>(null);
+
+  const discard = useCallback((current?: OrganizationStatus) => {
+    epoch.current += 1;
+    setPhase('checking');
+    void webClient.disconnect('account changed');
+    clearAccountCaches();
+    window.location.replace(current
+      ? organizationCredentialReloadUrl(identityRef.current, current, window.location.href)
+      : window.location.origin + '/');
+  }, []);
+
+  const enter = useCallback(async () => {
+    if (entering.current) return;
+    entering.current = true;
+    const generation = epoch.current;
+    setPhase('preparing');
+    try {
+      // A persisted ALLOCATED row is not application readiness. Always use the
+      // existing ensure path and its readiness probe before mounting App/WS.
+      const result = await cloudRequest('environment/ensure', {}, 150000);
+      const current = await readOrganizationStatus();
+      if (generation !== epoch.current) return;
+      if (!sameIdentity(identityRef.current, current)) { discard(current); return; }
+      if (environmentState(result) !== 'READY') throw new Error('Environment not ready');
+      setPhase('ready');
+    } catch {
+      if (generation === epoch.current) setPhase('environmentError');
+    } finally {
+      entering.current = false;
+    }
+  }, [discard]);
+
+  useEffect(() => {
+    let disposed = false;
+    const generation = epoch.current;
+    void (async () => {
+      try {
+        const status = await readOrganizationStatus();
+        if (disposed || generation !== epoch.current) return;
+        identityRef.current = status;
+        setIdentity(status);
+        if (!status.enabled) { setPhase('local'); return; }
+        if (!status.authenticated) { setPhase('login'); return; }
+        if (status.auth_backend !== 'builtin' || status.execution_mode !== 'user_instance') throw new Error('Unsupported identity');
+        const row = await cloudRequest('environment');
+        if (disposed || generation !== epoch.current) return;
+        // Reconnect an existing binding through the original chain. First-time
+        // allocation stays behind the explicit cloud entry button.
+        if (environmentState(row) === 'ALLOCATED') void enter();
+        else setPhase('entry');
+      } catch {
+        if (!disposed && generation === epoch.current) setPhase(identityRef.current?.authenticated ? 'environmentError' : 'unavailable');
+      }
+    })();
+    return () => { disposed = true; epoch.current += 1; };
+  }, [enter]);
+
+  useEffect(() => {
+    if (!identity?.enabled || identity.auth_backend !== 'builtin' || ['unavailable', 'logoutFailed', 'checking'].includes(phase)) return;
+    let disposed = false;
+    let checking = false;
+    const check = async () => {
+      if (disposed || checking || document.visibilityState === 'hidden') return;
+      checking = true;
+      try {
+        const current = await readOrganizationStatus();
+        if (!disposed && (!current.enabled || ((current.authenticated || identityRef.current?.authenticated) && !sameIdentity(identityRef.current, current)))) discard(current);
+      } catch {
+        if (!disposed) {
+          epoch.current += 1;
+          void webClient.disconnect('account service unavailable');
+          setPhase('unavailable');
+        }
+      } finally { checking = false; }
+    };
+    const off = onOrganizationCredentialChange(() => discard());
+    const timer = window.setInterval(check, 2000);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      disposed = true;
+      off();
+      window.clearInterval(timer);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [identity, phase, discard]);
+
+  async function logout() {
+    epoch.current += 1;
+    setPhase('checking');
+    await webClient.disconnect('account logout');
+    try {
+      await cloudRequest('logout', {});
+      clearAccountCaches();
+      notifyOrganizationCredentialChange();
+      window.location.replace(window.location.origin + '/');
+    } catch { setPhase('logoutFailed'); }
+  }
+  const logoutButton = <Button variant="quiet" onClick={() => void logout()} data-testid="auth-logout-button">
+    {t('cloudWorkspace.logout')}
+  </Button>;
+  const footer = <div className="cloud-workspace-account" data-testid="cloud-workspace-account" title={identity?.username}>
+    <span data-testid="cloud-workspace-identity">{identity?.username}</span>
+    <span className="text-text-muted">{t('cloudWorkspace.ready')}</span>
+    {logoutButton}
+  </div>;
+  if (phase === 'local') return children();
+  if (phase === 'login') return <LoginPage registrationEnabled={identity?.registration_enabled === true} />;
+  if (phase === 'ready') return children(footer);
+  const retry = ['unavailable', 'environmentError', 'logoutFailed'].includes(phase);
+  return <main className="cloud-workspace-page" data-testid="cloud-workspace-gate" data-phase={phase}>
+    <section className="cloud-workspace-card">
+      <h1>{t('cloudWorkspace.title')}</h1>
+      <p role={retry ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase}`)}</p>
+      {identity?.authenticated && <p data-testid="cloud-workspace-identity">{identity.username}</p>}
+      {phase === 'entry' && <Button variant="primary" onClick={() => void enter()} data-testid="cloud-workspace-enter">{t('cloudWorkspace.enter')}</Button>}
+      {retry && <Button onClick={() => phase === 'environmentError' ? void enter() : phase === 'logoutFailed' ? void logout() : window.location.reload()}
+        data-testid="cloud-workspace-retry">{t('cloudWorkspace.retry')}</Button>}
+      {identity?.authenticated && !['checking', 'logoutFailed'].includes(phase) && logoutButton}
+    </section>
+  </main>;
+}
+
+function sameIdentity(previous: OrganizationStatus | null, current: OrganizationStatus): boolean {
+  return !!previous?.authenticated && current.enabled && current.authenticated === true &&
+    ['actor_id', 'authority', 'subject_id', 'session_revision'].every(
+      key => !!previous[key as keyof OrganizationStatus] && previous[key as keyof OrganizationStatus] === current[key as keyof OrganizationStatus],
+    );
+}

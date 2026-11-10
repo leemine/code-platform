@@ -21,6 +21,7 @@ import type { ApplicationPluginContribution, ApplicationPluginNavKey } from '../
 type MainNavKey = SidebarNavKey | 'connectorMarket' | ApplicationPluginNavKey;
 
 interface SessionSidebarProps {
+  footer?: React.ReactNode;
   activeNav: MainNavKey;
   onNavigate: (nav: MainNavKey) => void;
   onNewSession?: () => void;
@@ -95,6 +96,7 @@ const mainNavItems: NavItem[] = [
 ];
 
 export function SessionSidebar({
+  footer,
   activeNav,
   onNavigate,
   onNewSession,
@@ -174,6 +176,7 @@ export function SessionSidebar({
       ))}
 
       <div className="icon-rail-spacer" />
+      {footer}
     </aside>
   );
 }

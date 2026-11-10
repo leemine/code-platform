@@ -1,0 +1,16 @@
+.cloud-workspace-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-surface-page);
+  color: var(--color-text-primary);
+}
+.cloud-workspace-card { width: 100%; max-width: 380px; }
+.cloud-workspace-card h1 { font-size: 28px; margin-bottom: 16px; }
+.cloud-workspace-card p { margin: 16px 0; }
+.cloud-workspace-card form { display: grid; gap: 12px; }
+.cloud-workspace-account { display: grid; gap: 4px; padding: 8px; overflow: hidden; font-size: 11px; text-align: center; }
+.cloud-workspace-account span { overflow: hidden; text-overflow: ellipsis; }
+.cloud-workspace-account .ui-button { padding: 4px; font-size: 11px; }

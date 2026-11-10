@@ -69,3 +69,11 @@ NEW→CREATING→ALLOCATED；未知结果→UNKNOWN，清单零匹配不授权�
 部署实现与退出契约集中于 `deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md`。Gateway不访问Docker API。临时部署模块通过工作区唯一Docker名称、代次scope与持久派发回执防止重复派发；仅对完整归属匹配且从未启动的残留执行原删除流程的同步补偿。未知派发结果、运行过的残留或检查失败均拒绝完成确认；没有后台扫描/新创建器。
 
 所有用户消息入队（包括补充输入、演进审批回答和自动审批派生消息）必须复用现有 publish_user_messages / publish_user_messages_nowait 身份捕获入口；出队恢复原作用域，发送时仍查账号权威。无作用域的后台事件不借用其他请求身份，令牌不写入消息或持久化。
+
+## 云端 Web 账号入口
+
+云插件沿用 `/api/v1/auth/organization` 默认路径。状态的 `session_revision` 为当前会话 token 的 SHA-256 前 24 位，仅是 UI 变更投影，不授予权限。状态与其他账号响应均 no-store，cookie 保持 Secure/HttpOnly/SameSite=Strict。Web 静态服务、HTTP 及 WS 对外使用同一 HTTPS origin，与 public_origin 一致。
+
+Web 独立入口提炼 codeswarm 登录/注册、凭据失效清理和退出行为；原 Account Kit 模型登录保持独立。身份确认和环境 READY 之前不挂载原 App/WS。首次云环境由用户进入，已有 ALLOCATED 经原 ensure 确认应用就绪后恢复；不另建创建/回收、Provider 或会话状态机。
+
+已确认云账号后，权威不可用不得退回匿名/本地模式；挂起旧界面并关闭连接，重试重新核验。身份或会话版本变化通过整页导航丢弃原内存状态，仅同一已核验主体可保留会话 URL。退出未确认成功明确报错，不显示退出成功。
