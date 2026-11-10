@@ -135,3 +135,12 @@ test('existing login form reports wrong credentials and successful registration 
   assert.ok(query('auth-registration-notice')); assert.equal(query('auth-login-password-input').value, '');
   assert.equal(query('original-app'), null);
 });
+test('retry after a known cloud outage cannot downgrade a now-missing endpoint to local mode', async () => {
+  await mount();
+  route = async () => response({}, 503);
+  await act(async () => window.dispatchEvent(new window.Event('focus'))); await tick();
+  assert.equal(phase(), 'unavailable');
+  route = async () => response({}, 404);
+  await click('cloud-workspace-retry');
+  assert.equal(phase(), 'unavailable'); assert.equal(query('original-app'), null);
+});

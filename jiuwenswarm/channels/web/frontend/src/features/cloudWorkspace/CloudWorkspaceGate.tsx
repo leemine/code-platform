@@ -108,6 +108,18 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     };
   }, [identity, phase, discard]);
 
+  async function retryIdentity() {
+    setPhase('checking');
+    try {
+      const current = await readOrganizationStatus();
+      if (identityRef.current?.enabled && !current.enabled) throw new Error('Account endpoint unavailable');
+      // Retain the previous verified principal across an outage until the fresh
+      // probe decides whether the current route still belongs to that account.
+      if (current.enabled) discard(current);
+      else window.location.reload();
+    } catch { setPhase('unavailable'); }
+  }
+
   async function logout() {
     epoch.current += 1;
     setPhase('checking');
@@ -137,7 +149,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       <p role={retry ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase}`)}</p>
       {identity?.authenticated && <p data-testid="cloud-workspace-identity">{identity.username}</p>}
       {phase === 'entry' && <Button variant="primary" onClick={() => void enter()} data-testid="cloud-workspace-enter">{t('cloudWorkspace.enter')}</Button>}
-      {retry && <Button onClick={() => phase === 'environmentError' ? void enter() : phase === 'logoutFailed' ? void logout() : window.location.reload()}
+      {retry && <Button onClick={() => phase === 'environmentError' ? void enter() : phase === 'logoutFailed' ? void logout() : void retryIdentity()}
         data-testid="cloud-workspace-retry">{t('cloudWorkspace.retry')}</Button>}
       {identity?.authenticated && !['checking', 'logoutFailed'].includes(phase) && logoutButton}
     </section>
