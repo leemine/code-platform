@@ -42,7 +42,15 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       // A persisted ALLOCATED row is not application readiness. Always use the
       // existing ensure path and its readiness probe before mounting App/WS.
       const result = await cloudRequest('environment/ensure', {}, 150000);
-      const current = await readOrganizationStatus();
+      let current: OrganizationStatus;
+      try {
+        current = await readOrganizationStatus();
+        if (!current.enabled) throw new Error('Account endpoint unavailable');
+      } catch {
+        // Account recovery is distinct from retrying a failed allocation.
+        if (generation === epoch.current) setPhase('unavailable');
+        return;
+      }
       if (generation !== epoch.current) return;
       if (!sameIdentity(identityRef.current, current)) { discard(current); return; }
       if (environmentState(result) !== 'READY') throw new Error('Environment not ready');

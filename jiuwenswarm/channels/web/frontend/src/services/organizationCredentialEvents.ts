@@ -113,10 +113,10 @@ export async function readOrganizationStatus(): Promise<OrganizationStatus> {
   } catch (error) {
     // Bounded transport facts only: never log cookies, identity, response body,
     // URL or raw exception text. This distinguishes future timeout/proxy faults.
-    console.warn('Account status probe failed', {
+    console.warn('Account status probe failed', JSON.stringify({
       reason: controller.signal.aborted ? 'timeout' : reason,
       httpStatus, attempts, elapsedMs: Date.now() - started,
-    });
+    }));
     throw error;
   } finally {
     clearTimeout(timer);

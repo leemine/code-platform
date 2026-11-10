@@ -222,7 +222,18 @@ test('probe timeout aborts transport without a second request or identity fallba
   try {
     await assert.rejects(api.readOrganizationStatus(), { name: 'AbortError' });
     assert.equal(requests, 1);
-    assert.equal(diagnostics[0][1].reason, 'timeout');
+    assert.equal(JSON.parse(diagnostics[0][1]).reason, 'timeout');
     assert.ok(!JSON.stringify(diagnostics).includes('secret'));
   } finally { globalThis.setTimeout = originalTimeout; console.warn = originalWarn; }
 });
+
+for (const status of [503, 404]) {
+  test(`identity failure ${status} after readiness uses account recovery without local fallback`, async () => {
+    await mount(); assert.equal(phase(), 'entry');
+    route = async path => path.endsWith('/ensure') ? response({ state: 'READY' }) : response({}, status);
+    await click('cloud-workspace-enter');
+    await waitFor(() => phase() === 'unavailable');
+    assert.equal(query('original-app'), null);
+    assert.equal(calls.filter(call => call.url.endsWith('/ensure')).length, 1);
+  });
+}
