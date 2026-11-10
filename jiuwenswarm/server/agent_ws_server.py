@@ -2024,6 +2024,10 @@ class AgentWebSocketServer:
 
     async def _process_request(self, *args: Any) -> Any:
         """在握手阶段执行 Origin 校验，兼容 legacy/new websockets APIs。"""
+        from gateway.common.security.service_auth import check_service_handshake
+        denial = check_service_handshake(args)
+        if denial is not None:
+            return denial
         path, request_headers = extract_handshake_request(args)
         origin = get_header_value(request_headers, "Origin")
         enable_origin_check = is_origin_check_enabled()
@@ -2591,6 +2595,8 @@ class AgentWebSocketServer:
                 )
             return
 
+        from gateway.common.security.service_auth import verify_service_message
+        verify_service_message(data)
         try:
             env = E2AEnvelope.from_dict(data)
         except Exception as parse_err:
@@ -2656,6 +2662,8 @@ class AgentWebSocketServer:
         self, ws: Any, request: AgentRequest, send_lock: asyncio.Lock
     ) -> None:
         """Dispatch an already-parsed request. Used by Front after CONTROL_READY."""
+        from gateway.common.security.service_auth import bind_service_request
+        bind_service_request(request)
         if request.req_method == ReqMethod.CHAT_SEND:
             server_logger.info(
                 "[AgentServer] chat input received: request_id=%s session_id=%s channel_id=%s query=%s",

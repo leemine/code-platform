@@ -570,7 +570,8 @@ class MessageHandler(ABC):
             msg.metadata["member_name"] = mname
 
         self._remember_user_query_context(msg)
-        self._user_messages.put_nowait(msg)
+        from gateway.auth.request_scope import capture
+        self._user_messages.put_nowait(capture(msg))
         logger.info(
             "[MessageHandler] _user_messages 入队: id=%s channel_id=%s session_id=%s",
             msg.id, msg.channel_id, msg.session_id,
@@ -2688,7 +2689,8 @@ class MessageHandler(ABC):
 
     async def publish_user_messages(self, msg: "Message") -> None:
         """将消息放入 user_messages 队列（异步）."""
-        await self._user_messages.put(msg)
+        from gateway.auth.request_scope import capture
+        await self._user_messages.put(capture(msg))
 
     async def _publish_runtime_wake(self, msg: "Message") -> None:
         """Accept Runtime wakeups only while the forwarding host is live."""
@@ -2698,19 +2700,21 @@ class MessageHandler(ABC):
 
     def publish_user_messages_nowait(self, msg: "Message") -> None:
         """将消息放入 user_messages 队列（同步）."""
-        self._user_messages.put_nowait(msg)
+        from gateway.auth.request_scope import capture
+        self._user_messages.put_nowait(capture(msg))
 
     async def consume_user_messages(self, timeout: float | None = None) -> "Message | None":
         """消费一条 user_messages；timeout 为 None 则阻塞，否则超时返回 None."""
+        from gateway.auth.request_scope import restore
         if timeout is not None and timeout <= 0:
             try:
-                return self._user_messages.get_nowait()
+                return restore(self._user_messages.get_nowait())
             except asyncio.QueueEmpty:
                 return None
         try:
             if timeout is None:
-                return await self._user_messages.get()
-            return await asyncio.wait_for(self._user_messages.get(), timeout=timeout)
+                return restore(await self._user_messages.get())
+            return restore(await asyncio.wait_for(self._user_messages.get(), timeout=timeout))
         except asyncio.TimeoutError:
             return None
 

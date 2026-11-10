@@ -1,0 +1,6 @@
+id: cloud_workspace
+name: Cloud Workspace
+version: 0.1.0
+package_type: application
+description: Independent platform accounts and a default cloud execution environment
+permissions: []

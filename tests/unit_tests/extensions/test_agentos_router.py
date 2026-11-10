@@ -1968,13 +1968,13 @@ async def test_connect_warmup_failure_does_not_raise() -> None:
     await _await_warmup(client, "u1")
 
     assert yuanrong.create_calls == 0
-    assert await agent_manager.get_agent("u1", "jiuwenswarm") is None
+    assert (await agent_manager.get_agent("u1", "jiuwenswarm")).is_failed()
     await client.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_chat_after_failed_warmup_create_retries() -> None:
-    """Warmup create failure must not pin a FAILED runtime that blocks chat."""
+async def test_chat_after_failed_warmup_does_not_repeat_unknown_create() -> None:
+    """An ambiguous warmup allocation must remain protected from duplicate POST."""
 
     class FailOnceYuanRong(FakeYuanRongClient):
         def __init__(self) -> None:
@@ -1994,14 +1994,14 @@ async def test_chat_after_failed_warmup_create_retries() -> None:
     await client._on_channel_event(_channel_event("u1", "connected", "web"))
     await _await_warmup(client, "u1")
     leftover = await agent_manager.get_agent("u1", "jiuwenswarm")
-    assert leftover is None
+    assert leftover is not None and leftover.is_failed()
 
     response = await client.send_request(_envelope())
-    assert response.ok
-    assert yuanrong.create_calls == 1
+    assert not response.ok
+    assert yuanrong.create_calls == 0
     runtime = await agent_manager.get_agent("u1", "jiuwenswarm")
     assert runtime is not None
-    assert runtime.is_ready()
+    assert runtime.is_failed()
     await client.shutdown()
 
 
@@ -2114,7 +2114,8 @@ async def test_sandbox_prewarm_lifecycle_protected_during_warmup(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_leader_cancel_wakes_follower_and_clears_inflight() -> None:
+@pytest.mark.parametrize("close_instance", [False, True])
+async def test_leader_cancel_wakes_follower_and_clears_inflight(close_instance) -> None:
     """Cancelling a leader must settle the inflight Future and wake followers."""
 
     gate = asyncio.Event()
@@ -2161,11 +2162,13 @@ async def test_leader_cancel_wakes_follower_and_clears_inflight() -> None:
     assert not follower_task.done()
     assert client._ws_connecting
 
+    if close_instance:
+        await client._close_ws_client(runtime.info.sandbox_id)
     warmup_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await warmup_task
 
-    with pytest.raises(RuntimeError, match="leader cancelled"):
+    with pytest.raises(RuntimeError, match="connection closed" if close_instance else "leader cancelled"):
         await asyncio.wait_for(follower_task, timeout=1.0)
 
     assert gated_clients[0].disconnected is True
@@ -2604,32 +2607,23 @@ class AlwaysTimeoutYuanRongClient(FakeYuanRongClient):
 
 
 @pytest.mark.asyncio
-async def test_create_agent_reconciles_after_create_timeout() -> None:
-    """create 超时后以相同参数（同名幂等）回查重试一次，成功后 agent READY。"""
+async def test_create_timeout_is_not_retried_without_authoritative_receipt() -> None:
+    """A same-name POST is not an allocation lookup or idempotency guarantee."""
+    from gateway.extensions.agentos.agentos_router.agent_manager import AgentCreateFailed
     yuanrong = TimeoutOnceYuanRongClient()
-    registry = FakeRegistryClient()
-    agent_manager = AgentManager()
-    client = _router_client(yuanrong, registry, agent_manager)
-
+    client = _router_client(yuanrong)
+    with pytest.raises(YuanrongAgentTimeoutError):
+        await client.send_request(_envelope())
     response = await client.send_request(_envelope())
-
-    assert response.ok
-    # 两次尝试：首次超时 + 一次幂等回查，参数（name 等）完全一致
-    assert len(yuanrong.attempt_payloads) == 2
-    assert (
-        yuanrong.attempt_payloads[0]["name"]
-        == yuanrong.attempt_payloads[1]["name"]
-        == "u1+jiuwenswarm"
-    )
-    agents = await agent_manager.list_user_agents("u1")
-    assert agents[0].info.status is AgentStatus.READY
+    assert not response.ok and "AGENT_CREATE_FAILED" in str(response.payload["error"])
+    assert len(yuanrong.attempt_payloads) == 1
+    assert yuanrong.attempt_payloads[0]["name"] == "u1+jiuwenswarm"
     await client.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_create_agent_double_timeout_fails_without_further_retries() -> None:
-    """回查重试仍超时：creator 原始异常上抛（owner 路径既有语义），
-    runtime 标 FAILED（防双创建），不再第三次尝试。"""
+async def test_create_agent_timeout_retains_failed_without_retries() -> None:
+    """首次超时保留 FAILED，未知结果不再 POST。"""
     yuanrong = AlwaysTimeoutYuanRongClient()
     registry = FakeRegistryClient()
     agent_manager = AgentManager()
@@ -2638,7 +2632,7 @@ async def test_create_agent_double_timeout_fails_without_further_retries() -> No
     with pytest.raises(YuanrongAgentTimeoutError):
         await client.send_request(_envelope())
 
-    assert yuanrong.create_attempts == 2
+    assert yuanrong.create_attempts == 1
     agents = await agent_manager.list_user_agents("u1")
     assert agents[0].info.status is AgentStatus.FAILED
     await client.shutdown()

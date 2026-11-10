@@ -684,7 +684,7 @@ class TestSessionAdapter:
         monkeypatch.setattr(module, "get_agent_root_dir", lambda: tmp_path)
         monkeypatch.setattr(
             "jiuwenswarm.server.runtime.session.session_metadata.get_session_metadata",
-            lambda sid, cache_bust=False: {"mode": "agent"},
+            lambda sid, cache_bust=False, *, enable_writeback=True: {"mode": "agent"},
         )
         monkeypatch.setattr(
             "jiuwenswarm.server.runtime.session.session_history.resolve_session_dir",
@@ -720,7 +720,7 @@ class TestSessionAdapter:
         monkeypatch.setattr(module, "get_agent_root_dir", lambda: tmp_path)
         monkeypatch.setattr(
             "jiuwenswarm.server.runtime.session.session_metadata.get_session_metadata",
-            lambda sid, cache_bust=False: {"mode": "agent"},
+            lambda sid, cache_bust=False, *, enable_writeback=True: {"mode": "agent"},
         )
         monkeypatch.setattr(
             "jiuwenswarm.server.runtime.session.session_history.resolve_session_dir",
@@ -1304,8 +1304,19 @@ class TestAdapterRegistry:
                 assert registry.contains(method)
 
 
+@pytest.fixture
+def agentserver_a2ui_provider(monkeypatch):
+    """Assemble the real provider without leaking registration between tests."""
+    from jiuwenswarm.common import external_providers
+
+    monkeypatch.setattr(external_providers, "_providers", dict(external_providers._providers))
+    from jiuwenswarm.server.runtime.a2ui import integration
+
+    external_providers.register("a2ui", integration)
+
+
 @pytest.mark.asyncio
-async def test_config_adapter_executes_panel_get_in_agentserver_context() -> None:
+async def test_config_adapter_executes_panel_get_in_agentserver_context(agentserver_a2ui_provider) -> None:
     response = await ConfigAdapter().handle(_request(ReqMethod.CONFIG_GET))
 
     assert response.ok is True
@@ -1559,7 +1570,7 @@ def test_jev_provider_defaults_match_openjiuwen() -> None:
 
 @_requires_jev
 @pytest.mark.asyncio
-async def test_jev_credential_save_read_and_provider_switch(monkeypatch, tmp_path):
+async def test_jev_credential_save_read_and_provider_switch(monkeypatch, tmp_path, agentserver_a2ui_provider):
     from jiuwenswarm.common import config as config_module
     from jiuwenswarm.common.config_panel import config_set_handlers as handlers
 

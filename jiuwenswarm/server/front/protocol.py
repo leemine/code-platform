@@ -75,6 +75,8 @@ def parse_raw_message(raw: str | bytes) -> AgentRequest | dict[str, Any]:
             channel_id="",
             message=f"JSON 解析失败: {exc}",
         )
+    from gateway.common.security.service_auth import verify_service_message
+    verify_service_message(data)
     try:
         env = E2AEnvelope.from_dict(data)
     except Exception as parse_err:
@@ -89,7 +91,8 @@ def parse_raw_message(raw: str | bytes) -> AgentRequest | dict[str, Any]:
         )
         if not isinstance(legacy, dict):
             raise ValueError("legacy_agent_request missing or not a dict")
-        return payload_to_request(legacy)
+        from gateway.common.security.service_auth import bind_service_request
+        return bind_service_request(payload_to_request(legacy))
     logger.info(
         "[E2A][in] request_id=%s channel=%s method=%s is_stream=%s",
         env.request_id,

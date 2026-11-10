@@ -545,6 +545,7 @@ class AgentOSRouterClient(AgentServerClient):
         ws_client_factory: Callable[[], WebSocketAgentServerClient] | None = None,
         probe_settings: RuntimeProbeSettings | None = None,
     ) -> None:
+        self._instance_lifecycle = None
         self._yuanrong = yuanrong
         self._registry = registry
         self._agent_manager = agent_manager
@@ -599,6 +600,42 @@ class AgentOSRouterClient(AgentServerClient):
         self._ws_client_factory = ws_client_factory or WebSocketAgentServerClient
         self._push_handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
         self._server_config: dict[str, Any] = {}
+
+    def configure_instance_lifecycle(self, lifecycle, authenticator) -> None:
+        """Inject durable policy before connecting; retain the existing creator."""
+        if self._server_ready:
+            raise RuntimeError("instance lifecycle must be configured before connect")
+        if self._agent_manager.key_fields != ("user_id", "agent_type"):
+            raise ValueError("durable account instances require user/agent keys")
+        self._instance_lifecycle = lifecycle
+        self._auth_client = authenticator
+
+    async def ensure_instance(self, user_id: str) -> AgentRuntime:
+        if self._instance_lifecycle is not None:
+            pending = self._instance_lifecycle.pending_delete(user_id)
+            if pending is not None:
+                await self._release_agent_resources(pending)
+            # Validate durable policy before evicting a failed memory entry.
+            self._instance_lifecycle.plan(AgentInfo(user_id=user_id, agent_type=BUILTIN_AGENT_TYPE))
+            await self._agent_manager.discard_failed(user_id, BUILTIN_AGENT_TYPE)
+        task = asyncio.create_task(self._ensure_instance_held(user_id))
+        self._background_tasks.add(task)
+        def finished(done):
+            self._background_tasks.discard(done)
+            if not done.cancelled():
+                done.exception()
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _ensure_instance_held(self, user_id: str) -> AgentRuntime:
+        runtime = await self._agent_manager.get_or_create_agent(
+            user_id, BUILTIN_AGENT_TYPE, creator=self._create_agent, acquire=True,
+        )
+        try:
+            await self._get_ws_client(runtime)
+            return runtime
+        finally:
+            await self._agent_manager.release(runtime.key)
 
     def set_channel_manager(self, channel_manager: ChannelManager) -> None:
         """Attach handshake IAM for Web/TUI and subscribe channel disconnect events."""
@@ -931,12 +968,10 @@ class AgentOSRouterClient(AgentServerClient):
         still goes through get_or_create_agent, so a failed warmup only
         means the first request pays the cold-start cost.
 
-        A thrown create is stored as FAILED and never auto-retried (anti
-        double-create). Idle reaper / delayed cleanup only pop READY
-        runtimes, so a leftover FAILED would make every later chat raise
-        AgentCreateFailed until process restart. Drop only FAILED here so
-        chat can cold-start; leave READY if create succeeded and only
-        instance WS warmup failed.
+        A thrown create retains FAILED: a missing response does not prove
+        that no sandbox exists. Durable policies reconcile that outcome;
+        pre-create validation failures remain retryable in AgentManager.
+        A socket warmup failure leaves an allocated runtime intact.
 
         The whole warmup (create + instance WS) holds one task_count via
         acquire=True so the disconnect cleanup / idle reaper cannot delete
@@ -973,16 +1008,6 @@ class AgentOSRouterClient(AgentServerClient):
                 agent_type,
                 exc_info=True,
             )
-            try:
-                existing = await self._agent_manager.get_agent(user_id, agent_type)
-                if existing is not None and existing.is_failed():
-                    await self._agent_manager.delete_agent(user_id, agent_type)
-            except Exception:
-                logger.debug(
-                    "[AgentOSRouter] warmup cleanup delete failed: user=%s",
-                    user_id,
-                    exc_info=True,
-                )
             return
         if self._closed:
             return
@@ -1107,6 +1132,11 @@ class AgentOSRouterClient(AgentServerClient):
         normalized_path = normalize_agent_file_upload_path(
             path, dir_prefix=dir_prefix, user_id=user_id
         )
+        if self._instance_lifecycle is not None:
+            from gateway.routing.workspace_files import workspace_file_request
+            return await workspace_file_request(self, "write", user_id=user_id, session_id=session_id,
+                                                agent_type=agent_type, instance_id=instance_id,
+                                                path=normalized_path, content=content)
         resolved_instance_id, runtime_key = await self._resolve_file_runtime(
             user_id=user_id,
             agent_type=agent_type,
@@ -1141,6 +1171,11 @@ class AgentOSRouterClient(AgentServerClient):
     ) -> AgentFileDownloadChunk:
         """Download one chunk from the user's agent container."""
         normalized_path = normalize_agent_file_download_path(path)
+        if self._instance_lifecycle is not None:
+            from gateway.routing.workspace_files import workspace_file_request
+            return await workspace_file_request(self, "read", user_id=user_id, session_id=session_id,
+                                                agent_type=agent_type, instance_id=instance_id,
+                                                path=normalized_path, offset=offset, limit=limit)
         resolved_instance_id, runtime_key = await self._resolve_file_runtime(
             user_id=user_id,
             agent_type=agent_type,
@@ -1178,6 +1213,11 @@ class AgentOSRouterClient(AgentServerClient):
         if int(max_depth) < 0:
             raise AgentOSFileTransferError("max_depth must be >= 0", code="BAD_REQUEST")
         normalized_dir = normalize_agent_file_download_path(dir_path)
+        if self._instance_lifecycle is not None:
+            from gateway.routing.workspace_files import workspace_file_request
+            return await workspace_file_request(self, "list", user_id=user_id, session_id=session_id,
+                                                agent_type=agent_type, instance_id=instance_id,
+                                                path=normalized_dir, recursive=recursive, max_depth=max_depth)
         resolved_instance_id, runtime_key = await self._resolve_file_runtime(
             user_id=user_id,
             agent_type=agent_type,
@@ -1215,6 +1255,11 @@ class AgentOSRouterClient(AgentServerClient):
         normalized_path = normalize_agent_file_download_path(path)
         if "\x00" in normalized_path:
             raise AgentOSFileTransferError("path must not contain NUL", code="BAD_REQUEST")
+        if self._instance_lifecycle is not None:
+            from gateway.routing.workspace_files import workspace_file_request
+            return await workspace_file_request(self, "mkdir", user_id=user_id, session_id=session_id,
+                                                agent_type=agent_type, instance_id=instance_id,
+                                                path=normalized_path, mode=mode, recursive=recursive)
         resolved_instance_id, runtime_key = await self._resolve_file_runtime(
             user_id=user_id,
             agent_type=agent_type,
@@ -1246,7 +1291,14 @@ class AgentOSRouterClient(AgentServerClient):
         return self._server_ready and self._yuanrong.server_ready
 
     async def connect(self, uri: str) -> None:
-        await self._yuanrong.connect(uri)
+        if self._instance_lifecycle is not None:
+            self._instance_lifecycle.start()
+        try:
+            await self._yuanrong.connect(uri)
+        except BaseException:
+            if self._instance_lifecycle is not None:
+                self._instance_lifecycle.close()
+            raise
         self._closed = False
         self._server_ready = True
         self._ensure_idle_reaper_task()
@@ -1270,7 +1322,11 @@ class AgentOSRouterClient(AgentServerClient):
         try:
             await self._yuanrong.disconnect()
         finally:
-            await self._registry.close()
+            try:
+                await self._registry.close()
+            finally:
+                if self._instance_lifecycle is not None:
+                    self._instance_lifecycle.close()
 
     def set_or_update_server_config(
         self,
@@ -1466,7 +1522,8 @@ class AgentOSRouterClient(AgentServerClient):
     ) -> WebSocketAgentServerClient:
         """建立到 instance 的 WS；对冷启动 502 等做 deadline 内重试."""
         uri = self._agent_ws_url(instance_id, agent_port)
-        deadline = asyncio.get_running_loop().time() + _WS_CONNECT_READY_TIMEOUT_SECONDS
+        ready_timeout = self._instance_lifecycle.ready_timeout if self._instance_lifecycle is not None else _WS_CONNECT_READY_TIMEOUT_SECONDS
+        deadline = asyncio.get_running_loop().time() + ready_timeout
         attempt = 0
         # One reconnect (including 502 retries) shares one southbound id.
         ws_headers = apply_trace_header({})
@@ -1475,6 +1532,12 @@ class AgentOSRouterClient(AgentServerClient):
         while True:
             attempt += 1
             client = self._ws_client_factory()
+            if self._instance_lifecycle is not None:
+                policy = self._instance_lifecycle
+                client.set_transport_auth(
+                    headers=lambda: policy.transport_headers(user_id),
+                    sign=lambda wire: policy.sign_request(user_id, wire),
+                )
             if self._push_handler is not None:
                 client.set_server_push_handler(self._push_handler)
             log_agentos(
@@ -1495,6 +1558,8 @@ class AgentOSRouterClient(AgentServerClient):
                     uri,
                     extra_headers=ws_headers,
                 )
+                if self._instance_lifecycle is not None and not client.agent_ready:
+                    raise ConnectionError("AgentServer application readiness ACK missing")
                 # 建连成功即注册断连通知（早于 _get_ws_client 写缓存，缩小
                 # 「已连接但未注册」的漏报窗口）；test double 无该接口时跳过。
                 self._register_ws_disconnect_handler(
@@ -1752,7 +1817,9 @@ class AgentOSRouterClient(AgentServerClient):
             client = self._ws_clients.pop(key, None)
             inflight = self._ws_connecting.pop(key, None)
         if inflight is not None and not inflight.done():
-            inflight.cancel()
+            # Closing an instance is a transport failure, not cancellation of
+            # each caller's HTTP task. Followers must receive an error response.
+            inflight.set_exception(RuntimeError("instance connection closed"))
         if client is None:
             return
         try:
@@ -1922,7 +1989,10 @@ class AgentOSRouterClient(AgentServerClient):
                 return self._routing_error_response(envelope, error)
             self._log_route("route.unary", envelope, runtime)
             try:
-                return await ws_client.send_request(envelope, timeout=timeout)
+                response = await ws_client.send_request(envelope, timeout=timeout)
+                if self._instance_lifecycle is not None:
+                    await self._instance_lifecycle.check_delivery(runtime.info.user_id)
+                return response
             except Exception as exc:
                 if not _is_agent_network_error(exc):
                     raise
@@ -1994,6 +2064,8 @@ class AgentOSRouterClient(AgentServerClient):
             self._log_route("route.stream", envelope, runtime)
             try:
                 async for chunk in ws_client.send_request_stream(envelope):
+                    if self._instance_lifecycle is not None:
+                        await self._instance_lifecycle.check_delivery(runtime.info.user_id)
                     yield chunk
             except Exception as exc:
                 if not _is_agent_network_error(exc):
@@ -2747,6 +2819,7 @@ class AgentOSRouterClient(AgentServerClient):
                 registry=self._registry,
                 agent_manager=self._agent_manager,
                 is_closed=lambda: self._closed,
+                protect=(self._instance_lifecycle.protect if self._instance_lifecycle is not None else None),
             )
         except Exception:  # noqa: BLE001 - startup cleanup must not take down connect()
             logger.exception("[AgentOSRouter] startup sandbox cleanup failed")
@@ -2795,8 +2868,9 @@ class AgentOSRouterClient(AgentServerClient):
         return reaped
 
     async def _create_agent(self, agent_info: AgentInfo) -> AgentInfo:
+        plan = self._instance_lifecycle.plan(agent_info) if self._instance_lifecycle is not None else None
         try:
-            workspace = resolve_agent_workspace(
+            workspace = plan.workspace if plan is not None else resolve_agent_workspace(
                 agent_info.user_id,
                 workspace_root=self._workspace_root,
             )
@@ -2888,35 +2962,47 @@ class AgentOSRouterClient(AgentServerClient):
             # 默认 2222）。未改探针配置时 delay=2/failure=8；yaml /
             # AGENTOS_PROBE_* 有改动时与 builtin 共用配置。已有 probes 原样透传。
 
+        if plan is not None:
+            workspace, runtime_spec, env_vars = plan.workspace, plan.runtime_spec, plan.env_vars
+            extra_metadata.update(instance_epoch=plan.receipt["epoch"], operation_id=plan.receipt["operation_id"])
         started = time.monotonic()
 
         async def _create_sandbox_once():
             return await self._yuanrong.create_sandbox(
                 namespace=self._yuanrong.agent_namespace,
-                name=f"{agent_info.user_id}+{agent_info.agent_type}",
+                name=plan.name if plan is not None else f"{agent_info.user_id}+{agent_info.agent_type}",
                 workspace=workspace,
                 runtime_spec=runtime_spec,
                 env_vars=env_vars,
+                **({"mounts": plan.mounts} if plan is not None else {}),
             )
 
-        try:
-            sandbox = await _create_sandbox_once()
-        except YuanrongAgentTimeoutError:
-            # create 超时（请求可能已生效而响应丢失的半成功状态）：以相同参数
-            # 重试一次做幂等回查。name 由 user_id+agent_type
-            # 确定性派生，即实例标识——首次请求未达则正常新建；已创建则按
-            # 同名幂等复用，不产生第二个实例。二次仍失败则按原语义上抛
-            # （runtime 标 FAILED，防双创建）。
-            log_agentos(
-                logger,
-                logging.WARNING,
-                "sandbox.create.reconcile",
-                user_id=agent_info.user_id,
-                session_id=str(agent_info.metadata.get("session_id") or ""),
-                agent_type=agent_info.agent_type,
-                reason="create_timeout",
-            )
-            sandbox = await _create_sandbox_once()
+        from gateway.extensions.yuanrong_frontend_client import SandboxInfo
+        if plan is not None and plan.instance_id:
+            sandbox = SandboxInfo(sandbox_id=plan.instance_id)
+        elif plan is not None and plan.needs_reconciliation:
+            matches = []
+            for item in await self._yuanrong.list_agent_instances():
+                detail = await self._yuanrong.get_agent_info(item["instance_id"])
+                if self._instance_lifecycle.matches(plan, detail):
+                    matches.append(item["instance_id"])
+            if len(matches) != 1:
+                raise RuntimeError("instance creation outcome remains unknown")
+            sandbox = SandboxInfo(sandbox_id=matches[0])
+            self._instance_lifecycle.created(plan, sandbox.sandbox_id)
+        else:
+            if plan is not None:
+                self._instance_lifecycle.creating(plan)
+            try:
+                sandbox = await _create_sandbox_once()
+                if plan is not None:
+                    self._instance_lifecycle.created(plan, sandbox.sandbox_id)
+            except BaseException:
+                if plan is not None:
+                    self._instance_lifecycle.unknown(plan)
+                # A deterministic name is not a documented idempotency guarantee.
+                # Preserve the original FAILED single-flight protection; never POST twice.
+                raise
         latency_ms = max(0, int((time.monotonic() - started) * 1000))
         instance_id = sandbox.sandbox_id
         agent_info.sandbox_id = instance_id
@@ -2993,6 +3079,19 @@ class AgentOSRouterClient(AgentServerClient):
             )
         self._web_ready_sandboxes.discard(str(agent_info.sandbox_id or ""))
         await self._close_ws_client(agent_info.sandbox_id)
+        if self._instance_lifecycle is not None and agent_info.sandbox_id:
+            self._instance_lifecycle.deleting(agent_info)
+            await self._yuanrong.delete_sandbox(agent_info.sandbox_id)
+            if not await self._yuanrong.instance_absent(agent_info.sandbox_id):
+                raise RuntimeError("instance deletion outcome remains pending")
+            confirm = getattr(self._instance_lifecycle, "confirm_deleted", None)
+            if confirm is not None:
+                await confirm(agent_info)
+            await self._unregister_agent(agent_info)
+            await self._agent_manager.delete_agent(agent_info.user_id, agent_info.agent_type,
+                                                   expected_instance_id=agent_info.sandbox_id)
+            self._instance_lifecycle.deleted(agent_info)
+            return True
         if agent_info.sandbox_id:
             try:
                 await self._yuanrong.delete_sandbox(agent_info.sandbox_id)
@@ -3074,6 +3173,9 @@ class AgentOSRouterClient(AgentServerClient):
         去 runtime / 注销，否则下次 switch 会复用死 runtime 导致自愈失败。
         """
         info = runtime.info
+        if self._instance_lifecycle is not None:
+            await self._close_ws_client(info.sandbox_id)
+            return
         session_id = str(info.metadata.get("session_id") or "")
         sandbox_id = str(info.sandbox_id or "")
         logger.warning(
@@ -3223,6 +3325,19 @@ class AgentOSRouterClient(AgentServerClient):
         """Delete YuanRong sandbox and unregister the registry instance."""
         self._web_ready_sandboxes.discard(str(agent_info.sandbox_id or ""))
         await self._close_ws_client(agent_info.sandbox_id)
+        if self._instance_lifecycle is not None and agent_info.sandbox_id:
+            self._instance_lifecycle.deleting(agent_info)
+            await self._yuanrong.delete_sandbox(agent_info.sandbox_id)
+            if not await self._yuanrong.instance_absent(agent_info.sandbox_id):
+                raise RuntimeError("instance deletion outcome remains pending")
+            confirm = getattr(self._instance_lifecycle, "confirm_deleted", None)
+            if confirm is not None:
+                await confirm(agent_info)
+            await self._unregister_agent(agent_info)
+            await self._agent_manager.delete_agent(agent_info.user_id, agent_info.agent_type,
+                                                   expected_instance_id=agent_info.sandbox_id)
+            self._instance_lifecycle.deleted(agent_info)
+            return True
         if agent_info.sandbox_id:
             try:
                 await self._yuanrong.delete_sandbox(agent_info.sandbox_id)

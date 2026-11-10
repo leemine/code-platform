@@ -20,6 +20,10 @@ _EXPORTS = {
         _APPLICATION_PLUGIN_MODULE,
         "ApplicationPluginServices",
     ),
+    "HTTPRouteContribution": (
+        _APPLICATION_PLUGIN_MODULE,
+        "HTTPRouteContribution",
+    ),
     "FrontendContribution": (
         _APPLICATION_PLUGIN_MODULE,
         "FrontendContribution",

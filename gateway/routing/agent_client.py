@@ -219,6 +219,11 @@ class WebSocketAgentServerClient(AgentServerClient):
             self._agent_ready,
         )
 
+    def set_transport_auth(self, *, headers, sign) -> None:
+        """Inject transport proof without replacing routing or the wire codec."""
+        self._transport_headers = headers
+        self._transport_sign = sign
+
     async def connect(
         self,
         uri: str,
@@ -244,6 +249,9 @@ class WebSocketAgentServerClient(AgentServerClient):
             for key, value in dict(extra_headers or {}).items()
             if str(value).strip()
         }
+        header_factory = getattr(self, "_transport_headers", None)
+        if header_factory is not None:
+            cleaned_headers.update(header_factory())
         # 内部通道身份（连接级，P1 修正）：握手头部绑定共享密钥，供
         # AgentServer 侧的 gateway 专有 action（如 command.mcp 的
         # oauth_callback）做连接级放行——载荷字段（channel_id）可被任
@@ -525,6 +533,11 @@ class WebSocketAgentServerClient(AgentServerClient):
         ws = self._ws
         if ws is None:
             raise RuntimeError("未连接 AgentServer，请先调用 connect(uri)")
+        signer = getattr(self, "_transport_sign", None)
+        if signer is not None:
+            # PermissionError is an OSError subclass; authentication failure is
+            # not a network disconnect and must not trigger instance cleanup.
+            payload = await signer(payload)
         try:
             await ws.send(json.dumps(payload, ensure_ascii=False))
         except (ConnectionClosed, OSError) as exc:

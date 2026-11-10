@@ -87,7 +87,9 @@ def get_remote_addr(ws: Any) -> str:
 
 def _handshake_cache_key(path: str, headers: Any) -> str:
     token = extract_token_from_path_and_headers(path, headers) or ""
-    return f"{path}|{token}"
+    import hashlib
+    cookie = next((v for k, v in headers_to_dict(headers).items() if k.lower() == "cookie"), "")
+    return hashlib.sha256(f"{path}|{token}|{cookie}".encode()).hexdigest()
 
 
 def take_handshake_auth(path: str, headers: Any) -> AuthResult | None:

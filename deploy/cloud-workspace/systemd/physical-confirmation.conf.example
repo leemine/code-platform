@@ -1,0 +1,5 @@
+# Optional drop-in for a NEW dedicated pool; provision all private roots first.
+# Set these six values in its operator-owned EnvironmentFile. Do not install automatically.
+[Service]
+ExecStart=
+ExecStart=/usr/bin/python3 /opt/code-platform/deploy/cloud-workspace/docker_log_boundary.py --listen /run/code-platform-log-%i/docker.sock --upstream ${DOCKER_UPSTREAM} --workspace-root ${WORKSPACE_ROOT} --workspace-name-pattern ${WORKSPACE_NAME_PATTERN} --private-log-root ${PRIVATE_LOG_ROOT} --shared-log-dir ${SHARED_LOG_DIR} --image ${AGENT_IMAGE} --user ${AGENT_USER} --uid ${AGENT_UID} --recover-stale-socket --physical-journal-root ${PHYSICAL_JOURNAL_ROOT} --identity-root ${IDENTITY_ROOT} --identity-target ${IDENTITY_TARGET} --reconcile-listen ${RECONCILE_LISTEN} --reconcile-frontend ${RECONCILE_FRONTEND} --reconcile-gid ${RECONCILE_GID}

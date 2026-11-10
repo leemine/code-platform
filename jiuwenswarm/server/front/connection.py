@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 async def process_handshake(*args: Any) -> Any:
+    from gateway.common.security.service_auth import check_service_handshake
+    denial = check_service_handshake(args)
+    if denial is not None:
+        return denial
     path, request_headers = extract_handshake_request(args)
     origin = get_header_value(request_headers, "Origin")
     enable_origin_check = is_origin_check_enabled()
@@ -190,7 +194,14 @@ class ConnectionHandler:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _handle_raw(self, ws: Any, raw: str | bytes, send_lock: asyncio.Lock) -> None:
-        parsed = parse_raw_message(raw)
+        try:
+            parsed = parse_raw_message(raw)
+        except PermissionError:
+            # Authentication failures must terminate the transport explicitly;
+            # an exception in this per-message task otherwise leaves callers
+            # waiting for a response that can never arrive.
+            await ws.close(code=1008, reason="Instance authorization rejected")
+            return
         if isinstance(parsed, dict):
             try:
                 async with send_lock:

@@ -54,6 +54,11 @@ def _ensure_req_method(name: str, value: str) -> None:
 # 协议包当前 pin 尚未定义该成员。
 _ensure_req_method("SESSION_ASSETS_REMOVE", "session.assets.remove")
 
+# Additive workspace operations over the existing E2A codec; remove these
+# registrations once the pinned protocol provides the same members.
+for _operation in ("READ", "WRITE", "LIST", "MKDIR"):
+    _ensure_req_method(f"FILE_WORKSPACE_{_operation}", f"file.workspace.{_operation.lower()}")
+
 __all__ = [
     "PROMPT_SUGGESTION_READY_EVENT",
     "SESSION_REQUEST_COMPLETED_EVENT",

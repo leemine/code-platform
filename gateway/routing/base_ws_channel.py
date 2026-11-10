@@ -302,6 +302,13 @@ class BaseWsChannel(BaseWebChannel):
                 else:
                     wire = frame
                 try:
+                    guard = getattr(ws, "auth_delivery_guard", None)
+                    if guard is not None:
+                        try:
+                            await guard()
+                        except (PermissionError, RuntimeError, OSError):
+                            await ws.close(code=1008, reason="authorization unavailable")
+                            return
                     await asyncio.wait_for(ws.send(wire), timeout=10.0)
                 except asyncio.TimeoutError:
                     # Drop only this frame. Killing the writer leaves an unbounded
