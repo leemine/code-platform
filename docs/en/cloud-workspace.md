@@ -60,3 +60,10 @@ First entry explicitly prepares the cloud environment; an existing allocation go
 
 The circular account badge shows the first two username characters (uppercase letters). The full username remains available through its tooltip and accessible name; only the avatar button remains in the sidebar. Clicking it opens the account menu with logout, which still uses the existing revocation endpoint.
 Codex permission changes apply before the next turn. The platform reconnects its owned client, resumes the same native thread and confirms the requested policy before execution. Failed recovery blocks execution; history and selected MCP connections are retained without modifying the official SDK.
+
+
+### Automatic account-probe recovery (2026-11-11)
+
+Reuse codeswarm's sequential recovery: after an unavailable probe settles, retry after two seconds without invalidating a slow response. Within the existing ten-second deadline, retry network transport errors and HTTP 502/503/504 once after 250 ms; a successful transient retry retains the mounted workspace. Persistent failures still disconnect and close the workspace; recovery uses a freshly verified principal to retain the same account's route. No cached identity authorizes access. HTTP 401/403 and invalid identities are not transport retries, and a missing endpoint cannot downgrade a known cloud session to local mode. Creation, logout and Runtime execution are never replayed. Diagnostics contain only failure category, status, attempt count and elapsed time.
+
+This fixes the missing UI recovery path, not the unconfirmed original intermittent transport cause. Persistent outages may still discard unsent drafts; persisted history recovers through the original session path.

@@ -12,6 +12,11 @@ let calls, disconnects, route;
 const identity = { enabled: true, authenticated: true, actor_id: 'u_a', subject_id: 'u_a', authority: 'test', session_revision: 'r1', username: 'alice', auth_backend: 'builtin', execution_mode: 'user_instance' };
 const response = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const tick = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+async function waitFor(predicate, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await tick();
+  assert.ok(predicate(), 'expected UI state before deadline');
+}
 const query = (id) => document.querySelector(`[data-testid="${id}"]`);
 const phase = () => query('cloud-workspace-gate')?.dataset.phase;
 const click = async id => { await act(async () => query(id).click()); await tick(); };
@@ -62,7 +67,7 @@ test('unauthenticated cloud shows login without mounting original App or creatin
 });
 test('authority failure and malformed status fail closed with explicit retry', async () => {
   route = async () => response({}, 503);
-  await mount(); assert.equal(phase(), 'unavailable'); assert.ok(query('cloud-workspace-retry')); assert.equal(query('original-app'), null);
+  await mount(); await waitFor(() => phase() === 'unavailable'); assert.ok(query('cloud-workspace-retry')); assert.equal(query('original-app'), null);
 });
 test('first allocation requires entry, uses no selectors, and mounts only after READY', async () => {
   await mount(); assert.equal(phase(), 'entry'); assert.equal(calls.length, 2);
@@ -97,6 +102,7 @@ test('account service failure on focus discards mounted App; no anonymous fallba
   await mount(); assert.ok(query('original-app'));
   route = async () => response({}, 503);
   await act(async () => window.dispatchEvent(new window.Event('focus'))); await tick();
+  await waitFor(() => phase() === 'unavailable');
   assert.equal(phase(), 'unavailable'); assert.equal(query('original-app'), null); assert.equal(disconnects, 1);
 });
 test('late ensure cannot mount App after logout begins', async () => {
@@ -146,8 +152,77 @@ test('retry after a known cloud outage cannot downgrade a now-missing endpoint t
   await mount();
   route = async () => response({}, 503);
   await act(async () => window.dispatchEvent(new window.Event('focus'))); await tick();
+  await waitFor(() => phase() === 'unavailable');
   assert.equal(phase(), 'unavailable');
   route = async () => response({}, 404);
   await click('cloud-workspace-retry');
   assert.equal(phase(), 'unavailable'); assert.equal(query('original-app'), null);
+});
+
+for (const fault of ['network', 502, 503, 504]) {
+  test(`a single transient ${fault} probe keeps the same mounted work UI`, async () => {
+    route = async path => path.endsWith('/status') ? response(identity) : response({ state: path.endsWith('/ensure') ? 'READY' : 'ALLOCATED' });
+    await mount(); const original = query('original-app'); assert.ok(original);
+    let count = 0;
+    route = async () => {
+      count += 1;
+      if (count > 1) return response(identity);
+      if (fault === 'network') throw new TypeError('private transport detail');
+      return response({}, fault);
+    };
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await waitFor(() => count === 2); await tick();
+    assert.equal(query('original-app'), original);
+    assert.equal(disconnects, 0);
+    assert.equal(calls.at(-1).options.credentials, 'same-origin');
+  });
+}
+
+test('persistent outage retries automatically only after the previous probe settles', async () => {
+  route = async () => response({}, 503);
+  await mount(); await waitFor(() => phase() === 'unavailable');
+  assert.equal(calls.length, 2);
+  let finish;
+  route = async () => new Promise(resolve => { finish = resolve; });
+  await waitFor(() => !!finish, 3000);
+  assert.equal(phase(), 'checking'); assert.equal(calls.length, 3);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+  assert.equal(calls.length, 3, 'slow retry must not be overlapped or invalidated');
+  await act(async () => finish(response({}, 400))); await tick();
+  assert.equal(phase(), 'unavailable'); assert.equal(query('original-app'), null);
+});
+
+test('known cloud endpoint disappearance closes UI without local fallback', async () => {
+  route = async path => path.endsWith('/status') ? response(identity) : response({ state: path.endsWith('/ensure') ? 'READY' : 'ALLOCATED' });
+  await mount(); assert.ok(query('original-app'));
+  route = async () => response({}, 404);
+  await act(async () => window.dispatchEvent(new window.Event('focus'))); await tick();
+  assert.equal(phase(), 'unavailable'); assert.equal(disconnects, 1); assert.equal(query('original-app'), null);
+});
+
+test('denials and malformed status are not retried as transport faults', async () => {
+  for (const value of [response({}, 401), response({}, 403), response({ ...identity, session_revision: '' }), new Response('not-json')]) {
+    const before = calls.length; route = async () => value;
+    await assert.rejects(api.readOrganizationStatus());
+    assert.equal(calls.length, before + 1);
+  }
+});
+
+test('probe timeout aborts transport without a second request or identity fallback', async () => {
+  const originalTimeout = globalThis.setTimeout;
+  const originalWarn = console.warn;
+  const diagnostics = [];
+  globalThis.setTimeout = (callback, delay, ...args) => originalTimeout(callback, delay === 10000 ? 10 : delay, ...args);
+  console.warn = (...args) => diagnostics.push(args);
+  let requests = 0;
+  globalThis.fetch = async (_url, { signal }) => {
+    requests += 1;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('secret transport details', 'AbortError')), { once: true }));
+  };
+  try {
+    await assert.rejects(api.readOrganizationStatus(), { name: 'AbortError' });
+    assert.equal(requests, 1);
+    assert.equal(diagnostics[0][1].reason, 'timeout');
+    assert.ok(!JSON.stringify(diagnostics).includes('secret'));
+  } finally { globalThis.setTimeout = originalTimeout; console.warn = originalWarn; }
 });

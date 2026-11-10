@@ -44,19 +44,54 @@ export function organizationCredentialReloadUrl(
 
 /** A failed probe is not evidence that authentication is disabled or changed. */
 export async function readOrganizationStatus(): Promise<OrganizationStatus> {
-  // A broken proxy may never finish a request. Keep the login gate closed, but
-  // let its existing sequential retry recover instead of waiting indefinitely.
+  // One transient retry shares the same deadline; it never supplies a cached
+  // identity or retries an authentication denial/invalid authority response.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
+  const started = Date.now();
+  let reason = 'network';
+  let httpStatus: number | null = null;
+  let attempts = 0;
   try {
-    const response = await fetch(`${getApiBase()}/api/v1/auth/organization/status`, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      attempts += 1;
+      reason = 'network';
+      httpStatus = null;
+      try {
+        response = await fetch(`${getApiBase()}/api/v1/auth/organization/status`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (controller.signal.aborted || attempt > 0 || !(error instanceof TypeError)) throw error;
+      }
+      if (response) {
+        httpStatus = response.status;
+        reason = 'http';
+        if (attempt > 0 || ![502, 503, 504].includes(response.status)) break;
+        await response.body?.cancel();
+        response = undefined;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => {
+          clearTimeout(retryTimer);
+          reject(new DOMException('Authentication probe timed out', 'AbortError'));
+        };
+        const retryTimer = setTimeout(() => {
+          controller.signal.removeEventListener('abort', abort);
+          resolve();
+        }, 250);
+        if (controller.signal.aborted) abort();
+        else controller.signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    if (!response) throw new Error('Authentication unavailable');
     // Only an explicitly absent old endpoint may use the existing legacy probe.
     if (response.status === 404) return { enabled: false };
     if (!response.ok) throw new Error('Authentication unavailable');
+    reason = 'invalid_response';
     const value: unknown = await response.json();
     if (!value || typeof value !== 'object') throw new Error('Invalid authentication status');
     const status = value as OrganizationStatus;
@@ -75,6 +110,14 @@ export async function readOrganizationStatus(): Promise<OrganizationStatus> {
       throw new Error('Invalid login identity');
     }
     return status;
+  } catch (error) {
+    // Bounded transport facts only: never log cookies, identity, response body,
+    // URL or raw exception text. This distinguishes future timeout/proxy faults.
+    console.warn('Account status probe failed', {
+      reason: controller.signal.aborted ? 'timeout' : reason,
+      httpStatus, attempts, elapsedMs: Date.now() - started,
+    });
+    throw error;
   } finally {
     clearTimeout(timer);
   }

@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 51 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 52 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -31,7 +31,7 @@ generated: true
 | [gateway/message_handler](#module-14) | 1 |
 | [gateway/routing](#module-15) | 1 |
 | [jiuwenswarm](#module-16) | 3 |
-| [jiuwenswarm/channels/web](#module-17) | 1 |
+| [jiuwenswarm/channels/web](#module-17) | 2 |
 | [jiuwenswarm/channels/web/frontend](#module-18) | 5 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-19) | 1 |
 | [jiuwenswarm/common](#module-20) | 5 |
@@ -202,6 +202,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B_20261031_1418_session-recovery-lifecycle](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
+| [B_20261111_0300_account-probe-recovery](bugfix/web/B_20261111_0300_account-probe-recovery.md) | B | 账号探测短暂故障容错与串行自动恢复 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs | 无独立 D：补回 codeswarm 既有恢复行为，不新增账号或执行链。 |
 
 <a id="module-18"></a>
 

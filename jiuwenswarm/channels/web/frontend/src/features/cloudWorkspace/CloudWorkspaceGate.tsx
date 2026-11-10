@@ -88,7 +88,8 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       checking = true;
       try {
         const current = await readOrganizationStatus();
-        if (!disposed && (!current.enabled || ((current.authenticated || identityRef.current?.authenticated) && !sameIdentity(identityRef.current, current)))) discard(current);
+        if (!current.enabled) throw new Error('Account endpoint unavailable');
+        if (!disposed && ((current.authenticated || identityRef.current?.authenticated) && !sameIdentity(identityRef.current, current))) discard(current);
       } catch {
         if (!disposed) {
           epoch.current += 1;
@@ -110,17 +111,29 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     };
   }, [identity, phase, discard]);
 
-  async function retryIdentity() {
+  const retryIdentity = useCallback(async () => {
+    const generation = epoch.current;
     setPhase('checking');
     try {
       const current = await readOrganizationStatus();
+      if (generation !== epoch.current) return;
       if (identityRef.current?.enabled && !current.enabled) throw new Error('Account endpoint unavailable');
       // Retain the previous verified principal across an outage until the fresh
       // probe decides whether the current route still belongs to that account.
       if (current.enabled) discard(current);
       else window.location.reload();
-    } catch { setPhase('unavailable'); }
-  }
+    } catch {
+      if (generation === epoch.current) setPhase('unavailable');
+    }
+  }, [discard]);
+
+  useEffect(() => {
+    if (phase !== 'unavailable') return;
+    // Extracted from codeswarm: schedule only after the preceding probe settles.
+    // Do not periodically invalidate a slow successful authentication response.
+    const timer = window.setTimeout(() => void retryIdentity(), 2000);
+    return () => window.clearTimeout(timer);
+  }, [phase, retryIdentity]);
 
   async function logout() {
     epoch.current += 1;
