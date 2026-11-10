@@ -166,3 +166,5 @@ affected-tests-5.log：425 passed（30.38秒），无失败/跳过。覆盖原Ro
 复查修订：故障重试保留原已核验身份，重新核验后再导航；已知云端的404不得降级本地。14项入口与5项既有Account Kit测试加入原stable Web任务，不增加独立门禁。113隔离镜像d217040与后续c25ece1共2022个后端安装文件逐项摘要相同，后者只更换Web前端，不将前端旧包结果冒记为新包成功。
 
 2026-11-10 用户要求登录标记改为圆形用户名缩写：仅 CloudWorkspaceGate 展示、私有 CSS 与语义主题 token 修改；完整用户名保留 tooltip/无障碍名称，原退出和 READY 门控不变。复用已有 14 项入口测试更新显示断言，实际 UI 及本轮验收结果统一见管理记录 PLATFORM_CLOUD_UI_ACCEPTANCE_20261110，不将未执行项标为通过。
+
+用户追加确认：侧栏仅保留圆形头像控件，移除常驻就绪/退出文字；复用 DropdownMenu 的定位、焦点、Esc 与外部关闭，菜单显示完整用户名与原退出动作。14项原入口测试补充菜单展开与退出可达断言。真实验收已确认 Native 1M 显示、拒绝/单次允许、取消后继续及双页退出；Codex 原会话从 full_access 调整为 default 后报 permission update was not confirmed，作为未关闭验收阻断保留，不能因 stable 通过而宣布可合入。未改 SDK 或绕过权限确认。

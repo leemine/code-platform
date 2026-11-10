@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../../components/ui/Button/Button';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../../components/ui/DropdownMenu/DropdownMenu';
 import { webClient } from '../../services/webClient';
 import {
   clearAccountCaches, notifyOrganizationCredentialChange, onOrganizationCredentialChange,
@@ -17,6 +18,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('checking');
   const [identity, setIdentity] = useState<OrganizationStatus | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const epoch = useRef(0);
   const entering = useRef(false);
   const identityRef = useRef<OrganizationStatus | null>(null);
@@ -135,12 +137,18 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     {t('cloudWorkspace.logout')}
   </Button>;
   const footer = <div className="cloud-workspace-account" data-testid="cloud-workspace-account" title={identity?.username}>
-    <span className="cloud-workspace-avatar" role="img" aria-label={identity?.username}
-      data-testid="cloud-workspace-identity">
-      {Array.from((identity?.username || '?').trim().toUpperCase()).slice(0, 2).join('')}
-    </span>
-    <span className="text-text-muted">{t('cloudWorkspace.ready')}</span>
-    {logoutButton}
+    <DropdownMenu open={accountMenuOpen} onOpenChange={setAccountMenuOpen}>
+      <DropdownMenuTrigger className="cloud-workspace-avatar" aria-label={identity?.username}
+        data-testid="cloud-workspace-identity">
+        {Array.from((identity?.username || '?').trim().toUpperCase()).slice(0, 2).join('')}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="end" data-testid="cloud-workspace-account-menu">
+        <p className="cloud-workspace-account-name" data-testid="cloud-workspace-account-name">{identity?.username}</p>
+        <DropdownMenuItem onSelect={() => void logout()} data-testid="auth-logout-button">
+          {t('cloudWorkspace.logout')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   </div>;
   if (phase === 'local') return children();
   if (phase === 'login') return <LoginPage registrationEnabled={identity?.registration_enabled === true} />;

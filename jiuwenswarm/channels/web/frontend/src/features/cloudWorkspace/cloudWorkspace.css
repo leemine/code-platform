@@ -11,9 +11,8 @@
 .cloud-workspace-card h1 { font-size: 28px; margin-bottom: 16px; }
 .cloud-workspace-card p { margin: 16px 0; }
 .cloud-workspace-card form { display: grid; gap: 12px; }
-.cloud-workspace-account { display: grid; gap: 4px; padding: 8px; overflow: hidden; font-size: 11px; text-align: center; }
-.cloud-workspace-account span { overflow: hidden; text-overflow: ellipsis; }
-.cloud-workspace-account .ui-button { padding: 4px; font-size: 11px; }
+.cloud-workspace-account { display: grid; justify-items: center; padding: 8px; }
+.cloud-workspace-account-name { padding: 8px 12px; max-width: 240px; overflow-wrap: anywhere; color: var(--color-text-primary); }
 .cloud-workspace-account .cloud-workspace-avatar {
   display: inline-flex;
   align-items: center;
@@ -22,9 +21,13 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
   background: var(--color-account-avatar-surface);
   color: var(--color-account-avatar-text);
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
 }
+.cloud-workspace-avatar:focus-visible { outline: 2px solid var(--color-action-primary); outline-offset: 3px; }

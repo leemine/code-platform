@@ -74,6 +74,11 @@ test('first allocation requires entry, uses no selectors, and mounts only after 
   assert.ok(query('original-app')); assert.equal(query('cloud-workspace-identity').textContent, 'AL');
   assert.equal(query('cloud-workspace-identity').getAttribute('aria-label'), 'alice');
   assert.equal(query('cloud-workspace-account').title, 'alice');
+  assert.equal(query('auth-logout-button'), null);
+  await click('cloud-workspace-identity');
+  assert.equal(query('cloud-workspace-identity').getAttribute('aria-expanded'), 'true');
+  assert.equal(query('cloud-workspace-account-name').textContent, 'alice');
+  assert.ok(query('auth-logout-button'));
 });
 test('persisted allocation is rechecked through original ensure; failed readiness never mounts App', async () => {
   route = async path => path.endsWith('/status') ? response(identity) : path.endsWith('/ensure') ? response({}, 503) : response({ state: 'ALLOCATED' });
