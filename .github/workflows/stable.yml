@@ -132,6 +132,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Test original history and approval UI
         run: |
+          npm run test:cloud-workspace
+          npm run test:auth-store
           npm run test:web-client-runtime-ack
           npm run test:subagent-history
           npm run test:context-usage
