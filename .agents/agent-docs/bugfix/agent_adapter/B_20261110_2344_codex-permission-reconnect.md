@@ -22,4 +22,6 @@ design_note: 修复既有权限契约，沿用原 Runtime 和官方恢复入口�
 
 原候选 47b2b28 上实施；Python 3.13.15，Core 固定 e0891988，SDK/CLI 0.163.0。定向 test_codex_direct_adapter.py：96 passed（25.14 秒），覆盖双向权限切换、保持线程/私有目录、错误权限不执行且可重试、MCP 保留及原取消/角色/恢复消费者。沙箱首次测试因日志目录只读未收集，隔离 HOME 后沙箱首例停滞；宿主隔离 HOME 有界执行通过，不能把环境问题记作产品失败。
 
-真实探针与完整 UI 验收记录位于管理仓 PLATFORM_CLOUD_UI_ACCEPTANCE_20261110；当前新版容器/UI 验证待补，不能将单测或独立 SDK 探针记作端到端通过。账号探测偶发失败独立排查。
+真实隔离 UI 已在 113.207.105.228 新镜像 58a9f1f0、专用 ui-c 通过：Full Access 收紧到 Default 后原审批卡出现；拒绝时文件不存在，单次允许后合成文件为 17 字节；原生 turn_aborted/interrupted 后同线程继续回复 CODEX_RECOVERED，页面刷新保留历史。原生线程始终为 01a1c62a-cc02-7d93-808d-9245740ead5e，原生上下文明确由 never/danger-full-access 变为 on-request/workspace-write。真实探针、原生上下文与完整 UI 验收记录位于管理仓 PLATFORM_CLOUD_UI_ACCEPTANCE_20261110。
+
+边界：当前隔离容器的 bwrap 无法创建用户命名空间，普通沙箱命令会失败并转原生单次审批；本轮只批准合成文件写入和无文件/网络访问的 sleep，不修改内核或容器特权，不能宣称该环境已验证 workspace-write 沙箱执行。账号探测此前偶发失败仍未复现；本轮公网只读 90 次均 200，计划内 Gateway 重启触发 502 后 UI 明确重试恢复，不等于历史根因已闭合。完整上线验收仍保留这些限制。
