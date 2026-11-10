@@ -133,7 +133,7 @@ def test_codex_reconnect_uses_resume_not_start(providers, monkeypatch, tmp_path,
         monkeypatch.setattr(module, 'model_overrides', lambda model, settings: {})
         adapter = module.CodexAdapter()
         adapter._settings = {'enabled': True}
-        model = SimpleNamespace(model_dump_json=lambda: 'model', client_options={}, api_key='fixture-key', model_name='fixture')
+        model = SimpleNamespace(model_dump_json=lambda: 'model', context_window=None, client_options={}, api_key='fixture-key', model_name='fixture')
         await adapter.prepare_session(session_id='one', channel_id='web', mode='code', project_dir=str(tmp_path))
         session = adapter._sessions['one']
         session.thread_id = 'native-one'

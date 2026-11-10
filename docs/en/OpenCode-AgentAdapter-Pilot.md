@@ -163,3 +163,22 @@ Claude Code needs a CLI that supports `--system-prompt-snapshot off` to apply th
 In a Codex single-agent or Code session, use **+ → Extensions** in the composer to select a connected Streamable HTTP MCP server. Changes apply on the next turn. Swarm resumes the original Codex thread after equipment changes or a regular Worker restart. If loading fails, Swarm keeps the last confirmed selection.
 
 With Default permissions, Codex tool confirmations use the existing approval card. HTTPS, loopback HTTP and static request-header credentials are supported. OAuth, legacy SSE, stdio and MCP inherited from plugins or expert templates are outside the current scope.
+
+
+## Context windows for custom Codex models
+
+The selected model service's `model_config_obj.context_window` is passed through the existing resolver to Codex.
+Use `1000000` for one million tokens; the existing `1M` parser means `1048576`. Neither value proves server capacity.
+Codex 0.163.0 may cap unknown models at 272000 and report a usable window of 258400 even with a larger override.
+
+For a verified custom model, add an absolute `model_catalog_json` path to the Codex entry under
+`modes.team.jiuwen_team.external_cli_agents`. The file must be a native Codex JSON model catalog containing exactly
+one entry for the selected slug. Set context/max-context limits from verified service capabilities; instructions
+and other capabilities are part of that contract and must not be copied from an unrelated model.
+The path is inside the execution instance and must be readable by its runtime UID. Credentials stay in the existing
+model-service configuration. This is deployment configuration, with no additional settings control.
+
+The adapter snapshots catalog content and checks its digest on native-session recovery. Changed catalog/window
+settings require a new validation session; existing bindings and history are not silently migrated.
+The native usable-window reserve remains intact: 1000000 reports950000; `1M` reports996147 in this validation.
+UI projection continues to use native events. Browser UI, tools and long-context multi-turn compaction require separate acceptance.

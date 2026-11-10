@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 49 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 50 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -26,20 +26,20 @@ generated: true
 | [docs](#module-9) | 1 |
 | [gateway](#module-10) | 3 |
 | [gateway/channel_manager/im_platforms/xiaoyi](#module-11) | 1 |
-| [gateway/common](#module-12) | 2 |
+| [gateway/common](#module-12) | 3 |
 | [gateway/message_handler](#module-13) | 1 |
 | [gateway/routing](#module-14) | 1 |
 | [jiuwenswarm](#module-15) | 3 |
 | [jiuwenswarm/channels/web](#module-16) | 1 |
 | [jiuwenswarm/channels/web/frontend](#module-17) | 5 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-18) | 1 |
-| [jiuwenswarm/common](#module-19) | 4 |
+| [jiuwenswarm/common](#module-19) | 5 |
 | [jiuwenswarm/common/config_panel](#module-20) | 1 |
 | [jiuwenswarm/gateway/channel_manager/web](#module-21) | 1 |
 | [jiuwenswarm/observability](#module-22) | 1 |
 | [jiuwenswarm/server](#module-23) | 2 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-24) | 10 |
-| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-25) | 6 |
+| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-25) | 7 |
 | [jiuwenswarm/server/runtime/gateway_adapter](#module-26) | 1 |
 | [jiuwenswarm/server/runtime/session](#module-27) | 1 |
 | [jiuwenswarm/server/worker](#module-28) | 1 |
@@ -158,6 +158,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](features/F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
 | [B_20261031_1122_model-config-without-core](bugfix/jiuwenswarm/common/config_panel/B_20261031_1122_model-config-without-core.md) | B | 无 Core 安装的模型配置加载与保存修复 | leemine | gateway/common, jiuwenswarm/common/config_panel, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models | gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/modelAdapters.ts, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/modelValidation.ts, jiuwenswarm/channels/web/frontend/src/types/index.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/tests/modelReasoning.test.mjs, tests/unit_tests/test_external_model_settings.py | 无独立 D：用户确认的最小配置缺陷修复，不统一 Provider 推理能力，无独立设计。 |
+| [B_20261110_2036_codex-context-window](bugfix/agent_adapter/B_20261110_2036_codex-context-window.md) | B | Codex 自定义模型上下文窗口传递与目录上限 | leemine | gateway/common, jiuwenswarm/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/model_selection.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：对现有模型解析与 Codex 配置接缝的修复，不新增执行链。 |
 
 <a id="module-13"></a>
 
@@ -223,6 +224,7 @@ generated: true
 | [F_20261104_2128_codex-session-mcp](features/F_20261104_2128_codex-session-mcp.md) | F | Codex 会话显式选择 Streamable HTTP MCP | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common | jiuwenswarm/common/external_adapter_factories.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_mcp.py | 无独立 D：用户批准管理仓 PROVIDER_PLUGIN_DEPENDENCY_AUDIT_20261031 中 Codex 会话 MCP 方案，宿主只声明能力。 |
 | [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 | [B_20261102_1123_provider-native-timeouts](bugfix/agent_adapter/B_20261102_1123_provider-native-timeouts.md) | B | 外部 Provider 模型超时与整轮时限职责修复 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, jiuwenswarm/common | jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/common/config_panel/config_set_handlers.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py | 无独立 D：用户在本会话确认超时职责修正与官方配置复用方案，无独立 D 文档；续写当前外部适配器契约，不修改已归档设计。 |
+| [B_20261110_2036_codex-context-window](bugfix/agent_adapter/B_20261110_2036_codex-context-window.md) | B | Codex 自定义模型上下文窗口传递与目录上限 | leemine | gateway/common, jiuwenswarm/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/model_selection.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：对现有模型解析与 Codex 配置接缝的修复，不新增执行链。 |
 
 <a id="module-20"></a>
 
@@ -286,6 +288,7 @@ generated: true
 | [B_20261102_1543_provider-subagent-content](bugfix/agent_adapter/B_20261102_1543_provider-subagent-content.md) | B | 外部子智能体卡片缺少内部活动与结果 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/subagent_projection.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认Provider适配模块最小修复；沿原生命周期候选续作，无新宿主执行架构。OpenCode经用户确认后置。 |
 | [B_20261103_2148_codex-output-bound](bugfix/agent_adapter/B_20261103_2148_codex-output-bound.md) | B | Codex 大工具返回的有界投影 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户已确认 Provider 内最小修复；不增强宿主、不新增共用模块，不另立设计。 |
 | [B_20261103_2208_claude-opencode-output-bound](bugfix/agent_adapter/B_20261103_2208_claude-opencode-output-bound.md) | B | Claude 与 OpenCode 大工具结果及元数据投影 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_opencode_direct_adapter.py | 无独立 D：用户确认继续按现有Codex方案在各Provider内修复，不增强宿主或新增公共流程。 |
+| [B_20261110_2036_codex-context-window](bugfix/agent_adapter/B_20261110_2036_codex-context-window.md) | B | Codex 自定义模型上下文窗口传递与目录上限 | leemine | gateway/common, jiuwenswarm/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/model_selection.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：对现有模型解析与 Codex 配置接缝的修复，不新增执行链。 |
 
 <a id="module-26"></a>
 

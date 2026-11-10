@@ -124,6 +124,7 @@ class CodexAdapter:
         self._validate_mode(mode)
         self._sessions: dict[str, Session] = {}
         self._settings = None
+        self._model_catalog = None
         self._permission_profile = "default"
 
     @staticmethod
@@ -163,6 +164,22 @@ class CodexAdapter:
             from jiuwenswarm.common.windows_cli_paths import resolve_preserved_cli_path
             from .cli import resolve_cli
             settings["cli_path"] = resolve_cli("codex", explicit=resolve_preserved_cli_path(settings["cli_path"]))
+        catalog_text = None
+        catalog_path = settings.pop("model_catalog_json", None)
+        if catalog_path is not None:
+            if not isinstance(catalog_path, str) or not Path(catalog_path).is_absolute():
+                raise ValueError("Codex model_catalog_json must be an absolute file path")
+            try:
+                catalog = json.loads(Path(catalog_path).read_text(encoding="utf-8"))
+                if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+                    raise ValueError("Invalid catalog")
+            except (OSError, ValueError):
+                raise ValueError("Codex model_catalog_json must contain a readable native model catalog") from None
+            # Snapshot explicit deployment configuration once. Resume checks the
+            # content digest; changing the source file cannot change a live client.
+            catalog_text = json.dumps(catalog, ensure_ascii=False, sort_keys=True)
+            settings["model_catalog_sha256"] = hashlib.sha256(catalog_text.encode()).hexdigest()
+        self._model_catalog = catalog_text
         self._settings = settings
 
     def build_query(self, request, turn):
@@ -340,7 +357,10 @@ class CodexAdapter:
 
     @staticmethod
     def _model_revision(session, model):
-        revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
+        serialized = model.model_dump_json()
+        if model.context_window is not None:
+            serialized += f"\0context_window={model.context_window}"
+        revision = hashlib.sha256(serialized.encode()).hexdigest()
         if session.model_revision and revision != session.model_revision:
             raise ValueError("Codex model configuration changed; restore the original configuration before resuming")
         return revision
@@ -360,6 +380,24 @@ class CodexAdapter:
                "LOCALAPPDATA": str(session.root / "localappdata"), "OPENAI_API_KEY": "", "CODEX_API_KEY": "",
                "SWARM_CODEX_MODEL_KEY": model.api_key}
         overrides = model_overrides(model, self._settings)
+        if self._model_catalog is not None:
+            matches = [entry for entry in json.loads(self._model_catalog)["models"]
+                       if isinstance(entry, dict) and entry.get("slug") == model.model_name]
+            if len(matches) != 1:
+                raise ValueError("Codex model catalog must contain exactly one entry for the selected model")
+            catalog_path = session.root / "model-catalog.json"
+            # The directory belongs to this native session, outside its workspace.
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=session.root,
+                                                 prefix="model-catalog-", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(self._model_catalog)
+                temporary.replace(catalog_path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            overrides += ("model_catalog_json=" + json.dumps(str(catalog_path)),)
         if selection is not None and selection.env:
             env.update(selection.env)
             overrides += ('shell_environment_policy.exclude=["SWARM_CODEX_MCP_*"]',)
@@ -808,6 +846,7 @@ class CodexAdapter:
         for sid in list(self._sessions):
             await self.cleanup_session_adapter(sid)
         self._settings = None
+        self._model_catalog = None
 
     def runtime_permission_status(self, session_id):
         session = self._sessions.get(session_id)

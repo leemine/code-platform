@@ -311,3 +311,20 @@ OpenCode 只按当前原生会话已完成 assistant message ID 覆盖去重；s
 复用 P1 的执行输入承载角色文本，并沿原装备快照保存 ID。OpenCode 的 prompt 接受、Codex 的原生 turn/start 接受或 Claude 的本轮输入回显确认后，宿主核对当前执行所有权和原装备快照再保存。拒绝和过期请求不能改写已确认的专家。模型生成结果与专家切换是否已获原生接收是两个状态。Swarm 只保存专家 ID，角色正文来自模板目录。
 
 Claude 通过 SDK 的 Claude Code preset append 传入当前正文。可切换角色会话通过官方 CLI 参数 `--system-prompt-snapshot off` 每轮重建提示词，包括清除角色后的首轮。该路径要求实际 CLI 支持此参数。未选择专家的普通 Claude 会话沿用默认 CLI 参数。Codex 新线程使用 developerInstructions，现有线程以 thread/inject_items 追加当前开发者角色；清除时追加明确的撤销指令。正文不变且当前连接已确认应用时复用。OpenCode 在 prompt_async 中传 system。三家沿用各自原生会话和对话历史，角色只适用于主 Agent。
+
+
+## Codex 自定义模型窗口与目录配置
+
+`ResolvedModel.context_window` 是进程内模型元数据，来自同一 ModelCatalog 快照的 model_config_obj，
+复用既有 K/M 解析（1M=1048576）。不进入 model_dump/request_defaults/Core 编译输入，其他 Provider 指纹不变。
+Codex 显式投射为 model_context_window，并纳入自身模型绑定；未配置时保留原生默认和旧指纹。
+
+Third-party Agents 的 Codex 条目可配置绝对路径 model_catalog_json，目录由部署方维护且须符合实际 CLI schema。
+Adapter 固定内容、按原 settings_revision 校验摘要，物化到原会话私有目录后交官方 CLI 加载；
+不修改 SDK、不读写个人 Codex 配置、不推测模型能力。显式目录必须唯一包含所选 slug；其余 schema 由 CLI 验证。
+目录或窗口变更不静默影响已绑定会话，不因此新建线程或复制历史；未配置新字段的旧会话保持原绑定。
+
+model_context_window 是配置请求值，目录 max_context_window 是原生上限，modelContextWindow 是原生可用窗口报告值；
+三者不可互相冒充。现锁定版本可能先按上限截断，再按95%保留开销；UI继续只投影原生报告。
+服务端容量必须另验，不能据本地目录配置推断。未知模型若无显式目录，仍可能使用原生272000上限。
+故障与证据见 B_20261110_2036_codex-context-window;本轮不改变主动上下文查询/手动压缩的能力边界。
