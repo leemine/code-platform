@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from gateway.extensions.registry import ExtensionRegistry
@@ -108,3 +108,27 @@ def mount_application_plugin_http_routes(
         if not target.is_file():
             raise HTTPException(status_code=404, detail="asset not found")
         return FileResponse(target, headers={"Cache-Control": "no-cache"})
+
+
+    claimed = {(route.path, method) for route in app.routes
+               for method in (getattr(route, "methods", None) or ())}
+    for plugin in _plugins(registry):
+        http_routes = getattr(plugin, "http_routes", None)
+        for contribution in http_routes() if callable(http_routes) else ():
+            if not contribution.path.startswith("/") or contribution.path.startswith(APPLICATION_PLUGIN_API_PREFIX):
+                raise ValueError("plugin HTTP path is reserved or invalid")
+            methods = tuple(method.upper() for method in contribution.methods)
+            for method in methods:
+                key = (contribution.path, method)
+                if key in claimed:
+                    raise ValueError(f"plugin HTTP route conflict: {method} {contribution.path}")
+                claimed.add(key)
+
+            def endpoint_factory(owner, route):
+                async def endpoint(request: Request):
+                    if not route.available_when_disabled and not owner.is_enabled():
+                        raise HTTPException(status_code=503, detail="application plugin is disabled")
+                    return await route.endpoint(request)
+                return endpoint
+
+            app.add_api_route(contribution.path, endpoint_factory(plugin, contribution), methods=list(methods))

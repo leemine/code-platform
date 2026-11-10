@@ -1,0 +1,20 @@
+# Optional agent-only bootstrap layer for the existing Yuanrong Python 3.11 pool.
+# AGENT_IMAGE must be the verified immutable agentserver candidate ID.
+ARG AGENT_IMAGE
+FROM ${AGENT_IMAGE}
+USER root
+ADD python311.tar.gz /opt/yuanrong-python/
+COPY runtime-sdk/lib/python3.11/site-packages/ /opt/yuanrong-python/cpython-3.11.16-linux-x86_64-gnu/lib/python3.11/site-packages/
+COPY agent_dx_executor-0.1.0-py3-none-any.whl /tmp/agent_dx_executor-0.1.0-py3-none-any.whl
+COPY bootstrap-manifest.json /usr/local/share/code-platform/yuanrong-bootstrap.json
+RUN ln -s /opt/yuanrong-python/cpython-3.11.16-linux-x86_64-gnu/bin/python3.11 /usr/local/bin/python3.11 \
+    && python -c "import json,pathlib,hashlib; m=json.loads(pathlib.Path('/usr/local/share/code-platform/yuanrong-bootstrap.json').read_text()); r=pathlib.Path('/opt/yuanrong-python/cpython-3.11.16-linux-x86_64-gnu'); assert all(hashlib.sha256((r/p).read_bytes()).hexdigest()==h for p,h in m['sdk_files'].items())" \
+    && python -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('/tmp/agent_dx_executor-0.1.0-py3-none-any.whl').read_bytes()).hexdigest() == '8ee5c5996df3a582bc306aea1bd216005daae3038082a029007857c72c616279'" \
+    && uv pip install --offline --no-cache --no-deps --break-system-packages --python /usr/local/bin/python3.11 /tmp/agent_dx_executor-0.1.0-py3-none-any.whl \
+    && rm /tmp/agent_dx_executor-0.1.0-py3-none-any.whl \
+    && python3.11 -c "import yr, importlib.metadata as m; from yr.agentexecutor import handler; assert m.version('agent-dx-executor') == '0.1.0'; assert m.version('openyuanrong_runtime') == '0.10.3'" \
+    && python /usr/local/share/code-platform/verify_dependencies.py > /usr/local/share/code-platform/installed-dependencies.json
+USER 1000:1000
+# Yuanrong supplies its bootstrap command; do not prepend the application CLI.
+ENTRYPOINT []
+CMD ["jiuwenswarm-agentserver", "--port", "18092"]

@@ -103,7 +103,7 @@ _AGENT_RUNNING_STATUS = "running"
 _AGENT_RUNNING_TIMEOUT_SECONDS = 90.0
 _AGENT_RUNNING_RETRY_INTERVAL_SECONDS = 1.0
 _AGENT_FAILED_STATUSES = frozenset(
-    {"failed", "error", "deleted", "stopped", "killed"}
+    {"failed", "fatal", "error", "deleted", "stopped", "killed"}
 )
 
 
@@ -684,6 +684,28 @@ class YuanrongFrontendAgentClient(AgentServerClient):
         )
         parsed = self._parse_agent_api_response(body, status)
         return _merge_agent_instance_payload(parsed)
+
+    async def instance_absent(self, instance_id: str) -> bool:
+        """Only an authoritative per-instance 404 confirms deletion."""
+        self._ensure_connected()
+        status, body = await asyncio.to_thread(self._do_agent_get, instance_id, None)
+        if status == 404:
+            return True
+        self._parse_agent_api_response(body, status)
+        return False
+
+    async def list_agent_instances(self) -> list[dict[str, Any]]:
+        """Read the public allocation cache; emptiness does not prove create absence."""
+        self._ensure_connected()
+        req = urllib.request.Request(
+            self._agent_create_url(), headers=apply_trace_header({}), method="GET",
+        )
+        status, body = await asyncio.to_thread(self._urlopen_request, req, timeout=self._agent_timeout_s)
+        parsed = self._parse_agent_api_response(body, status)
+        rows = parsed.get("instances")
+        if not isinstance(rows, list) or len(rows) > 1000 or any(not isinstance(row, dict) or not row.get("instance_id") for row in rows):
+            raise YuanrongAgentApiError("invalid agent list response")
+        return rows
 
     async def wait_until_running(
         self, instance_id: str, *, trace_id: str | None = None

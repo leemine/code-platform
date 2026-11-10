@@ -38,6 +38,7 @@ async def cleanup_stale_sandboxes(
     registry: RegistryClient,
     agent_manager: AgentManager,
     is_closed: Callable[[], bool] | None = None,
+    protect: Callable[[str, str], bool] | None = None,
 ) -> int:
     """List registry instances and best-effort destroy each leftover sandbox.
 
@@ -63,6 +64,8 @@ async def cleanup_stale_sandboxes(
         if is_closed is not None and is_closed():
             break
         try:
+            if protect is not None and protect(record.user, record.framework):
+                continue
             await _cleanup_one(
                 record,
                 yuanrong=yuanrong,

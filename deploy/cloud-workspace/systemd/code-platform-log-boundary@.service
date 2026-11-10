@@ -1,0 +1,26 @@
+[Unit]
+Description=Temporary Code-platform Docker log boundary (%i)
+After=docker.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+EnvironmentFile=/etc/code-platform/log-boundary/%i.env
+RuntimeDirectory=code-platform-log-%i
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/code-platform/deploy/cloud-workspace/docker_log_boundary.py --listen /run/code-platform-log-%i/docker.sock --upstream ${DOCKER_UPSTREAM} --workspace-root ${WORKSPACE_ROOT} --workspace-name-pattern ${WORKSPACE_NAME_PATTERN} --private-log-root ${PRIVATE_LOG_ROOT} --shared-log-dir ${SHARED_LOG_DIR} --image ${AGENT_IMAGE} --user ${AGENT_USER} --uid ${AGENT_UID} --recover-stale-socket --max-connections 32 --request-timeout 30 --connect-timeout 5 --upstream-timeout 60 --stream-idle-timeout 300
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+KillMode=control-group
+LimitNOFILE=256
+TasksMax=64
+MemoryMax=512M
+NoNewPrivileges=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

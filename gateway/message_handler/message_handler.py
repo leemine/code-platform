@@ -570,7 +570,8 @@ class MessageHandler(ABC):
             msg.metadata["member_name"] = mname
 
         self._remember_user_query_context(msg)
-        self._user_messages.put_nowait(msg)
+        from gateway.auth.request_scope import capture
+        self._user_messages.put_nowait(capture(msg))
         logger.info(
             "[MessageHandler] _user_messages 入队: id=%s channel_id=%s session_id=%s",
             msg.id, msg.channel_id, msg.session_id,
@@ -2688,7 +2689,8 @@ class MessageHandler(ABC):
 
     async def publish_user_messages(self, msg: "Message") -> None:
         """将消息放入 user_messages 队列（异步）."""
-        await self._user_messages.put(msg)
+        from gateway.auth.request_scope import capture
+        await self._user_messages.put(capture(msg))
 
     async def _publish_runtime_wake(self, msg: "Message") -> None:
         """Accept Runtime wakeups only while the forwarding host is live."""
@@ -2698,19 +2700,21 @@ class MessageHandler(ABC):
 
     def publish_user_messages_nowait(self, msg: "Message") -> None:
         """将消息放入 user_messages 队列（同步）."""
-        self._user_messages.put_nowait(msg)
+        from gateway.auth.request_scope import capture
+        self._user_messages.put_nowait(capture(msg))
 
     async def consume_user_messages(self, timeout: float | None = None) -> "Message | None":
         """消费一条 user_messages；timeout 为 None 则阻塞，否则超时返回 None."""
+        from gateway.auth.request_scope import restore
         if timeout is not None and timeout <= 0:
             try:
-                return self._user_messages.get_nowait()
+                return restore(self._user_messages.get_nowait())
             except asyncio.QueueEmpty:
                 return None
         try:
             if timeout is None:
-                return await self._user_messages.get()
-            return await asyncio.wait_for(self._user_messages.get(), timeout=timeout)
+                return restore(await self._user_messages.get())
+            return restore(await asyncio.wait_for(self._user_messages.get(), timeout=timeout))
         except asyncio.TimeoutError:
             return None
 
@@ -4258,7 +4262,7 @@ class MessageHandler(ABC):
             msg.session_id,
             (msg.params or {}).get("request_id") if isinstance(msg.params, dict) else None,
         ):
-            self._user_messages.put_nowait(
+            self.publish_user_messages_nowait(
                 replace(msg, req_method=ReqMethod.CHAT_SEND, is_stream=True)
             )
             return
@@ -4324,7 +4328,7 @@ class MessageHandler(ABC):
                 queued_attachments if isinstance(queued_attachments, list) else None,
                 self._get_session_last_user_query(msg.session_id),
             )
-            self._user_messages.put_nowait(queued_msg)
+            self.publish_user_messages_nowait(queued_msg)
             logger.info(
                 "[MessageHandler] evolution approval answered (resolved), "
                 "queued supplement dispatched: id=%s session_id=%s",
@@ -4379,7 +4383,7 @@ class MessageHandler(ABC):
             auto_save_enabled=auto_save_enabled,
         )
         if decision.user_message is not None:
-            self._user_messages.put_nowait(decision.user_message)
+            self.publish_user_messages_nowait(decision.user_message)
         return decision.should_publish_chunk
 
     def _clear_session_evolution_states(self, session_id: str | None) -> None:
@@ -4986,7 +4990,7 @@ class MessageHandler(ABC):
                             bot_id=msg.bot_id,
                             metadata=sup_meta,
                         )
-                        self._user_messages.put_nowait(new_msg)
+                        self.publish_user_messages_nowait(new_msg)
                         logger.info(
                             "[MessageHandler] supplement: 旧任务已取消，新任务已入队: id=%s session_id=%s",
                             new_msg.id, msg.session_id,

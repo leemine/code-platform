@@ -1991,6 +1991,8 @@ async def _run(
     else:
         client = WebSocketAgentServerClient(ping_interval=20.0, ping_timeout=600.0)
 
+    await extension_registry.configure_application_plugins(client)
+
     from gateway.routing.third_agent import get_unsupported_third_agent
 
     third_agent_ext = extension_registry.get_third_agent_extension()

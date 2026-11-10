@@ -48,6 +48,16 @@ jobs:
           for name in ('openai-codex', 'openai-codex-cli-bin', 'claude-agent-sdk'):
               package = next(p for p in lock['package'] if p['name'] == name)
               assert metadata.version(name) == package['version']
+          protocol = tomllib.loads(Path('pyproject.toml').read_text())['tool']['uv']['sources']['openjiuwen-protocol']
+          package = next(p for p in lock['package'] if p['name'] == 'openjiuwen-protocol')
+          assert package['source']['git'].endswith('#' + protocol['rev'])
+          direct = json.loads(metadata.distribution('openjiuwen-protocol').read_text('direct_url.json'))
+          assert direct['url'].removesuffix('.git') == protocol['git'].removesuffix('.git')
+          assert direct['vcs_info']['commit_id'] == protocol['rev']
+          assert direct.get('subdirectory') == protocol['subdirectory']
+          origin = Path(importlib.util.find_spec('openjiuwen_protocol').origin).resolve()
+          assert origin.is_relative_to(Path(sys.prefix).resolve())
+          print('Locked protocol:', protocol['rev'], origin)
           dist = metadata.distribution('workswarm')
           assert not json.loads(dist.read_text('direct_url.json')).get('dir_info', {}).get('editable', False)
           if os.environ['PROFILE'] == 'native':
@@ -94,7 +104,13 @@ jobs:
                      tests/unit_tests/agentserver/test_command_workflows_handler.py
                      tests/unit_tests/test_reasoning_config.py
                      tests/unit_tests/test_model_vendor_registry.py
-                     tests/unit_tests/test_model_resource_fixes.py)
+                     tests/unit_tests/test_model_resource_fixes.py
+                     tests/unit_tests/cloud_workspace
+                     tests/unit_tests/server/test_workspace_file_boundary.py
+                     tests/unit_tests/extensions/test_agentos_router.py
+                     tests/unit_tests/extensions/test_yuanrong_frontend_client.py
+                     tests/unit_tests/gateway/test_message_handler_evolution.py
+                     tests/unit_tests/channel/test_web_channel_dual_protocol.py)
           else
             suites+=(tests/unit_tests/agentserver/test_command_workflows_handler.py::test_external_only_workflow_query_uses_same_empty_snapshot_without_native)
           fi

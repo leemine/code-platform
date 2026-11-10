@@ -754,8 +754,10 @@ async def test_wait_until_running_times_out_when_never_running(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "FATAL"])
 async def test_wait_until_running_raises_on_failed_status(
     client: YuanrongFrontendAgentClientProbe,
+    status: str,
 ):
     await client.connect("http://127.0.0.1:8080")
 
@@ -766,7 +768,7 @@ async def test_wait_until_running_raises_on_failed_status(
             get_bodies=[
                 b'{"code":200,"instance":{"instance_id":"'
                 + _CREATE_INSTANCE_ID.encode()
-                + b'","status":"failed"}}'
+                + b'","status":"' + status.encode() + b'"}}'
             ],
         )
 

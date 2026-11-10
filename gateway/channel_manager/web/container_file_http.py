@@ -522,6 +522,23 @@ def attach_container_file_routes(app: FastAPI, channel: WebChannel) -> None:
                 error=type(exc).__name__,
             )
             raise
+        guard = getattr(request.state, "auth_delivery_guard", None)
+        if guard is not None:
+            try:
+                await guard()
+            except (PermissionError, RuntimeError, OSError):
+                await response.body_iterator.aclose()
+                _log_file_api_done(request, status=401, latency_ms=max(0, int((time.monotonic() - started) * 1000)), error="authorization_unavailable")
+                return _error_json(error="authorization unavailable", code="UNAUTHORIZED", status_code=401)
+            original_body = response.body_iterator
+            async def guarded_body():
+                try:
+                    async for chunk in original_body:
+                        await guard()
+                        yield chunk
+                finally:
+                    await original_body.aclose()
+            response.body_iterator = guarded_body()
         _log_file_api_done(
             request,
             status=int(getattr(response, "status_code", 500) or 500),
@@ -548,6 +565,7 @@ def attach_container_file_routes(app: FastAPI, channel: WebChannel) -> None:
                 code=error_code or "UNAUTHORIZED",
                 status_code=401,
             )
+        request.state.auth_delivery_guard = (result.extensions or {}).get("delivery_guard")
         if client.auth_enabled:
             iam_uid = str(result.user_id or "").strip()
             if iam_uid:

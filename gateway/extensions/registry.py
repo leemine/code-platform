@@ -163,6 +163,12 @@ class ExtensionRegistry:
     ) -> ApplicationPluginExtension | None:
         return self._application_plugins.get(plugin_id)
 
+    async def configure_application_plugins(self, agent_client: Any) -> None:
+        from gateway.extensions.sdk.application_plugin import ApplicationPluginServices
+        services = ApplicationPluginServices(agent_client=agent_client)
+        for plugin in self.get_application_plugins():
+            await plugin.configure_services(services)
+
     def bind_application_plugins(
         self,
         channel: Any,

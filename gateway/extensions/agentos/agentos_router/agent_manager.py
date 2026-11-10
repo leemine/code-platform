@@ -327,6 +327,16 @@ class AgentManager:
         runtime.task_count += 1
         runtime.touch()
 
+    async def discard_failed(self, user_id: str, agent_type: str) -> bool:
+        """Forget only a settled failure after the caller validates durable recovery."""
+        key = self._make_key(user_id, agent_type)
+        async with self._runtimes_lock:
+            existing = self._runtimes.get(key)
+            if existing is None or not existing.is_failed():
+                return False
+            del self._runtimes[key]
+            return True
+
     async def get_or_create_agent(
         self,
         user_id: str,
@@ -463,9 +473,13 @@ class AgentManager:
         agent_type: str,
         *,
         key_values: Mapping[str, Any] | None = None,
+        expected_instance_id: str | None = None,
     ) -> None:
         key = self._make_key(user_id, agent_type, key_values=key_values)
         async with self._runtimes_lock:
+            runtime = self._runtimes.get(key)
+            if expected_instance_id is not None and runtime is not None and runtime.info.sandbox_id != expected_instance_id:
+                return
             runtime = self._runtimes.pop(key, None)
         if runtime is not None:
             runtime.mark_deleted()

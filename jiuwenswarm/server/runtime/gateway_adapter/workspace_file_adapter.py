@@ -100,7 +100,9 @@ def _resolve_within_workspace(raw: str | None, base: Path) -> Path | None:
         if candidate_resolved != base_resolved and base_resolved not in candidate_resolved.parents:
             return None
         return candidate_resolved
-    return (base / candidate).resolve(strict=False)
+    resolved = (base / candidate).resolve(strict=False)
+    root = base.resolve(strict=False)
+    return resolved if resolved == root or root in resolved.parents else None
 
 
 class WorkspaceFileAdapter(GatewayAdapter):
@@ -108,6 +110,10 @@ class WorkspaceFileAdapter(GatewayAdapter):
 
     methods: frozenset[str] = frozenset(
         {
+            ReqMethod.FILE_WORKSPACE_READ.value,
+            ReqMethod.FILE_WORKSPACE_WRITE.value,
+            ReqMethod.FILE_WORKSPACE_LIST.value,
+            ReqMethod.FILE_WORKSPACE_MKDIR.value,
             ReqMethod.MEDIA_PERSIST.value,
             ReqMethod.MEDIA_DISCARD.value,
             ReqMethod.DOCUMENT_PERSIST.value,
@@ -123,6 +129,15 @@ class WorkspaceFileAdapter(GatewayAdapter):
 
     async def handle(self, request: AgentRequest) -> AgentResponse:
         method = request.req_method
+        if method in {ReqMethod.FILE_WORKSPACE_READ, ReqMethod.FILE_WORKSPACE_WRITE,
+                      ReqMethod.FILE_WORKSPACE_LIST, ReqMethod.FILE_WORKSPACE_MKDIR}:
+            from .workspace_file_io import WorkspaceFileError, execute
+            try:
+                payload = await asyncio.to_thread(execute, method.value.rsplit(".", 1)[-1], request.params)
+            except WorkspaceFileError as exc:
+                return build_error_response(request, str(exc), code=exc.code)
+            return AgentResponse(request_id=request.request_id, channel_id=request.channel_id,
+                                 ok=True, payload=payload, metadata=request.metadata)
         if method == ReqMethod.MEDIA_PERSIST:
             return await self._handle_media_persist(request)
         if method == ReqMethod.MEDIA_DISCARD:

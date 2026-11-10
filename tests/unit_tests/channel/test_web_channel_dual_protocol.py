@@ -317,18 +317,24 @@ async def test_serve_ws_does_not_accept_when_unauthorized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_serve_ws_uses_authenticated_identity_over_query() -> None:
+async def test_serve_ws_propagates_explicit_authority_identity_and_guards() -> None:
     channel = _make_channel()
     calls = []
 
     async def authenticate(**_kwargs: Any) -> AuthResult:
         calls.append("auth")
-        return AuthResult(success=True, user_id="owner")
+        return AuthResult(success=True, user_id="owner", extensions={
+            "routing_user_id": "owner", "request_guard": request_guard, "delivery_guard": delivery_guard,
+        })
+
+    request_guard, delivery_guard = AsyncMock(), AsyncMock()
 
     async def handle_connection(adapter, *, path):
         calls.append("connect")
         assert path == "/ws?user_id=other"
         assert channel._resolve_connection_user_id({"user_id": "other"}, adapter) == "owner"
+        assert adapter.auth_request_guard is request_guard
+        assert adapter.auth_delivery_guard is delivery_guard
 
     channel.set_handshake_auth(authenticate)
     channel.handle_connection = handle_connection

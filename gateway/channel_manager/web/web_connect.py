@@ -487,7 +487,11 @@ class WebChannel(BaseWsChannel):
         # 与 agent_os 稳定版一致。authenticated_user_id（IAM UUID）只作认证门禁，
         # 不参与工作区/沙箱身份推导：现有部署的用户目录按 username 布局
         # （/home/agentos/users/<username>），用 UUID 会导致建沙箱时目录校验失败。
-        connection_user_id = cls._extract_query_user_id(flat_query) or cls._extract_ws_header_user_id(ws)
+        # Account authorities may explicitly bind routing identity; legacy IAM
+        # authentication keeps its existing username mapping when absent.
+        trusted = getattr(ws, "auth_routing_user_id", None)
+        connection_user_id = (trusted if isinstance(trusted, str) and trusted.strip() else
+                              cls._extract_query_user_id(flat_query) or cls._extract_ws_header_user_id(ws))
         setattr(ws, _WEB_CONNECTION_USER_ID_ATTR, connection_user_id)
         return connection_user_id
 
@@ -1864,6 +1868,13 @@ class WebChannel(BaseWsChannel):
             )
 
     async def _handle_raw_message(self, ws: Any, raw: str, query: dict[str, list[str]]) -> None:
+        guard = getattr(ws, "auth_request_guard", None)
+        if guard is not None:
+            try:
+                await guard()
+            except (PermissionError, RuntimeError, OSError):
+                await ws.close(code=1008, reason="authorization unavailable")
+                return
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:

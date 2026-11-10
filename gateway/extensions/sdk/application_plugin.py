@@ -44,6 +44,16 @@ class ApplicationPluginServices:
 
 
 @dataclass(frozen=True)
+class HTTPRouteContribution:
+    """A plugin-owned HTTP entry consuming host-provided authentication/services."""
+
+    path: str
+    endpoint: Callable[[Any], Awaitable[Any]]
+    methods: tuple[str, ...] = ("GET",)
+    available_when_disabled: bool = False
+
+
+@dataclass(frozen=True)
 class WebSocketRouteContribution:
     """A plugin WebSocket route, optionally retained for host-level entry points."""
 
@@ -81,6 +91,10 @@ class ApplicationPluginExtension(BaseExtension):
 
         return True
 
+    async def configure_services(self, services: ApplicationPluginServices) -> None:
+        """Configure optional services before the registered client connects."""
+        del services
+
     def bind_web_channel(
         self,
         channel: Any,
@@ -94,6 +108,9 @@ class ApplicationPluginExtension(BaseExtension):
         """
 
         del channel, services
+
+    def http_routes(self) -> tuple[HTTPRouteContribution, ...]:
+        return ()
 
     def websocket_routes(self) -> tuple[WebSocketRouteContribution, ...]:
         return ()

@@ -16,6 +16,8 @@ from gateway.common.security.ws_origin import (
     is_origin_check_enabled,
 )
 from gateway.channel_manager.web.ws_connection_adapter import StarletteWsAdapter
+from gateway.extensions.auth.common import apply_auth_result_to_ws
+from gateway.extensions.auth.credential_authenticator import AuthResult
 from gateway.extensions.application_host import (
     iter_websocket_routes,
     mount_application_plugin_http_routes,
@@ -142,11 +144,13 @@ def register_http_routes(app: FastAPI, channel: WebChannel) -> None:
 async def _serve_channel_websocket(channel: WebChannel, websocket: WebSocket) -> None:
     if await _reject_disallowed_origin(websocket):
         return
-    denied, authenticated_user_id = await _reject_unauthorized_handshake(channel, websocket)
+    denied, auth_result = await _reject_unauthorized_handshake(channel, websocket)
     if denied:
         return
 
-    adapter = StarletteWsAdapter(websocket, authenticated_user_id=authenticated_user_id)
+    adapter = StarletteWsAdapter(websocket, authenticated_user_id=auth_result.user_id if auth_result else None)
+    if auth_result is not None:
+        apply_auth_result_to_ws(adapter, auth_result)
     await adapter.accept()
     try:
         await channel.handle_connection(adapter, path=adapter.path)
@@ -204,7 +208,7 @@ def _websocket_handshake_path(websocket: WebSocket) -> str:
 
 async def _reject_unauthorized_handshake(
     channel: WebChannel, websocket: WebSocket
-) -> tuple[bool, str | None]:
+) -> tuple[bool, AuthResult | None]:
     """Reject unauthorized Upgrades and retain the authenticated user identity."""
     remote = ""
     client = getattr(websocket, "client", None)
@@ -221,7 +225,7 @@ async def _reject_unauthorized_handshake(
     if result is None:
         return False, None
     if bool(getattr(result, "success", True)):
-        return False, str(getattr(result, "user_id", "") or "").strip()
+        return False, result
     logger.warning(
         "WebChannel 握手拒绝 path=%s reason=unauthorized",
         websocket.url.path,
