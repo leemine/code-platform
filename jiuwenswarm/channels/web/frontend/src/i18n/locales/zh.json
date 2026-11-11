@@ -2080,7 +2080,9 @@
     "connected": "已连接",
     "disconnected": "未连接",
     "connecting": "正在连接服务器...",
-    "loadingConfig": "加载配置中..."
+    "loadingConfig": "加载配置中...",
+    "unavailable": "连接暂不可用，请检查服务后重试。",
+    "retry": "重试"
   },
   "toolPanel": {
     "status": "状态",
@@ -5122,7 +5124,23 @@
         "resetEveryMonthsPlain": "每 {{count}} 个月刷新一次积分",
         "resetNext": "下次刷新积分：{{date}}"
       }
-    }
+    },
+    "register": "注册",
+    "createAccount": "创建账号",
+    "backToLogin": "已有账号，返回登录",
+    "registered": "注册成功，请登录",
+    "usernameExists": "该用户名已注册",
+    "accountSubtitle": "使用账号登录工作空间",
+    "accountHint": "用户名 3–32 位；密码 8–128 位。账号由平台统一保存。",
+    "title": "登录 JiuwenSwarm",
+    "username": "账号",
+    "password": "密码",
+    "login": "登录",
+    "loggingIn": "登录中…",
+    "invalidCredentials": "账号或密码错误",
+    "accountServiceUnavailable": "账号服务暂时不可用，请稍后重试。",
+    "loginFailed": "登录失败,请稍后重试",
+    "logout": "登出"
   },
   "heartbeat": {
     "status": {
@@ -5562,5 +5580,19 @@
     "reject": "拒绝",
     "approve": "授权",
     "waiting": "处理中..."
+  },
+  "cloudWorkspace": {
+    "shareExportUnavailable": "当前云环境暂不支持导出长图",
+    "title": "云工作区",
+    "checking": "正在确认登录状态…",
+    "preparing": "正在准备云环境，请稍候…",
+    "entry": "登录成功，进入专属云环境后即可使用。",
+    "enter": "进入云环境",
+    "ready": "云环境已就绪",
+    "unavailable": "暂时无法连接账号服务，请重试。",
+    "environmentError": "云环境暂未就绪，请重试。重试会继续核对原绑定。",
+    "logoutFailed": "退出未确认成功，已关闭当前连接。请重试。",
+    "retry": "重试",
+    "logout": "退出登录"
   }
 }

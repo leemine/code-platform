@@ -51,3 +51,29 @@ New dedicated deployments may explicitly enable a restricted physical completion
 The current candidate has passed isolated physical-reconciliation acceptance. Earlier lost-response failures describe the previous candidate, not an open blocker for this scoped repair. See the [candidate handoff and recovery guide](../../deploy/cloud-workspace/CANDIDATE_HANDOFF.md) for configuration, per-state recovery and rollback boundaries. Production operations and broader business acceptance remain separate; no production deployment is included.
 
 Internal supplement and evolution-approval requeues preserve the original account scope. Sending still checks session revocation; user requests never fall back to maintenance authorization.
+
+## Candidate cloud sign-in and environment entry
+
+The Web entry extracts codeswarm's builtin username/password login, identity invalidation and logout. Account Kit still owns existing model authorization. Serve static UI, account HTTP and WebSocket from the same HTTPS origin matching `public_origin`; the default account path is `/api/v1/auth/organization`. Show registration only when `registration_enabled=true`.
+
+First entry explicitly prepares the cloud environment; an existing allocation goes through the original ensure/readiness path before mounting the application. Authentication and environment failures expose retry instead of indefinite config loading. Logout closes the connection before revocation; unconfirmed revocation shows an error. Real UI/Provider acceptance on this candidate remains in progress; previous-version evidence is not a substitute.
+
+The circular account badge shows the first two username characters (uppercase letters). The full username remains available through its tooltip and accessible name; only the avatar button remains in the sidebar. Clicking it opens the account menu with logout, which still uses the existing revocation endpoint.
+Codex permission changes apply before the next turn. The platform reconnects its owned client, resumes the same native thread and confirms the requested policy before execution. Failed recovery blocks execution; history and selected MCP connections are retained without modifying the official SDK.
+
+
+### Automatic account-probe recovery (2026-11-11)
+
+Reuse codeswarm's sequential recovery: after an unavailable probe settles, retry after two seconds without invalidating a slow response. Within the existing ten-second deadline, retry network transport errors and HTTP 502/503/504 once after 250 ms; a successful transient retry retains the mounted workspace. Persistent failures still disconnect and close the workspace; recovery uses a freshly verified principal to retain the same account's route. No cached identity authorizes access. HTTP 401/403 and invalid identities are not transport retries, and a missing endpoint cannot downgrade a known cloud session to local mode. Creation, logout and Runtime execution are never replayed. Diagnostics contain only failure category, status, attempt count and elapsed time.
+
+This fixes the missing UI recovery path, not the unconfirmed original intermittent transport cause. Persistent outages may still discard unsent drafts; persisted history recovers through the original session path.
+
+### Same-identity and history recovery (2026-11-11)
+
+After a sustained account-service outage, a fresh server verification of the same principal and session revision resumes the previous entry state, preserving model preferences without full-page navigation or another environment preparation call. Identity or session-revision changes still clear account-scoped caches. Unsent drafts may still be lost during a sustained outage.
+
+Completed output is reconciled through existing history loading. Expired replay must not duplicate completed replies or restart their timers; active output and pending controls retain their existing resume path. See the [deployment recovery contract](../../deploy/web/README.md) for optional Web/TLS preflight, compensation and replacement limits. These are isolated candidate changes, not a production release or acceptance of every capability.
+
+Image export is explicitly disabled with an explanation in the current cloud-instance deployment. The page no longer queries unsupported export jobs automatically, and existing job records are retained. Local deployments retain image export. Server-side file access restrictions are unchanged.
+
+When a page is reloaded while awaiting approval, the existing control and cursor can be restored directly only when the authoritative execution snapshot confirms that every unfinished execution awaits a known control. Running, queued, or incomplete snapshots retain incremental replay. Recovery neither resubmits a task nor approves a tool automatically.

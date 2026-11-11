@@ -165,3 +165,25 @@ Claude Code 可切换角色路径要求实际 CLI 支持 `--system-prompt-snapsh
 在 Codex 单 Agent 或 Code 会话中，从输入框「+ → 扩展」选择已连接的 Streamable HTTP MCP。选中后在下一轮生效，关闭开关后下一轮移除。切换装备和正常重启 Worker 后仍可续聊原 Codex 线程；装载失败会保留上一次生效的选择。
 
 默认权限下，Codex 发出的工具调用确认使用原审批卡片。支持 HTTPS、回环 HTTP 和静态请求头凭据。OAuth、旧 SSE、stdio 以及插件或专家附带的 MCP 留在后续范围。
+
+
+## 自定义 Codex 模型的上下文窗口
+
+模型服务的 `model_config_obj.context_window` 通过原模型解析传给 Codex；精确百万填写 `1000000`，
+现有 `1M` 写法表示 `1048576`。这不是服务端能力声明，也不是 UI 应强制显示的值。
+Codex 0.163.0 的未知模型可能使用 272000 上限；即使填写百万，原生仍可能报告 258400。
+
+已核验的自定义模型可在 `modes.team.jiuwen_team.external_cli_agents` 的 Codex 条目追加：
+
+```yaml
+- cli_agent: codex
+  model_catalog_json: /absolute/instance-config/codex-models.json
+```
+
+文件必须是官方 Codex JSON 模型目录，唯一包含所选模型 slug，并按真实服务能力设置 context_window/max_context_window；
+提示词和其他能力字段也属于目录契约，不能照搬另一模型。路径是执行实例内的绝对路径，需对运行 UID 可读。
+无需把密钥写进目录，密钥仍走原模型服务配置。该项是部署配置，不新增设置控件。
+Adapter 固定内容并校验恢复绑定；更改目录/窗口用新会话验收，不批量覆盖旧会话。
+
+原生通常保留5%开销：1000000 配置实测报告950000；1M实测报告996147。显示值来自原生事件，
+不能将累计 token 当成当前上下文占用。完整UI、工具及长上下文多轮压缩仍需单独验收。

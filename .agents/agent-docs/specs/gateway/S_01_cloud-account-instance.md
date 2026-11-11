@@ -69,3 +69,25 @@ NEW→CREATING→ALLOCATED；未知结果→UNKNOWN，清单零匹配不授权�
 部署实现与退出契约集中于 `deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md`。Gateway不访问Docker API。临时部署模块通过工作区唯一Docker名称、代次scope与持久派发回执防止重复派发；仅对完整归属匹配且从未启动的残留执行原删除流程的同步补偿。未知派发结果、运行过的残留或检查失败均拒绝完成确认；没有后台扫描/新创建器。
 
 所有用户消息入队（包括补充输入、演进审批回答和自动审批派生消息）必须复用现有 publish_user_messages / publish_user_messages_nowait 身份捕获入口；出队恢复原作用域，发送时仍查账号权威。无作用域的后台事件不借用其他请求身份，令牌不写入消息或持久化。
+
+## 云端 Web 账号入口
+
+云插件沿用 `/api/v1/auth/organization` 默认路径。状态的 `session_revision` 为当前会话 token 的 SHA-256 前 24 位，仅是 UI 变更投影，不授予权限。状态与其他账号响应均 no-store，cookie 保持 Secure/HttpOnly/SameSite=Strict。Web 静态服务、HTTP 及 WS 对外使用同一 HTTPS origin，与 public_origin 一致。
+
+Web 独立入口提炼 codeswarm 登录/注册、凭据失效清理和退出行为；原 Account Kit 模型登录保持独立。身份确认和环境 READY 之前不挂载原 App/WS。首次云环境由用户进入，已有 ALLOCATED 经原 ensure 确认应用就绪后恢复；不另建创建/回收、Provider 或会话状态机。
+
+已确认云账号后，权威不可用不得退回匿名/本地模式；挂起旧界面并关闭连接，重试重新核验。身份或会话版本变化通过整页导航丢弃原内存状态，仅同一已核验主体可保留会话 URL。退出未确认成功明确报错，不显示退出成功。
+
+## Web 恢复与部署失败契约（2026-11-11 修订）
+
+同身份仅指服务端新探测返回的 actor、authority、subject、session_revision 全部一致且认证有效；故障前 ready 状态恢复时不清偏好、不整页导航、不重复 ensure。环境已 READY 而身份复核失败，恢复仍复用这一就绪结果，执行请求继续由原服务端鉴权。主体/会话版本变化、撤销仍清理隔离缓存并走原入口；不能用旧身份缓存放行。持续故障仍卸载 App，未发送草稿保存不在本次保证范围。
+
+Web RuntimeResume 将有 worker_instance/cursor/dispatches 的权威快照作为重放覆盖边界：已终态或快照范围内已缺席 dispatch 的旧重放不重新开启 UI 输出；必要时发出既有 runtime.history_required，由原历史加载与元数据链对账。首次空闲且无待交互快照可推进恢复游标，避免从零回放整个旧日志；运行中、待审批和已经观察到的输出保留原游标语义。工作进程变化重置边界；缺元数据的旧协议保持兼容，不伪造时间/终态，不重发 chat.send。
+
+Web/TLS 失败恢复只属于可替换部署层 deploy/web/proxy_switch.py。停服前检查材料/哈希/镜像/归属/证书/语法；旧容器保留 ID，失败仅移除本次替身并恢复原角色；补偿失败明确报需人工恢复，不把其记作成功。账号/环境/Runtime 不依赖该脚本。单操作方、有界停机与保留容器代价见 deploy/web/README.md。
+
+云实例角色尚未装配分享导出的Agent文件链。Gate通过可选shareExportDisabledReason装配原App/ChatPanel；控件禁用并显示原因，启动恢复不发送/share-api查询，不删除已有导出任务记录。本地角色未传入该限制，保持原行为。此项是UI能力声明，不替代服务端既有拒绝；完整云导出实现与旧runner链接访问仍不在已支持范围。
+
+### 首次待审批页面恢复
+
+WebClient仅在Worker完整执行快照确认全部未结束执行等待已有控制、且页面尚未观察运行事件时，可从快照游标订阅并恢复原pending_interactions。缺少快照、运行或排队执行仍走原增量重放；已观察输出不跳游标。较新事件推进后的旧快照不得重新激活控件；等待控制不因handler已返回或片段终态被当成执行完成。历史来自原持久历史接口，用户输入不得因恢复重发。

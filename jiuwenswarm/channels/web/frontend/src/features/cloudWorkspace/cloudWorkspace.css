@@ -1,0 +1,34 @@
+.cloud-workspace-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-surface-page);
+  color: var(--color-text-primary);
+}
+.cloud-workspace-card { width: 100%; max-width: 380px; }
+.cloud-workspace-card h1 { font-size: 28px; margin-bottom: 16px; }
+.cloud-workspace-card p { margin: 16px 0; }
+.cloud-workspace-card > .ui-button--quiet { padding-inline: 0; border: 0; justify-content: flex-start; }
+.cloud-workspace-card form { display: grid; gap: 12px; }
+.cloud-workspace-account { display: grid; justify-items: center; padding: 8px; }
+.cloud-workspace-account-name { padding: 8px 12px; max-width: 240px; overflow-wrap: anywhere; color: var(--color-text-primary); }
+.cloud-workspace-account .cloud-workspace-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: var(--color-account-avatar-surface);
+  color: var(--color-account-avatar-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+.cloud-workspace-avatar:focus-visible { outline: 2px solid var(--color-action-primary); outline-offset: 3px; }

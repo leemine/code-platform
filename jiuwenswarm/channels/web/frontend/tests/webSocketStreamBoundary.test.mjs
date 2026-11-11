@@ -73,6 +73,8 @@ function installDom() {
       this.closeListeners.push(listener);
     }
 
+    send(raw) { this.lastRequest = JSON.parse(raw); }
+
     close(code, reason) {
       this.readyState = 3;
       const event = { code, reason, wasClean: true };
@@ -124,6 +126,14 @@ async function mountConnection(context, sessionIds) {
   const socket = dom.sockets[0];
   return {
     runtime: (sessionId = sessionIds[0]) => useChatStore.getState().getRuntime(sessionId),
+    async snapshot(runtime) {
+      const pending = webClient.request('session.get_metadata', { session_id: sessionIds[0], runtime_resume: { after: 0 } });
+      await Promise.resolve();
+      await act(async () => {
+        socket.onmessage({ data: JSON.stringify({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime } }) });
+        await pending;
+      });
+    },
     receive(event, payload) {
       act(() => socket.receive(event, payload));
     },
@@ -474,5 +484,38 @@ test('late paused output stays with its request across a new user turn and anoth
     assert.equal(connection.runtime().messages[0].isStreaming, false);
     assert.equal(connection.runtime().messages[2].isStreaming, true);
     assert.deepEqual(connection.runtime(other).messages.map(m => m.content), ['另一会话']);
+  } finally { await connection.dispose(); }
+});
+
+test('retained historical replay preserves completed bubbles and time through the real hook/store', async (context) => {
+  const sid = 'expired-dispatch-history';
+  const connection = await mountConnection(context, [sid]);
+  try {
+    useChatStore.getState().addMessage(sid, {
+      id: 'history-final', role: 'assistant', content: 'completed answer',
+      timestamp: '2026-09-08T07:00:00.000Z', completedAt: '2026-09-08T07:01:10.000Z',
+      outputPhaseId: 'completed-phase', historyBatchSeq: 1, isStreaming: false,
+    });
+    const before = structuredClone(connection.runtime().messages);
+    await connection.snapshot({ worker_instance: 'resident', cursor: 2025, is_processing: false,
+      dispatches: [{ dispatch_id: 'inspection', active: true, terminal: null }] });
+    // ui-d capture: old journal frames arrive before reconnect metadata; their
+    // completed dispatch records are no longer present in the first snapshot.
+    for (const [event, sequence, payload] of [
+      ['chat.reasoning', 21, { content: 'old reasoning' }],
+      ['chat.final', 26, {}],
+      ['chat.delta', 32, { content: 'old answer', output_phase_id: 'completed-phase' }],
+      ['chat.final', 50, { content: 'old answer', output_phase_id: 'completed-phase' }],
+    ]) connection.receive(event, { session_id: sid, request_id: 'completed-request', ...payload,
+      runtime_event: { worker_instance: 'resident', sequence, dispatch_id: 'expired-dispatch', replayed: true } });
+    connection.tick(10 * 60 * 60 * 1000);
+    assert.deepEqual(connection.runtime().messages, before, 'history content, identity and completedAt are immutable under old replay');
+    assert.equal(connection.runtime().isProcessing, false);
+    assert.equal(connection.runtime().currentStreamId, null);
+    assert.equal(connection.runtime().isThinking, false);
+    connection.receive('chat.delta', { session_id: sid, request_id: 'new-request', content: 'new output',
+      runtime_event: { worker_instance: 'resident', sequence: 2026, dispatch_id: 'new-dispatch', replayed: true } });
+    connection.tick(100);
+    assert.ok(connection.runtime().messages.some(message => message.content === 'new output'));
   } finally { await connection.dispose(); }
 });

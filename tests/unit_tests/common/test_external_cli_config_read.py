@@ -227,3 +227,34 @@ def test_saving_existing_agent_card_preserves_native_timeout_options(monkeypatch
         'external_cli_agent_codex_enabled':'true', 'external_cli_agent_codex_use_builtin':'true',
     })
     assert entries == raw['modes']['team']['jiuwen_team']['external_cli_agents']
+
+
+@pytest.mark.parametrize('source', ['defaults', 'agentos'])
+@pytest.mark.parametrize('window,expected', [(None, None), ('1M', 1048576), (1000000, 1000000), (0, None)])
+def test_codex_context_metadata_uses_existing_model_parser_without_wire_leak(source, window, expected):
+    from gateway.common.model_selection import ModelSelection
+    from jiuwenswarm.common.model_catalog import ModelCatalog
+    from jiuwenswarm.common.codex_adapter_config import model_overrides, validate_model
+    from jiuwenswarm.server.runtime.agent_adapter.execution_input import model_resolver
+    entry = {'model_id': 'context-model', 'model_client_config': {
+        'client_provider': 'OpenAI', 'model_name': 'custom', 'api_base': 'https://example.invalid/v1'},
+        'model_config_obj': {'context_window': window}}
+    model = model_resolver(ModelCatalog({'models': {source: [entry]}})).resolve(
+        ModelSelection(type='model', id='context-model'))
+    assert validate_model(model).context_window == expected
+    assert model.model_copy(deep=True).context_window == expected
+    assert model.request_defaults == {}
+    assert 'context_window' not in model.model_dump()
+    # Adding this host metadata must not invalidate Claude/OpenCode fingerprints.
+    assert model.model_dump_json() == model.model_copy(update={'context_window': None}).model_dump_json()
+    options = model_overrides(model)
+    assert ([x for x in options if x.startswith('model_context_window=')]
+            == ([] if expected is None else [f'model_context_window={expected}']))
+
+
+@pytest.mark.parametrize('path', ['', 'relative/catalog.json', False, {}])
+def test_codex_catalog_requires_an_explicit_absolute_deployment_path(path):
+    from jiuwenswarm.common.codex_adapter_config import config_snapshot
+    with pytest.raises(ValueError, match='absolute file path'):
+        config_snapshot({'modes': {'team': {'jiuwen_team': {'external_cli_agents': [
+            {'cli_agent': 'codex', 'model_catalog_json': path}]}}}})

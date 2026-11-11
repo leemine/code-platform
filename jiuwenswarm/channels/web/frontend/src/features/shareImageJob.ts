@@ -275,7 +275,10 @@ export async function findShareImageJobForSession(
   sessionId: string,
   storage: ShareImageJobStorage,
   request: ShareImageJobFetch = fetch,
+  enabled = true,
 ): Promise<ShareImageExportJobStatus | null> {
+  // Deployment capability only; server-side file authorization remains authoritative.
+  if (!enabled) return null;
   const pending = readPendingShareImageJob(storage, sessionId);
   const pendingJobId = pending?.job_id ?? null;
   if (pendingJobId !== null) {

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from jiuwenswarm.common.model_catalog import ModelCatalog
+from jiuwenswarm.common.context_window import parse_positive_int
 from jiuwenswarm.common.reasoning_injector import build_reasoning_model_request_kwargs
 from jiuwenswarm.common.model_errors import (
     MODEL_GROUP_INVALID,
@@ -105,6 +106,7 @@ class ModelSelectionResolver:
             model_description=model_detail.get("model_description") or None,
             client_options=options,
             request_defaults=defaults,
+            context_window=parse_positive_int(mco.get("context_window")),
         )
 
     def resolve(

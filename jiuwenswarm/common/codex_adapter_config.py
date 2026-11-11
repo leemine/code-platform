@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -17,6 +18,11 @@ def config_snapshot(config: dict) -> dict:
     if not isinstance(cli_path, str):
         raise ValueError("Codex CLI path must be a string")
     settings = {"enabled": entry is not None, "cli_path": cli_path.strip() or None}
+    catalog = values.get("model_catalog_json")
+    if catalog is not None:
+        if not isinstance(catalog, str) or not Path(catalog).is_absolute():
+            raise ValueError("Codex model_catalog_json must be an absolute file path")
+        settings["model_catalog_json"] = catalog
     idle = values.get("stream_idle_timeout_ms")
     if idle is not None:
         if type(idle) is not int or idle <= 0:
@@ -67,6 +73,8 @@ def model_overrides(model, settings=None) -> tuple[str, ...]:
         'model_providers.swarm.requires_openai_auth=false',
         "model_providers.swarm.base_url=" + json.dumps(model.api_base),
     ]
+    if model.context_window is not None:
+        values.append(f"model_context_window={model.context_window}")
     if model.api_key:
         values.append('model_providers.swarm.env_key="SWARM_CODEX_MODEL_KEY"')
     idle = (settings or {}).get("stream_idle_timeout_ms")

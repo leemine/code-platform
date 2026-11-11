@@ -3,6 +3,9 @@ import type { WsEvent } from '../types/websocket';
 /** Transport cursors only; accepted inputs are never retried on reconnect. */
 export class RuntimeResume {
   private sessions = new Map<string, { instance: string; after: number; seen: Set<number>; historical: Set<string>;
+    snapshot?: { through: number; dispatches: Set<string> };
+    historyRequired?: boolean; historyRequestedThrough?: number;
+    restorePending?: boolean;
     pending?: { through: number; ids: Set<string> } }>();
 
   observe(event: WsEvent): boolean {
@@ -28,7 +31,20 @@ export class RuntimeResume {
     this.sessions.set(sessionId, cursor);
     while (this.sessions.size > 256) this.sessions.delete(this.sessions.keys().next().value!);
     if (marker.replayed === true) {
-      if (typeof marker.dispatch_id === 'string' && cursor.historical.has(marker.dispatch_id)) return false;
+      // Finished dispatch records may expire before their journal frames. The
+      // durable history owns these older frames, including replay delivered
+      // before the reconnect metadata response. Do not reopen a completed turn.
+      if (typeof marker.dispatch_id === 'string' && (cursor.historical.has(marker.dispatch_id)
+        || (cursor.snapshot && marker.sequence <= cursor.snapshot.through
+          && !cursor.snapshot.dispatches.has(marker.dispatch_id)))) {
+        // A turn may have completed while disconnected. Reconcile durable
+        // history once per snapshot boundary instead of silently losing output.
+        if (cursor.snapshot && cursor.historyRequestedThrough !== cursor.snapshot.through) {
+          cursor.historyRequestedThrough = cursor.snapshot.through;
+          cursor.historyRequired = true;
+        }
+        return false;
+      }
       // Journal frames can outlive their dispatch records. Only the snapshot's
       // still-pending controls can become actionable again during replay.
       if (event.event === 'chat.ask_user_question' && cursor.pending && marker.sequence <= cursor.pending.through
@@ -51,11 +67,35 @@ export class RuntimeResume {
     // Reconcile every authoritative snapshot, retaining the observed cursor.
     const dispatches = Array.isArray(runtime.dispatches) ? runtime.dispatches : [];
     for (const dispatch of dispatches) {
-      if (dispatch?.active === false && dispatch.terminal && typeof dispatch.dispatch_id === 'string') {
+      if (dispatch?.active === false && dispatch.terminal && dispatch.phase !== 'waiting_for_control'
+        && !(Array.isArray(dispatch.pending_interactions) && dispatch.pending_interactions.length > 0)
+        && typeof dispatch.dispatch_id === 'string') {
         cursor.historical.add(dispatch.dispatch_id);
       }
     }
     if (Array.isArray(runtime.dispatches) && typeof runtime.cursor === 'number') {
+      const pendingIds = new Set(dispatches.flatMap(dispatch =>
+        Array.isArray(dispatch?.pending_interactions) ? dispatch.pending_interactions.map(
+          (interaction: Record<string, unknown>) => interaction.interaction_id ?? interaction.control_id ?? interaction.request_id,
+        ) : []));
+      const executions = Array.isArray(runtime.executions) ? runtime.executions : [];
+      const waitingOnly = pendingIds.size > 0 && executions.some(execution => execution?.state === 'waiting_for_control')
+        && executions.every(execution => ['succeeded', 'failed', 'cancelled'].includes(execution?.state)
+          || (execution?.state === 'waiting_for_control' && typeof execution.waiting_control_id === 'string'
+            && pendingIds.has(execution.waiting_control_id)));
+      // A fresh idle or fully suspended page restores durable history. Pending
+      // controls are complete in the snapshot; replaying the whole journal can
+      // starve history RPCs. Unknown or running executions retain their replay.
+      if (!cursor.snapshot && cursor.after === 0 && cursor.seen.size === 0
+        && ((runtime.is_processing === false && pendingIds.size === 0
+          && !dispatches.some(dispatch => dispatch?.phase === 'waiting_for_control')) || waitingOnly)) {
+        cursor.after = runtime.cursor;
+        cursor.restorePending = waitingOnly;
+      }
+      if (!cursor.snapshot || runtime.cursor >= cursor.snapshot.through) {
+        cursor.snapshot = { through: runtime.cursor, dispatches: new Set(dispatches
+          .filter(dispatch => typeof dispatch?.dispatch_id === 'string').map(dispatch => dispatch.dispatch_id)) };
+      }
       const ids = new Set<string>();
       for (const dispatch of dispatches) {
         for (const interaction of Array.isArray(dispatch?.pending_interactions) ? dispatch.pending_interactions : []) {
@@ -73,6 +113,21 @@ export class RuntimeResume {
       session_id,
       runtime_resume: { worker_instance: cursor.instance, after: cursor.after },
     }));
+  }
+
+  takeHistoryRequired(sessionId: unknown): boolean {
+    const cursor = typeof sessionId === 'string' ? this.sessions.get(sessionId) : undefined;
+    if (!cursor?.historyRequired) return false;
+    cursor.historyRequired = false;
+    return true;
+  }
+
+  takePendingRestore(sessionId: string, runtime: Record<string, unknown>): boolean {
+    const cursor = this.sessions.get(sessionId);
+    if (!cursor?.restorePending || cursor.instance !== runtime.worker_instance) return false;
+    cursor.restorePending = false;
+    // A live event after the snapshot may have answered/cancelled the control.
+    return typeof runtime.cursor === 'number' && cursor.after <= runtime.cursor;
   }
 
   clear(): void {

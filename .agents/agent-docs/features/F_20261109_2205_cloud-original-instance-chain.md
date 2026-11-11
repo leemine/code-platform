@@ -4,8 +4,8 @@ author_email: leewanlong@gmail.com
 id: F_20261109_2205_cloud-original-instance-chain
 title: 云账号提炼与原实例链收敛
 type: F
-modules: [gateway, server/front, deploy/cloud-workspace]
-files: [deploy/cloud-workspace/CANDIDATE_HANDOFF.md, deploy/cloud-workspace/physical_resources.py, gateway/services/resource_reconciler.py, tests/unit_tests/cloud_workspace/test_physical_resources.py, deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_docker_log_boundary.py, gateway/extensions/cloud_workspace/config.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py, gateway/channel_manager/web/web_channel_app.py, gateway/channel_manager/web/web_connect.py, gateway/extensions/application_host.py, deploy/cloud-workspace/Dockerfile, deploy/cloud-workspace/Dockerfile.yuanrong, gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_workspace_assembly.py, gateway/auth/account_http.py, gateway/auth/account_authenticator.py, gateway/auth/request_scope.py, gateway/extensions/agentos/agentos_router/router_client.py, tests/unit_tests/cloud_workspace/test_integration_boundaries.py, tests/unit_tests/server/test_gateway_adapter.py]
+modules: [gateway, server/front, deploy/cloud-workspace, channels/web]
+files: [jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, deploy/cloud-workspace/CANDIDATE_HANDOFF.md, deploy/cloud-workspace/physical_resources.py, gateway/services/resource_reconciler.py, tests/unit_tests/cloud_workspace/test_physical_resources.py, deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_docker_log_boundary.py, gateway/extensions/cloud_workspace/config.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py, gateway/channel_manager/web/web_channel_app.py, gateway/channel_manager/web/web_connect.py, gateway/extensions/application_host.py, deploy/cloud-workspace/Dockerfile, deploy/cloud-workspace/Dockerfile.yuanrong, gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_workspace_assembly.py, gateway/auth/account_http.py, gateway/auth/account_authenticator.py, gateway/auth/request_scope.py, gateway/extensions/agentos/agentos_router/router_client.py, tests/unit_tests/cloud_workspace/test_integration_boundaries.py, tests/unit_tests/server/test_gateway_adapter.py]
 designs: []
 design_note: 依据管理仓 PLATFORM_CANDIDATE_DISPOSITION_20261109（M01-M12/C01-C22）及用户本会话授权；无独立D编号。
 ---
@@ -152,3 +152,19 @@ affected-tests-5.log：425 passed（30.38秒），无失败/跳过。覆盖原Ro
 本地399项受影响回归通过（69.70秒）：cloud_workspace、文件边界、原Router、元戎客户端、原演进审批和Web双协议。使用原隔离native-venv与独立JIUWENSWARM_HOME，本地来源不替代干净按锁CI。CI原stable遗漏本次云集成测试与协议VCS实际来源，native矩阵补上述范围，两个矩阵补协议URL/SHA/subdirectory及导入路径核验；Core/协议/SDK锁均未改变。CI最终SHA、运行与状态在管理记录PLATFORM_CLOUD_REVIEW_PR_20261110留档，不预记远端通过。
 
 部署适配器、物理回执、文件边界与实例策略源码未改；既有113隔离证据继续仅证明对应旧角色镜像及其未变路径，本轮无服务器操作、新镜像或现网启用。新版Gateway身份重新入队通过本地装配验证，尚未以新镜像执行服务器真实Provider业务。用户授权推送和创建PR，未授权合入或部署。
+
+## 2026-11-10 续修：账号 UI 与云环境入口
+
+依据 codeswarm `24f29148193b5b590fe9f4b3e21f779c87253e5e` 的 LoginPage、OrganizationStatus、凭据变更事件和 LogoutButton 提炼 builtin 用户名密码路径。保留原 Account Kit 模型授权；不移入组织治理限制或第二套实例链。入口先确认身份，首次绑定须点击进入；ALLOCATED 仅作持久回执，必须经原 environment.ensure 返回 READY 后才挂载原 App/WS。
+
+宿主差额为 main 入口包装、App/SessionSidebar 通用 footer 槽、连接提示 20 秒错误/重试及卸载清理。账号 HTTP 插件状态增加当前凭据摘要前 24 位 session_revision，便于沿用 codeswarm 身份续期隔离；不增加账号存储、Authenticator、Runtime 或 SDK 状态机。
+
+身份检查 10 秒超时；5xx/非法状态关闭门控，只有初次明确 disabled/404 沿用本地入口。凭据变化、失效、退出先断开旧连接，确认后清缓存并整页导航；状态只由服务器核验，广播只作失效通知。就绪请求 150 秒超时仅表示响应未知，不取消或另建创建请求；重试仍走原绑定对账。
+
+本地：入口行为测试 14 项（含迟到 ensure、退出失败、权威故障、注册与错密），原 Account Kit/WS 回归 24 项，账号 HTTP/实例链定向 44 项；生产构建通过。113 新隔离环境真实 UI/Native/Codex 验收进行中，尚不标记端到端交付完成；未合入或部署现网。
+
+复查修订：故障重试保留原已核验身份，重新核验后再导航；已知云端的404不得降级本地。14项入口与5项既有Account Kit测试加入原stable Web任务，不增加独立门禁。113隔离镜像d217040与后续c25ece1共2022个后端安装文件逐项摘要相同，后者只更换Web前端，不将前端旧包结果冒记为新包成功。
+
+2026-11-10 用户要求登录标记改为圆形用户名缩写：仅 CloudWorkspaceGate 展示、私有 CSS 与语义主题 token 修改；完整用户名保留 tooltip/无障碍名称，原退出和 READY 门控不变。复用已有 14 项入口测试更新显示断言，实际 UI 及本轮验收结果统一见管理记录 PLATFORM_CLOUD_UI_ACCEPTANCE_20261110，不将未执行项标为通过。
+
+用户追加确认：侧栏仅保留圆形头像控件，移除常驻就绪/退出文字；复用 DropdownMenu 的定位、焦点、Esc 与外部关闭，菜单显示完整用户名与原退出动作。14项原入口测试补充菜单展开与退出可达断言。真实验收已确认 Native 1M 显示、拒绝/单次允许、取消后继续及双页退出；Codex 原会话从 full_access 调整为 default 后报 permission update was not confirmed，作为未关闭验收阻断保留，不能因 stable 通过而宣布可合入。未改 SDK 或绕过权限确认。

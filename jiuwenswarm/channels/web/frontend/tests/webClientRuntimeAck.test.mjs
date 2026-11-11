@@ -682,7 +682,7 @@ test('metadata updates completed dispatches even after live activity created the
       worker_instance: 'controls-worker', is_processing: false, cursor: 21, dispatches: [
         { dispatch_id: 'approved', active: false, terminal: { event_type: 'chat.final' } },
         { dispatch_id: 'cancelled', active: false, terminal: { event_type: 'runtime.completed', state: 'cancelled' } },
-        { dispatch_id: 'waiting', active: true, terminal: { event_type: 'chat.final', final_mode: 'patch_segment' },
+        { dispatch_id: 'waiting', active: false, phase: 'waiting_for_control', terminal: { event_type: 'chat.final', final_mode: 'patch_segment' },
           pending_interactions: [{ event_type: 'chat.ask_user_question', request_id: 'still-pending' }] },
       ],
     } } });
@@ -741,4 +741,117 @@ test('reconnect snapshot settles an observed dispatch before its queued approval
     off();
     await fresh.disconnect();
   }
+});
+
+test('expired dispatch replay before reconnect snapshot cannot reopen completed history', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const observed = [];
+  const history = [];
+  const offHistory = fresh.on('runtime.history_required', ({ payload }) => history.push(payload.session_id));
+  const offs = ['chat.delta', 'chat.final', 'chat.reasoning'].map(kind => fresh.on(kind, ({ payload }) => observed.push(payload.request_id)));
+  const emit = (kind, sequence, dispatch, request) => socket.receive({ type: 'event', event: kind, payload: {
+    session_id: 'retained-history', request_id: request, output_phase_id: 'old-phase', content: 'retained output',
+    runtime_event: { worker_instance: 'resident', sequence, dispatch_id: dispatch, replayed: true },
+  } });
+  try {
+    const metadata = fresh.request('session.get_metadata', { session_id: 'retained-history' });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: {
+      worker_instance: 'resident', cursor: 2025, is_processing: false, history_required: false,
+      dispatches: [{ dispatch_id: 'inspection', active: true, terminal: null }],
+    } } });
+    await metadata;
+    // Captured ui-d ordering: old frames 22..50 precede the reconnect snapshot.
+    emit('chat.final', 22, 'expired-first', 'completed-request');
+    emit('chat.delta', 32, 'expired-second', 'completed-request');
+    emit('chat.final', 50, 'expired-second', 'completed-request');
+    assert.deepEqual(observed, []);
+    assert.deepEqual(history, ['retained-history'], 'reload durable completion once, never resend input');
+    // New execution after that snapshot must not be lost.
+    emit('chat.delta', 2026, 'new-dispatch', 'new-request');
+    assert.deepEqual(observed, ['new-request']);
+    const active = fresh.request('session.get_metadata', { session_id: 'retained-history', runtime_resume: { after: 2026 } });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: {
+      worker_instance: 'resident', cursor: 2050, is_processing: true,
+      dispatches: [{ dispatch_id: 'new-dispatch', active: true, terminal: null }],
+    } } });
+    await active;
+    emit('chat.delta', 2030, 'new-dispatch', 'new-request');
+    assert.deepEqual(observed, ['new-request', 'new-request']);
+    assert.ok(socket.sentRequests.every(request => request.method === 'session.get_metadata'));
+  } finally { offHistory(); offs.forEach(off => off()); await fresh.disconnect(); }
+});
+
+const { RuntimeResume } = await import('../node_modules/.cache/web-client-runtime-ack/runtimeResume.mjs');
+for (const state of ['idle', 'active', 'waiting']) {
+  test(`initial ${state} snapshot selects the correct replay boundary`, () => {
+    const resume = new RuntimeResume();
+    const runtime = { worker_instance: 'worker', cursor: 2025, is_processing: state === 'active',
+      dispatches: state === 'waiting' ? [{ dispatch_id: 'waiting', phase: 'waiting_for_control', pending_interactions: [{ request_id: 'control' }] }] : [] };
+    assert.equal(resume.queryFromSnapshot('session', runtime).runtime_resume.after, state === 'idle' ? 2025 : 0);
+  });
+}
+test('new worker and older metadata cannot inherit or regress replay boundaries', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('session', {worker_instance:'old',cursor:100,is_processing:false,dispatches:[]});
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'old',cursor:50,is_processing:false,dispatches:[]}).runtime_resume.after,100);
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'new',cursor:3,is_processing:true,dispatches:[]}).runtime_resume.after,0);
+});
+
+test('an already observed empty journal still recovers output completed while offline', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:0,is_processing:false,dispatches:[]});
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:50,is_processing:false,dispatches:[]}).runtime_resume.after,0);
+});
+
+const waitingSnapshot = (overrides = {}) => ({
+  worker_instance: 'waiting-worker', cursor: 3351, is_processing: true, history_required: false,
+  dispatches: [{ dispatch_id: 'waiting', active: false, phase: 'waiting_for_control',
+    pending_interactions: [{ event_type: 'chat.ask_user_question', request_id: 'original-control',
+      source: 'permission_interrupt', question: 'Original permission' }] }],
+  executions: [{ state: 'waiting_for_control', waiting_control_id: 'original-control' }],
+  ...overrides,
+});
+
+test('fresh waiting page restores the original control without replaying the old journal or resending input', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const controls = [];
+  const off = fresh.on('chat.ask_user_question', ({ payload }) => controls.push(payload));
+  try {
+    const pending = fresh.request('session.get_metadata', { session_id: 'waiting-page' });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: waitingSnapshot() } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(socket.lastRequest.params.runtime_resume.after, 3351);
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: waitingSnapshot() } });
+    await pending;
+    assert.deepEqual(controls.map(control => [control.request_id, control.source, control.session_id]),
+      [['original-control', 'permission_interrupt', 'waiting-page']]);
+    assert.deepEqual(socket.sentRequests.map(request => request.method), ['session.get_metadata', 'session.get_metadata']);
+  } finally { off(); await fresh.disconnect(); }
+});
+
+for (const executions of [undefined, [], [{ state: 'running' }], [{ state: 'queued' }],
+  [{ state: 'waiting_for_control', waiting_control_id: 'missing-control' }],
+  [{ state: 'waiting_for_control', waiting_control_id: 'original-control' }, { state: 'running' }]]) {
+  test(`incomplete or concurrent execution snapshot retains replay: ${JSON.stringify(executions)}`, () => {
+    const resume = new RuntimeResume();
+    assert.equal(resume.queryFromSnapshot('waiting-page', waitingSnapshot({ executions })).runtime_resume.after, 0);
+    assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot({ executions })), false);
+  });
+}
+
+test('live completion while subscribing cannot restore an obsolete pending control', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('waiting-page', waitingSnapshot());
+  resume.observe({ type: 'event', event: 'chat.request_completed', payload: {
+    session_id: 'waiting-page', runtime_event: { worker_instance: 'waiting-worker', sequence: 3352, dispatch_id: 'waiting' },
+  } });
+  assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot()), false);
+  assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot({ cursor: 3352 })), false);
 });

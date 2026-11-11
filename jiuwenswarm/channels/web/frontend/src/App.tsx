@@ -492,7 +492,11 @@ async function waitForShareImageJob(
 function AppContent({
   settingsPageDefinition,
   resolveSettingsRequest,
+  sidebarFooter,
+  shareExportDisabledReason,
 }: {
+  sidebarFooter?: React.ReactNode;
+  shareExportDisabledReason?: string;
   settingsPageDefinition: SettingsPageDefinition;
   resolveSettingsRequest: (openSourceRequest: SettingsRequest) => SettingsRequest;
 }) {
@@ -2485,7 +2489,17 @@ function AppContent({
   // 连接状态提示：断连期间在右上角挂一条常驻 toast（不自动消失），重连后收起；
   // 携带业务 id，配置加载/语言切换导致文案变化时原地更新，始终只有一条。
   const connectionToastKeyRef = useRef<number | null>(null);
-  const connectionStatusText = serverConfig ? t('connection.connecting') : t('connection.loadingConfig');
+  const [connectionTimedOut, setConnectionTimedOut] = useState(false);
+  useEffect(() => {
+    setConnectionTimedOut(false);
+    if (isConnected) return;
+    const timer = window.setTimeout(() => setConnectionTimedOut(true), 20000);
+    return () => window.clearTimeout(timer);
+  }, [isConnected]);
+  useEffect(() => () => {
+    if (connectionToastKeyRef.current !== null) toast.close(connectionToastKeyRef.current);
+  }, []);
+  const connectionStatusText = connectionTimedOut ? t('connection.unavailable') : serverConfig ? t('connection.connecting') : t('connection.loadingConfig');
   useEffect(() => {
     if (isConnected) {
       if (connectionToastKeyRef.current !== null) {
@@ -2499,18 +2513,22 @@ function AppContent({
       // data-variant="connecting|loadingConfig"；id 仅作业务去重键，不进 DOM
       id: 'app-connection-toast-message',
       content: (
-        <span data-testid="app-connection-toast-message" data-variant={serverConfig ? 'connecting' : 'loadingConfig'}>
+        <span data-testid="app-connection-toast-message" data-variant={connectionTimedOut ? 'unavailable' : serverConfig ? 'connecting' : 'loadingConfig'}>
           {connectionStatusText}
+          {connectionTimedOut && (
+            <button type="button" className="text-text-link" data-testid="app-connection-retry"
+              onClick={() => window.location.reload()}>{t('connection.retry')}</button>
+          )}
         </span>
       ),
       duration: 0,
       position: 'right',
       variant: 'info',
-      icon: <LoadingSpinner size={14} />,
-      closable: false,
+      icon: connectionTimedOut ? undefined : <LoadingSpinner size={14} />,
+      closable: connectionTimedOut,
       testId: 'app-connection-toast',
     });
-  }, [isConnected, connectionStatusText]);
+  }, [isConnected, connectionStatusText, connectionTimedOut]);
 
   useEffect(() => {
     return () => {
@@ -4376,7 +4394,7 @@ function AppContent({
       const pendingJobId = readPendingShareImageJobId(window.sessionStorage, targetSessionId);
       let status: ShareImageExportJobStatus | null;
       try {
-        status = await findShareImageJobForSession(targetSessionId, window.sessionStorage);
+        status = await findShareImageJobForSession(targetSessionId, window.sessionStorage, undefined, !shareExportDisabledReason);
       } catch (error) {
         console.error('Failed to query active share image export:', error);
         if (pendingJobId !== null) window.alert(tRef.current('share.exportFailed'));
@@ -4410,9 +4428,10 @@ function AppContent({
         }
       }
     })();
-  }, [monitorAndSaveShareImageJob, sessionId, setShareExportSessionActive]);
+  }, [monitorAndSaveShareImageJob, sessionId, setShareExportSessionActive, shareExportDisabledReason]);
 
   const handleExportShare = useCallback(async () => {
+    if (shareExportDisabledReason) return;
     const currentSessionId = sessionIdRef.current;
     if (window.jiuwenDesktop?.isElectron && typeof window.jiuwenDesktop.onShareImageExportProgress !== 'function') {
       window.alert(t('share.desktopRestartRequired'));
@@ -4495,6 +4514,7 @@ function AppContent({
     i18n.resolvedLanguage,
     isPaused,
     isProcessing,
+    shareExportDisabledReason,
     monitorAndSaveShareImageJob,
     setShareExportSessionActive,
     showSaveToast,
@@ -4540,6 +4560,7 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
     >
       {/* Navigation Sidebar */}
       <SessionSidebar
+        footer={sidebarFooter}
         activeNav={activeNav}
         onNavigate={handleNavItemClick}
         onNewSession={handleNewSession}
@@ -4701,7 +4722,8 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
                         isExportingShare={isExportingShare}
                         shareExportProgress={shareExportProgress[sessionId]}
                         isWaitingShareExportTab={waitingShareExportSessionIds.has(sessionId)}
-                        canExportShare={Boolean(sessionId && sessionId !== NEW_CONVERSATION_ID && (!isProcessing || isPaused))}
+                        shareExportDisabledReason={shareExportDisabledReason}
+                        canExportShare={Boolean(!shareExportDisabledReason && sessionId && sessionId !== NEW_CONVERSATION_ID && (!isProcessing || isPaused))}
                         sessionTitle={sessionTitle}
                         sessionProjectName={sessionProjectName}
                         sessionProject={sessionProject}
@@ -5138,7 +5160,11 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
 function App({
   settingsPageDefinition,
   resolveSettingsRequest,
+  sidebarFooter,
+  shareExportDisabledReason,
 }: {
+  sidebarFooter?: React.ReactNode;
+  shareExportDisabledReason?: string;
   settingsPageDefinition: SettingsPageDefinition;
   resolveSettingsRequest: (openSourceRequest: SettingsRequest) => SettingsRequest;
 }) {
@@ -5146,6 +5172,8 @@ function App({
     <ErrorBoundary>
       <DesktopTextEditContextMenu />
       <AppContent
+        sidebarFooter={sidebarFooter}
+        shareExportDisabledReason={shareExportDisabledReason}
         settingsPageDefinition={settingsPageDefinition}
         resolveSettingsRequest={resolveSettingsRequest}
       />

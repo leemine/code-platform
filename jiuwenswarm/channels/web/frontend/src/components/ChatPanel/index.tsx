@@ -174,6 +174,7 @@ interface ChatPanelProps {
   shareExportProgress?: string;
   isWaitingShareExportTab?: boolean;
   canExportShare?: boolean;
+  shareExportDisabledReason?: string;
   sessionTitle?: string;
   sessionProjectName?: string;
   sessionProject?: ProjectInfo | null;
@@ -1211,6 +1212,7 @@ export const ChatPanel = React.memo(function ChatPanel({
   shareExportProgress,
   isWaitingShareExportTab = false,
   canExportShare = false,
+  shareExportDisabledReason,
   sessionTitle,
   sessionProjectName,
   sessionProject = null,
@@ -1427,8 +1429,8 @@ export const ChatPanel = React.memo(function ChatPanel({
       onComposerHeightChange(0);
     };
   }, [composerCollapsed, composerDockVisible, onComposerHeightChange]);
-  const shareExportTitle = isWaitingShareExportTab ? t('share.openExportTab') : isExportingShare && shareExportProgress
-    ? shareExportProgress : getShareExportTitle(t, isExportingShare, canExportShare);
+  const shareExportTitle = shareExportDisabledReason || (isWaitingShareExportTab ? t('share.openExportTab') : isExportingShare && shareExportProgress
+    ? shareExportProgress : getShareExportTitle(t, isExportingShare, canExportShare));
   const shouldShowShareExport = Boolean(onExportShare);
   const shouldShowHumanShare = mode === 'team' && teamHumanShareCommands.length > 0;
   const [humanShareOpen, setHumanShareOpen] = React.useState(false);
@@ -2696,7 +2698,7 @@ export const ChatPanel = React.memo(function ChatPanel({
                 title={shareExportTitle}
                 aria-label={shareExportTitle}
                 aria-busy={isExportingShare && !isWaitingShareExportTab}
-                disabled={!isWaitingShareExportTab && (!canExportShare || isExportingShare)}
+                disabled={Boolean(shareExportDisabledReason) || (!isWaitingShareExportTab && (!canExportShare || isExportingShare))}
                 onClick={() => {
                   void onExportShare?.();
                 }}

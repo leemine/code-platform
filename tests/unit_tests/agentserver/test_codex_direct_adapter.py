@@ -67,6 +67,9 @@ class FakeClient:
 
     def thread_resume(self, thread_id, options):
         assert self.native_threads[thread_id] == self.config.env['CODEX_HOME']
+        if hasattr(self, 'options'):
+            assert self.thread_id == thread_id
+            return self._policy()  # Loaded native threads retain the original policy.
         self.thread_id = thread_id
         self.options = options
         return self._policy()
@@ -482,8 +485,39 @@ async def test_permission_update_preserves_thread_and_waits_for_next_turn(host):
         await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id='one', reload_scopes=['permissions'])
         assert clients[0].options['approvalPolicy'] == 'on-request'
         await consume(app.process_message_stream(request()))
-        assert clients[0].thread_id == original
-        assert clients[0].options['approvalPolicy'] == 'never'
+        assert clients[0].closed and clients[0].turns == 1
+        assert clients[1].thread_id == original
+        assert clients[1].options['approvalPolicy'] == 'never'
+        assert app.runtime_permission_status('one')['effective_profile'] == 'full_access'
+        await app.reload_agent_config(config_base={'permissions': {'enabled': True}}, target_session_id='one', reload_scopes=['permissions'])
+        await consume(app.process_message_stream(request()))
+        assert clients[1].closed and clients[2].thread_id == original
+        assert clients[2].options['approvalPolicy'] == 'on-request'
+        assert app.runtime_permission_status('one')['effective_profile'] == 'default'
+        assert len({c.config.env['CODEX_HOME'] for c in clients}) == 1
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_permission_reconnect_rejects_unconfirmed_policy_without_starting_turn(host, monkeypatch):
+    app, config, clients, _, _ = host
+    await app.create_instance(config)
+    try:
+        await consume(app.process_message_stream(request()))
+        await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id='one', reload_scopes=['permissions'])
+        resume = FakeClient.thread_resume
+        def wrong_policy(client, thread_id, options):
+            return resume(client, thread_id, {**options, 'approvalPolicy': 'on-request'})
+        monkeypatch.setattr(FakeClient, 'thread_resume', wrong_policy)
+        chunks = await consume(app.process_message_stream(request()))
+        assert any((c.payload or {}).get('event_type') == 'chat.error' for c in chunks)
+        assert clients[0].closed and clients[1].closed
+        assert sum(c.turns for c in clients) == 1
+        assert app.runtime_permission_status('one')['effective_profile'] != 'full_access'
+        monkeypatch.setattr(FakeClient, 'thread_resume', resume)
+        await consume(app.process_message_stream(request()))
+        assert clients[-1].thread_id == clients[0].thread_id
         assert app.runtime_permission_status('one')['effective_profile'] == 'full_access'
     finally:
         await app.cleanup()
@@ -1203,9 +1237,14 @@ async def test_codex_mcp_facade_preserves_selection_on_failure_and_clear_after_r
         assert any(c.get('event_type') == 'chat.final' for c in await send(mcp=['good']))
         thread_id = clients[-1].thread_id
         assert saved() == ['good'] and clients[-1].turns == 1
+        await app.reload_agent_config(config_base={'permissions': {'enabled': False}}, target_session_id=sid, reload_scopes=['permissions'])
+        assert any(c.get('event_type') == 'chat.final' for c in await send())
+        assert saved() == ['good'] and clients[-1].options['config']['mcp_servers']
+        assert clients[-1].options['approvalPolicy'] == 'never'
+        assert clients[-2].closed and clients[-1].thread_id == thread_id
         with pytest.raises(RuntimeError, match='could not confirm the selected MCP configuration'):
             await send(mcp=['broken'])
-        assert saved() == ['good'] and sum(c.turns for c in clients) == 1
+        assert saved() == ['good'] and sum(c.turns for c in clients) == 2
         assert clients[-1].closed
 
         assert any(c.get('event_type') == 'chat.final' for c in await send())
@@ -1218,3 +1257,81 @@ async def test_codex_mcp_facade_preserves_selection_on_failure_and_clear_after_r
         assert {client.thread_id for client in clients} == {thread_id}
     finally:
         await app.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_context_config_reaches_sdk_and_catalog_is_pinned_for_resume(host, monkeypatch):
+    import hashlib
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    app, config, clients, root, model = host
+    catalog_file = root / 'deployment-models.json'
+    original = {'models': [{'slug': 'shared-model', 'context_window': 1048576}]}
+    catalog_file.write_text(json.dumps(original))
+    config['codex']['model_catalog_json'] = str(catalog_file)
+    raw = interface.get_config()
+    raw['models']['defaults'][0]['model_config_obj'] = {'context_window': '1M'}
+    monkeypatch.setattr(interface, 'get_config', lambda: raw)
+    await app.create_instance(config)
+    catalog_file.write_text('{"models": []}')  # Cannot mutate an existing adapter's snapshot.
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request(project_dir=str(root)))]
+        assert any(x.get('event_type') == 'chat.final' for x in chunks)
+        assert not any(x.get('event_type') == 'chat.error' for x in chunks)
+        client = clients[-1]
+        assert 'model_context_window=1048576' in client.config.config_overrides
+        paths = [json.loads(x.split('=', 1)[1]) for x in client.config.config_overrides if x.startswith('model_catalog_json=')]
+        assert len(paths) == 1
+        private_catalog = Path(paths[0])
+        assert private_catalog.parent == app._adapter._sessions['one'].root
+        assert json.loads(private_catalog.read_text()) == original
+        assert private_catalog.stat().st_mode & 0o077 == 0
+        binding = session_recovery.load('codex', 'one', str(root))
+        # Same bytes at another deployment location preserve the recovery contract.
+        second = codex.CodexAdapter()
+        other_path = root / 'relocated-models.json'
+        other_path.write_text(json.dumps(original, indent=2))
+        await second.create_instance({'codex': {'enabled': True, 'model_catalog_json': str(other_path)}})
+        session_recovery.require_settings(binding, second._settings)
+        # A changed catalog must not silently resume under different capabilities.
+        third = codex.CodexAdapter()
+        await third.create_instance(config)
+        with pytest.raises(ValueError, match='configuration changed'):
+            session_recovery.require_settings(binding, third._settings)
+        legacy = codex.Session(str(root), root)
+        assert codex.CodexAdapter._model_revision(legacy, model) == hashlib.sha256(model.model_dump_json().encode()).hexdigest()
+        legacy.model_revision = codex.CodexAdapter._model_revision(legacy, model)
+        with pytest.raises(ValueError, match='model configuration changed'):
+            codex.CodexAdapter._model_revision(legacy, model.model_copy(update={'context_window': 1048576}))
+    finally:
+        await app.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('contents', [None, 'not-json', '[]', '{"models":{}}'])
+async def test_bad_catalog_stops_before_starting_sdk(host, contents):
+    app, config, clients, root, _ = host
+    file = root / 'bad-catalog.json'
+    if contents is not None:
+        file.write_text(contents)
+    config['codex']['model_catalog_json'] = str(file)
+    with pytest.raises(ValueError, match='readable native model catalog'):
+        await app.create_instance(config)
+    assert clients == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('entries', [[], [{'slug': 'other'}], [{'slug': 'shared-model'}, {'slug': 'shared-model'}]])
+async def test_explicit_catalog_cannot_silently_fall_back_for_missing_or_ambiguous_model(host, entries):
+    app, config, clients, root, _ = host
+    file = root / 'catalog.json'
+    file.write_text(json.dumps({'models': entries}))
+    config['codex']['model_catalog_json'] = str(file)
+    await app.create_instance(config)
+    adapter = app._adapter
+    try:
+        chunks = [x.payload async for x in app.process_message_stream(request(project_dir=str(root)))]
+        assert any(x.get('event_type') == 'chat.error' for x in chunks)
+        assert clients == []
+    finally:
+        await app.cleanup()
+    assert adapter._model_catalog is None

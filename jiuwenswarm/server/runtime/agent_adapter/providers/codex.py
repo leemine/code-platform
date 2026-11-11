@@ -124,6 +124,7 @@ class CodexAdapter:
         self._validate_mode(mode)
         self._sessions: dict[str, Session] = {}
         self._settings = None
+        self._model_catalog = None
         self._permission_profile = "default"
 
     @staticmethod
@@ -163,6 +164,22 @@ class CodexAdapter:
             from jiuwenswarm.common.windows_cli_paths import resolve_preserved_cli_path
             from .cli import resolve_cli
             settings["cli_path"] = resolve_cli("codex", explicit=resolve_preserved_cli_path(settings["cli_path"]))
+        catalog_text = None
+        catalog_path = settings.pop("model_catalog_json", None)
+        if catalog_path is not None:
+            if not isinstance(catalog_path, str) or not Path(catalog_path).is_absolute():
+                raise ValueError("Codex model_catalog_json must be an absolute file path")
+            try:
+                catalog = json.loads(Path(catalog_path).read_text(encoding="utf-8"))
+                if not isinstance(catalog, dict) or not isinstance(catalog.get("models"), list):
+                    raise ValueError("Invalid catalog")
+            except (OSError, ValueError):
+                raise ValueError("Codex model_catalog_json must contain a readable native model catalog") from None
+            # Snapshot explicit deployment configuration once. Resume checks the
+            # content digest; changing the source file cannot change a live client.
+            catalog_text = json.dumps(catalog, ensure_ascii=False, sort_keys=True)
+            settings["model_catalog_sha256"] = hashlib.sha256(catalog_text.encode()).hexdigest()
+        self._model_catalog = catalog_text
         self._settings = settings
 
     def build_query(self, request, turn):
@@ -340,7 +357,10 @@ class CodexAdapter:
 
     @staticmethod
     def _model_revision(session, model):
-        revision = hashlib.sha256(model.model_dump_json().encode()).hexdigest()
+        serialized = model.model_dump_json()
+        if model.context_window is not None:
+            serialized += f"\0context_window={model.context_window}"
+        revision = hashlib.sha256(serialized.encode()).hexdigest()
         if session.model_revision and revision != session.model_revision:
             raise ValueError("Codex model configuration changed; restore the original configuration before resuming")
         return revision
@@ -360,6 +380,24 @@ class CodexAdapter:
                "LOCALAPPDATA": str(session.root / "localappdata"), "OPENAI_API_KEY": "", "CODEX_API_KEY": "",
                "SWARM_CODEX_MODEL_KEY": model.api_key}
         overrides = model_overrides(model, self._settings)
+        if self._model_catalog is not None:
+            matches = [entry for entry in json.loads(self._model_catalog)["models"]
+                       if isinstance(entry, dict) and entry.get("slug") == model.model_name]
+            if len(matches) != 1:
+                raise ValueError("Codex model catalog must contain exactly one entry for the selected model")
+            catalog_path = session.root / "model-catalog.json"
+            # The directory belongs to this native session, outside its workspace.
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=session.root,
+                                                 prefix="model-catalog-", delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(self._model_catalog)
+                temporary.replace(catalog_path)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            overrides += ("model_catalog_json=" + json.dumps(str(catalog_path)),)
         if selection is not None and selection.env:
             env.update(selection.env)
             overrides += ('shell_environment_policy.exclude=["SWARM_CODEX_MCP_*"]',)
@@ -399,7 +437,8 @@ class CodexAdapter:
                 raise ValueError("Codex did not confirm the requested permission policy")
             if selection is not None:
                 await asyncio.wait_for(asyncio.to_thread(confirm_mcp, client, response.thread.id, selection), 15)
-                ensure_current()
+                if ensure_current is not None:
+                    ensure_current()
         except BaseException as exc:
             self._release_controls(session)
             with contextlib.suppress(Exception):
@@ -523,26 +562,14 @@ class CodexAdapter:
                 raise ValueError("Session already has a producer; use Runtime scheduling")
             new_thread = not session.thread_id
             role = execution.main_agent_role.instructions if execution and execution.main_agent_role else ""
-            if role:
-                await self._connect(session, model, role)
-            else:
-                await self._connect(session, model)
-            if session.desired_permission != session.effective_permission:
-                # Resume the same thread with the new policy; no conversation replacement.
-                try:
-                    response = await asyncio.wait_for(asyncio.to_thread(
-                        session.client.thread_resume, session.thread_id,
-                        self._permission_options(session.desired_permission)), 30)
-                except Exception:
-                    raise RuntimeError("Codex permission update could not be confirmed; execution was not started") from None
-                if response.thread.id != session.thread_id:
-                    raise ValueError("Codex resumed a different thread")
-                effective = response.model_dump(mode="json", by_alias=True)
-                expected = self._permission_options(session.desired_permission)
-                if effective.get("approvalPolicy") != expected["approvalPolicy"] or effective.get("approvalsReviewer") != "user" or effective.get("sandbox", {}).get("type") != ("dangerFullAccess" if session.desired_permission == "full_access" else "workspaceWrite"):
-                    raise ValueError("Codex permission update was not confirmed")
-                session.effective_permission = session.desired_permission
-                self._save_binding(session)
+            if session.client and session.desired_permission != session.effective_permission:
+                # Loaded thread/resume retains its original policy. Reconnect the
+                # owned client and verify the same persisted thread before a Turn.
+                await asyncio.to_thread(session.client.close)
+                session.client = None
+            # Retain the already selected MCP snapshot across a policy reconnect;
+            # fresh equipment changes still use apply_equipment's generation guard.
+            await self._connect(session, model, role, selection=session.mcp)
             if session.role_refresh_uncertain or (
                 role != session.role_instructions
                 and ((execution and execution.main_agent_role is not None) or session.role_instructions)
@@ -808,6 +835,7 @@ class CodexAdapter:
         for sid in list(self._sessions):
             await self.cleanup_session_adapter(sid)
         self._settings = None
+        self._model_catalog = None
 
     def runtime_permission_status(self, session_id):
         session = self._sessions.get(session_id)

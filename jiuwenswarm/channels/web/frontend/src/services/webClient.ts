@@ -462,7 +462,13 @@ class WebClient {
       return;
     }
 
-    if (!this.runtimeResume.observe(message)) return;
+    if (!this.runtimeResume.observe(message)) {
+      if (this.runtimeResume.takeHistoryRequired(message.payload.session_id)) {
+        this.dispatchEvent({ type: 'event', event: 'runtime.history_required',
+          payload: { session_id: message.payload.session_id } });
+      }
+      return;
+    }
     this.resolveRuntimeAcceptedPending(message);
     this.dispatchEvent(message);
   }
@@ -573,7 +579,8 @@ class WebClient {
             },
           });
         }
-        if (runtime.history_required === true) {
+        const restorePending = this.runtimeResume.takePendingRestore(query.session_id, runtime);
+        if (runtime.history_required === true || restorePending) {
           const dispatches = Array.isArray(runtime.dispatches) ? runtime.dispatches : [];
           for (const dispatch of dispatches) {
             const interactions = Array.isArray(dispatch.pending_interactions) ? dispatch.pending_interactions : [];
@@ -587,6 +594,8 @@ class WebClient {
               }
             }
           }
+        }
+        if (runtime.history_required === true) {
           this.dispatchEvent({
             type: 'event',
             event: 'runtime.history_required',

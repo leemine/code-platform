@@ -2080,7 +2080,9 @@
     "connected": "Connected",
     "disconnected": "Disconnected",
     "connecting": "Connecting...",
-    "loadingConfig": "Loading config..."
+    "loadingConfig": "Loading config...",
+    "unavailable": "Connection unavailable. Check the service and retry.",
+    "retry": "Retry"
   },
   "toolPanel": {
     "status": "Status",
@@ -5125,7 +5127,23 @@
         "resetEveryMonthsPlain": "Credits refresh every {{count}} months.",
         "resetNext": "Next credit refresh: {{date}}."
       }
-    }
+    },
+    "register": "Register",
+    "createAccount": "Create account",
+    "backToLogin": "Already registered? Sign in",
+    "registered": "Account created. Please sign in.",
+    "usernameExists": "This username is already registered",
+    "accountSubtitle": "Sign in to your workspace",
+    "accountHint": "Username: 3–32 characters. Password: 8–128 characters. Accounts are stored by the platform.",
+    "title": "Sign in to JiuwenSwarm",
+    "username": "Account",
+    "password": "Password",
+    "login": "Sign in",
+    "loggingIn": "Signing in…",
+    "invalidCredentials": "Invalid account or password",
+    "accountServiceUnavailable": "The account service is temporarily unavailable. Please try again later.",
+    "loginFailed": "Sign-in failed, please retry later",
+    "logout": "Sign out"
   },
   "heartbeat": {
     "status": {
@@ -5565,5 +5583,19 @@
     "reject": "Reject",
     "approve": "Authorize",
     "waiting": "Processing..."
+  },
+  "cloudWorkspace": {
+    "shareExportUnavailable": "Image export is not available in this cloud environment",
+    "title": "Cloud workspace",
+    "checking": "Checking your login…",
+    "preparing": "Preparing your cloud environment…",
+    "entry": "You are signed in. Enter your own cloud environment to continue.",
+    "enter": "Enter cloud environment",
+    "ready": "Cloud environment ready",
+    "unavailable": "Account service is unavailable. Please retry.",
+    "environmentError": "The environment is not ready. Retry to check the existing binding.",
+    "logoutFailed": "Logout was not confirmed. The current connection has been closed. Please retry.",
+    "retry": "Retry",
+    "logout": "Sign out"
   }
 }

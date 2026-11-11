@@ -51,6 +51,8 @@ class ResolvedModel(BaseModel):
     model_description: str | None = None
     client_options: dict[str, Any] = Field(default_factory=dict)
     request_defaults: dict[str, Any] = Field(default_factory=dict)
+    # Host-only metadata: never a Core request option or a legacy Provider fingerprint.
+    context_window: int | None = Field(default=None, exclude=True, strict=True, gt=0)
 
 
 class ResolvedRoute(BaseModel):
