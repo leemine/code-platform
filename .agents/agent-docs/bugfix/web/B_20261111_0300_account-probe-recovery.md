@@ -49,3 +49,11 @@ design_note: 补回 codeswarm 既有恢复行为，不新增账号或执行链�
 复审确认云实例模式已有服务端agentserver_file_rpc_required拒绝；App仍自动恢复导出任务，造成无效请求和可点击但失败的入口。Gate现在传递可选禁用原因给原App与ChatPanel；原查询函数以显式能力开关返回null且不读写任务记录，旧调用默认启用，本地导出不变。按钮、辅助技术及中英文原因共用原控件，不新增导出服务，不绕过文件权限。新回归证明有/无待办任务均不请求、不清理；既有分享上传/协议/渲染测试仍运行，stable纳入分享套件。
 
 本轮复审范围包括上述差额及前轮Gate/RuntimeResume/WebClient/部署补偿/测试/装配；原38文件PR既有差额继续以PLATFORM_SYSTEM_REVIEW_20261111为依据，锁未变。真实Native/Codex待审批重连、精确提交stable及复查结论由管理记录PLATFORM_MERGE_READINESS_20261111维护，未完成项不能以本地测试或旧SHA通过替代。
+
+## 待审批整页恢复补充（同轮验收发现）
+
+首次整页刷新发生history.get与工作流快照超时，审批卡丢失；诊断重试确认原控制仍在worker快照，cursor3351却从after0订阅旧journal，后来重复订阅才恢复。第二次成功不覆盖第一次失败，也不把全部超时单因归于重放。
+
+修复仅对首次页面且完整executions快照确认所有非终态执行均等待已知pending control的情况，采用快照cursor并从原pending_interactions恢复审批；仍运行、排队、缺失执行信息或已观察输出保留原重放。较新实时事件已推进游标时不恢复旧快照控件。handler已返回但仍pending不能因片段terminal归为历史完成。复用既有WebClient与RuntimeResume，无新协议、SDK或执行队列。
+
+新增8项确定性回归（Runtime/WebClient共33）覆盖原控制恢复、未知/并行/排队状态及迟到完成；旧ff0260b纯边界复现为after0≠3351，新版通过。真实现场确认查询after3351、原控制ID未变；最终无诊断构建与真实单次副作用/CI结果继续由管理记录维护。

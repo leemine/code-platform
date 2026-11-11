@@ -5,6 +5,7 @@ export class RuntimeResume {
   private sessions = new Map<string, { instance: string; after: number; seen: Set<number>; historical: Set<string>;
     snapshot?: { through: number; dispatches: Set<string> };
     historyRequired?: boolean; historyRequestedThrough?: number;
+    restorePending?: boolean;
     pending?: { through: number; ids: Set<string> } }>();
 
   observe(event: WsEvent): boolean {
@@ -66,18 +67,30 @@ export class RuntimeResume {
     // Reconcile every authoritative snapshot, retaining the observed cursor.
     const dispatches = Array.isArray(runtime.dispatches) ? runtime.dispatches : [];
     for (const dispatch of dispatches) {
-      if (dispatch?.active === false && dispatch.terminal && typeof dispatch.dispatch_id === 'string') {
+      if (dispatch?.active === false && dispatch.terminal && dispatch.phase !== 'waiting_for_control'
+        && !(Array.isArray(dispatch.pending_interactions) && dispatch.pending_interactions.length > 0)
+        && typeof dispatch.dispatch_id === 'string') {
         cursor.historical.add(dispatch.dispatch_id);
       }
     }
     if (Array.isArray(runtime.dispatches) && typeof runtime.cursor === 'number') {
-      // A fresh idle page loads durable history. Starting its later reconnect at
-      // zero needlessly replays the entire journal and can starve history RPCs.
-      // Waiting controls and observed/live executions still need their replay.
-      if (!cursor.snapshot && cursor.after === 0 && cursor.seen.size === 0 && runtime.is_processing === false
-        && !dispatches.some(dispatch => dispatch?.phase === 'waiting_for_control'
-          || (Array.isArray(dispatch?.pending_interactions) && dispatch.pending_interactions.length > 0))) {
+      const pendingIds = new Set(dispatches.flatMap(dispatch =>
+        Array.isArray(dispatch?.pending_interactions) ? dispatch.pending_interactions.map(
+          (interaction: Record<string, unknown>) => interaction.interaction_id ?? interaction.control_id ?? interaction.request_id,
+        ) : []));
+      const executions = Array.isArray(runtime.executions) ? runtime.executions : [];
+      const waitingOnly = pendingIds.size > 0 && executions.some(execution => execution?.state === 'waiting_for_control')
+        && executions.every(execution => ['succeeded', 'failed', 'cancelled'].includes(execution?.state)
+          || (execution?.state === 'waiting_for_control' && typeof execution.waiting_control_id === 'string'
+            && pendingIds.has(execution.waiting_control_id)));
+      // A fresh idle or fully suspended page restores durable history. Pending
+      // controls are complete in the snapshot; replaying the whole journal can
+      // starve history RPCs. Unknown or running executions retain their replay.
+      if (!cursor.snapshot && cursor.after === 0 && cursor.seen.size === 0
+        && ((runtime.is_processing === false && pendingIds.size === 0
+          && !dispatches.some(dispatch => dispatch?.phase === 'waiting_for_control')) || waitingOnly)) {
         cursor.after = runtime.cursor;
+        cursor.restorePending = waitingOnly;
       }
       if (!cursor.snapshot || runtime.cursor >= cursor.snapshot.through) {
         cursor.snapshot = { through: runtime.cursor, dispatches: new Set(dispatches
@@ -107,6 +120,14 @@ export class RuntimeResume {
     if (!cursor?.historyRequired) return false;
     cursor.historyRequired = false;
     return true;
+  }
+
+  takePendingRestore(sessionId: string, runtime: Record<string, unknown>): boolean {
+    const cursor = this.sessions.get(sessionId);
+    if (!cursor?.restorePending || cursor.instance !== runtime.worker_instance) return false;
+    cursor.restorePending = false;
+    // A live event after the snapshot may have answered/cancelled the control.
+    return typeof runtime.cursor === 'number' && cursor.after <= runtime.cursor;
   }
 
   clear(): void {

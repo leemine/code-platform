@@ -682,7 +682,7 @@ test('metadata updates completed dispatches even after live activity created the
       worker_instance: 'controls-worker', is_processing: false, cursor: 21, dispatches: [
         { dispatch_id: 'approved', active: false, terminal: { event_type: 'chat.final' } },
         { dispatch_id: 'cancelled', active: false, terminal: { event_type: 'runtime.completed', state: 'cancelled' } },
-        { dispatch_id: 'waiting', active: true, terminal: { event_type: 'chat.final', final_mode: 'patch_segment' },
+        { dispatch_id: 'waiting', active: false, phase: 'waiting_for_control', terminal: { event_type: 'chat.final', final_mode: 'patch_segment' },
           pending_interactions: [{ event_type: 'chat.ask_user_question', request_id: 'still-pending' }] },
       ],
     } } });
@@ -805,4 +805,53 @@ test('an already observed empty journal still recovers output completed while of
   const resume = new RuntimeResume();
   resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:0,is_processing:false,dispatches:[]});
   assert.equal(resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:50,is_processing:false,dispatches:[]}).runtime_resume.after,0);
+});
+
+const waitingSnapshot = (overrides = {}) => ({
+  worker_instance: 'waiting-worker', cursor: 3351, is_processing: true, history_required: false,
+  dispatches: [{ dispatch_id: 'waiting', active: false, phase: 'waiting_for_control',
+    pending_interactions: [{ event_type: 'chat.ask_user_question', request_id: 'original-control',
+      source: 'permission_interrupt', question: 'Original permission' }] }],
+  executions: [{ state: 'waiting_for_control', waiting_control_id: 'original-control' }],
+  ...overrides,
+});
+
+test('fresh waiting page restores the original control without replaying the old journal or resending input', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const controls = [];
+  const off = fresh.on('chat.ask_user_question', ({ payload }) => controls.push(payload));
+  try {
+    const pending = fresh.request('session.get_metadata', { session_id: 'waiting-page' });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: waitingSnapshot() } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(socket.lastRequest.params.runtime_resume.after, 3351);
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: waitingSnapshot() } });
+    await pending;
+    assert.deepEqual(controls.map(control => [control.request_id, control.source, control.session_id]),
+      [['original-control', 'permission_interrupt', 'waiting-page']]);
+    assert.deepEqual(socket.sentRequests.map(request => request.method), ['session.get_metadata', 'session.get_metadata']);
+  } finally { off(); await fresh.disconnect(); }
+});
+
+for (const executions of [undefined, [], [{ state: 'running' }], [{ state: 'queued' }],
+  [{ state: 'waiting_for_control', waiting_control_id: 'missing-control' }],
+  [{ state: 'waiting_for_control', waiting_control_id: 'original-control' }, { state: 'running' }]]) {
+  test(`incomplete or concurrent execution snapshot retains replay: ${JSON.stringify(executions)}`, () => {
+    const resume = new RuntimeResume();
+    assert.equal(resume.queryFromSnapshot('waiting-page', waitingSnapshot({ executions })).runtime_resume.after, 0);
+    assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot({ executions })), false);
+  });
+}
+
+test('live completion while subscribing cannot restore an obsolete pending control', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('waiting-page', waitingSnapshot());
+  resume.observe({ type: 'event', event: 'chat.request_completed', payload: {
+    session_id: 'waiting-page', runtime_event: { worker_instance: 'waiting-worker', sequence: 3352, dispatch_id: 'waiting' },
+  } });
+  assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot()), false);
+  assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot({ cursor: 3352 })), false);
 });

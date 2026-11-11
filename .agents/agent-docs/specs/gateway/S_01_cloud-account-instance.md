@@ -87,3 +87,7 @@ Web RuntimeResume 将有 worker_instance/cursor/dispatches 的权威快照作为
 Web/TLS 失败恢复只属于可替换部署层 deploy/web/proxy_switch.py。停服前检查材料/哈希/镜像/归属/证书/语法；旧容器保留 ID，失败仅移除本次替身并恢复原角色；补偿失败明确报需人工恢复，不把其记作成功。账号/环境/Runtime 不依赖该脚本。单操作方、有界停机与保留容器代价见 deploy/web/README.md。
 
 云实例角色尚未装配分享导出的Agent文件链。Gate通过可选shareExportDisabledReason装配原App/ChatPanel；控件禁用并显示原因，启动恢复不发送/share-api查询，不删除已有导出任务记录。本地角色未传入该限制，保持原行为。此项是UI能力声明，不替代服务端既有拒绝；完整云导出实现与旧runner链接访问仍不在已支持范围。
+
+### 首次待审批页面恢复
+
+WebClient仅在Worker完整执行快照确认全部未结束执行等待已有控制、且页面尚未观察运行事件时，可从快照游标订阅并恢复原pending_interactions。缺少快照、运行或排队执行仍走原增量重放；已观察输出不跳游标。较新事件推进后的旧快照不得重新激活控件；等待控制不因handler已返回或片段终态被当成执行完成。历史来自原持久历史接口，用户输入不得因恢复重发。
