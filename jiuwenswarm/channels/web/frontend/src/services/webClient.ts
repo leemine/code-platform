@@ -462,7 +462,13 @@ class WebClient {
       return;
     }
 
-    if (!this.runtimeResume.observe(message)) return;
+    if (!this.runtimeResume.observe(message)) {
+      if (this.runtimeResume.takeHistoryRequired(message.payload.session_id)) {
+        this.dispatchEvent({ type: 'event', event: 'runtime.history_required',
+          payload: { session_id: message.payload.session_id } });
+      }
+      return;
+    }
     this.resolveRuntimeAcceptedPending(message);
     this.dispatchEvent(message);
   }

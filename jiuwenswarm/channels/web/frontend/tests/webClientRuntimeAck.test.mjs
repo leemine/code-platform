@@ -742,3 +742,67 @@ test('reconnect snapshot settles an observed dispatch before its queued approval
     await fresh.disconnect();
   }
 });
+
+test('expired dispatch replay before reconnect snapshot cannot reopen completed history', async () => {
+  const fresh = new webClient.constructor();
+  await fresh.connect();
+  const socket = FakeWebSocket.instance;
+  const observed = [];
+  const history = [];
+  const offHistory = fresh.on('runtime.history_required', ({ payload }) => history.push(payload.session_id));
+  const offs = ['chat.delta', 'chat.final', 'chat.reasoning'].map(kind => fresh.on(kind, ({ payload }) => observed.push(payload.request_id)));
+  const emit = (kind, sequence, dispatch, request) => socket.receive({ type: 'event', event: kind, payload: {
+    session_id: 'retained-history', request_id: request, output_phase_id: 'old-phase', content: 'retained output',
+    runtime_event: { worker_instance: 'resident', sequence, dispatch_id: dispatch, replayed: true },
+  } });
+  try {
+    const metadata = fresh.request('session.get_metadata', { session_id: 'retained-history' });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: {
+      worker_instance: 'resident', cursor: 2025, is_processing: false, history_required: false,
+      dispatches: [{ dispatch_id: 'inspection', active: true, terminal: null }],
+    } } });
+    await metadata;
+    // Captured ui-d ordering: old frames 22..50 precede the reconnect snapshot.
+    emit('chat.final', 22, 'expired-first', 'completed-request');
+    emit('chat.delta', 32, 'expired-second', 'completed-request');
+    emit('chat.final', 50, 'expired-second', 'completed-request');
+    assert.deepEqual(observed, []);
+    assert.deepEqual(history, ['retained-history'], 'reload durable completion once, never resend input');
+    // New execution after that snapshot must not be lost.
+    emit('chat.delta', 2026, 'new-dispatch', 'new-request');
+    assert.deepEqual(observed, ['new-request']);
+    const active = fresh.request('session.get_metadata', { session_id: 'retained-history', runtime_resume: { after: 2026 } });
+    await Promise.resolve();
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: { runtime: {
+      worker_instance: 'resident', cursor: 2050, is_processing: true,
+      dispatches: [{ dispatch_id: 'new-dispatch', active: true, terminal: null }],
+    } } });
+    await active;
+    emit('chat.delta', 2030, 'new-dispatch', 'new-request');
+    assert.deepEqual(observed, ['new-request', 'new-request']);
+    assert.ok(socket.sentRequests.every(request => request.method === 'session.get_metadata'));
+  } finally { offHistory(); offs.forEach(off => off()); await fresh.disconnect(); }
+});
+
+const { RuntimeResume } = await import('../node_modules/.cache/web-client-runtime-ack/runtimeResume.mjs');
+for (const state of ['idle', 'active', 'waiting']) {
+  test(`initial ${state} snapshot selects the correct replay boundary`, () => {
+    const resume = new RuntimeResume();
+    const runtime = { worker_instance: 'worker', cursor: 2025, is_processing: state === 'active',
+      dispatches: state === 'waiting' ? [{ dispatch_id: 'waiting', phase: 'waiting_for_control', pending_interactions: [{ request_id: 'control' }] }] : [] };
+    assert.equal(resume.queryFromSnapshot('session', runtime).runtime_resume.after, state === 'idle' ? 2025 : 0);
+  });
+}
+test('new worker and older metadata cannot inherit or regress replay boundaries', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('session', {worker_instance:'old',cursor:100,is_processing:false,dispatches:[]});
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'old',cursor:50,is_processing:false,dispatches:[]}).runtime_resume.after,100);
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'new',cursor:3,is_processing:true,dispatches:[]}).runtime_resume.after,0);
+});
+
+test('an already observed empty journal still recovers output completed while offline', () => {
+  const resume = new RuntimeResume();
+  resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:0,is_processing:false,dispatches:[]});
+  assert.equal(resume.queryFromSnapshot('session', {worker_instance:'worker',cursor:50,is_processing:false,dispatches:[]}).runtime_resume.after,0);
+});

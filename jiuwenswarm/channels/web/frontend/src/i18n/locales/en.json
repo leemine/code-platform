@@ -5585,6 +5585,7 @@
     "waiting": "Processing..."
   },
   "cloudWorkspace": {
+    "shareExportUnavailable": "Image export is not available in this cloud environment",
     "title": "Cloud workspace",
     "checking": "Checking your login…",
     "preparing": "Preparing your cloud environment…",

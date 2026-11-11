@@ -403,3 +403,16 @@ test('a failed startup status request cannot close a download that already start
   assert.equal(polls, 2);
   assert.equal(result.phase, 'download_sent');
 });
+
+for (const hasPending of [false, true]) {
+  test(`disabled deployment does not query or discard export jobs (pending=${hasPending})`, async () => {
+    const storage = createStorage();
+    if (hasPending) rememberPendingShareImageJob(storage, SESSION_ID, job());
+    const previous = storage.getItem(`jiuwenswarm:pending-share-image-job:${SESSION_ID}`);
+    let requests = 0;
+    const result = await findShareImageJobForSession(SESSION_ID, storage, async () => { requests += 1; throw new Error('must not fetch'); }, false);
+    assert.equal(result, null);
+    assert.equal(requests, 0);
+    assert.equal(storage.getItem(`jiuwenswarm:pending-share-image-job:${SESSION_ID}`), previous);
+  });
+}

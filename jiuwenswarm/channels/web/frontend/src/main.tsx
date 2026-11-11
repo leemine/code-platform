@@ -65,7 +65,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         client={browserRunner}
       />
     ) : (
-      <CloudWorkspaceGate>{(sidebarFooter) => <App
+      <CloudWorkspaceGate>{(sidebarFooter, capabilities) => <App
+        shareExportDisabledReason={capabilities?.shareExportDisabledReason}
         sidebarFooter={sidebarFooter}
         settingsPageDefinition={openSourceSettingsPageDefinition}
         resolveSettingsRequest={resolveOpenSourceSettingsRequest}

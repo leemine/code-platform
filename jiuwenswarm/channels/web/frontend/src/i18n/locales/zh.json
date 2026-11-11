@@ -5582,6 +5582,7 @@
     "waiting": "处理中..."
   },
   "cloudWorkspace": {
+    "shareExportUnavailable": "当前云环境暂不支持导出长图",
     "title": "云工作区",
     "checking": "正在确认登录状态…",
     "preparing": "正在准备云环境，请稍候…",

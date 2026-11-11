@@ -67,3 +67,11 @@ Codex permission changes apply before the next turn. The platform reconnects its
 Reuse codeswarm's sequential recovery: after an unavailable probe settles, retry after two seconds without invalidating a slow response. Within the existing ten-second deadline, retry network transport errors and HTTP 502/503/504 once after 250 ms; a successful transient retry retains the mounted workspace. Persistent failures still disconnect and close the workspace; recovery uses a freshly verified principal to retain the same account's route. No cached identity authorizes access. HTTP 401/403 and invalid identities are not transport retries, and a missing endpoint cannot downgrade a known cloud session to local mode. Creation, logout and Runtime execution are never replayed. Diagnostics contain only failure category, status, attempt count and elapsed time.
 
 This fixes the missing UI recovery path, not the unconfirmed original intermittent transport cause. Persistent outages may still discard unsent drafts; persisted history recovers through the original session path.
+
+### Same-identity and history recovery (2026-11-11)
+
+After a sustained account-service outage, a fresh server verification of the same principal and session revision resumes the previous entry state, preserving model preferences without full-page navigation or another environment preparation call. Identity or session-revision changes still clear account-scoped caches. Unsent drafts may still be lost during a sustained outage.
+
+Completed output is reconciled through existing history loading. Expired replay must not duplicate completed replies or restart their timers; active output and pending controls retain their existing resume path. See the [deployment recovery contract](../../deploy/web/README.md) for optional Web/TLS preflight, compensation and replacement limits. These are isolated candidate changes, not a production release or acceptance of every capability.
+
+Image export is explicitly disabled with an explanation in the current cloud-instance deployment. The page no longer queries unsupported export jobs automatically, and existing job records are retained. Local deployments retain image export. Server-side file access restrictions are unchanged.

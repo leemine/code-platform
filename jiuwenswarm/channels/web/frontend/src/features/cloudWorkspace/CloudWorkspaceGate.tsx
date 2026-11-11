@@ -14,13 +14,14 @@ import './cloudWorkspace.css';
 type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 'unavailable' | 'environmentError' | 'logoutFailed';
 
 /** UI composition only: the original environment service and Runtime retain ownership. */
-export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode) => ReactNode }) {
+export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode, options?: { shareExportDisabledReason: string }) => ReactNode }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('checking');
   const [identity, setIdentity] = useState<OrganizationStatus | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const epoch = useRef(0);
   const entering = useRef(false);
+  const recoveryPhase = useRef<Phase>('entry');
   const identityRef = useRef<OrganizationStatus | null>(null);
 
   const discard = useCallback((current?: OrganizationStatus) => {
@@ -42,18 +43,21 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       // A persisted ALLOCATED row is not application readiness. Always use the
       // existing ensure path and its readiness probe before mounting App/WS.
       const result = await cloudRequest('environment/ensure', {}, 150000);
+      if (environmentState(result) !== 'READY') throw new Error('Environment not ready');
       let current: OrganizationStatus;
       try {
         current = await readOrganizationStatus();
         if (!current.enabled) throw new Error('Account endpoint unavailable');
       } catch {
         // Account recovery is distinct from retrying a failed allocation.
-        if (generation === epoch.current) setPhase('unavailable');
+        if (generation === epoch.current) {
+          recoveryPhase.current = 'ready';
+          setPhase('unavailable');
+        }
         return;
       }
       if (generation !== epoch.current) return;
       if (!sameIdentity(identityRef.current, current)) { discard(current); return; }
-      if (environmentState(result) !== 'READY') throw new Error('Environment not ready');
       setPhase('ready');
     } catch {
       if (generation === epoch.current) setPhase('environmentError');
@@ -92,7 +96,8 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     let disposed = false;
     let checking = false;
     const check = async () => {
-      if (disposed || checking || document.visibilityState === 'hidden') return;
+      // ensure already performs a fresh identity check before exposing the App.
+      if (disposed || checking || phase === 'preparing' || document.visibilityState === 'hidden') return;
       checking = true;
       try {
         const current = await readOrganizationStatus();
@@ -100,6 +105,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
         if (!disposed && ((current.authenticated || identityRef.current?.authenticated) && !sameIdentity(identityRef.current, current))) discard(current);
       } catch {
         if (!disposed) {
+          recoveryPhase.current = phase;
           epoch.current += 1;
           void webClient.disconnect('account service unavailable');
           setPhase('unavailable');
@@ -128,7 +134,13 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       if (identityRef.current?.enabled && !current.enabled) throw new Error('Account endpoint unavailable');
       // Retain the previous verified principal across an outage until the fresh
       // probe decides whether the current route still belongs to that account.
-      if (current.enabled) discard(current);
+      if (sameIdentity(identityRef.current, current)) {
+        // An outage is not an account change. Remount through the original App
+        // connection/history path without clearing preferences or allocating again.
+        identityRef.current = current;
+        setIdentity(current);
+        setPhase(recoveryPhase.current);
+      } else if (current.enabled) discard(current);
       else window.location.reload();
     } catch {
       if (generation === epoch.current) setPhase('unavailable');
@@ -173,7 +185,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   </div>;
   if (phase === 'local') return children();
   if (phase === 'login') return <LoginPage registrationEnabled={identity?.registration_enabled === true} />;
-  if (phase === 'ready') return children(footer);
+  if (phase === 'ready') return children(footer, { shareExportDisabledReason: t('cloudWorkspace.shareExportUnavailable') });
   const retry = ['unavailable', 'environmentError', 'logoutFailed'].includes(phase);
   return <main className="cloud-workspace-page" data-testid="cloud-workspace-gate" data-phase={phase}>
     <section className="cloud-workspace-card">

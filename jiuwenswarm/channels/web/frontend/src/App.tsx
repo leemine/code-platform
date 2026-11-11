@@ -493,8 +493,10 @@ function AppContent({
   settingsPageDefinition,
   resolveSettingsRequest,
   sidebarFooter,
+  shareExportDisabledReason,
 }: {
   sidebarFooter?: React.ReactNode;
+  shareExportDisabledReason?: string;
   settingsPageDefinition: SettingsPageDefinition;
   resolveSettingsRequest: (openSourceRequest: SettingsRequest) => SettingsRequest;
 }) {
@@ -4392,7 +4394,7 @@ function AppContent({
       const pendingJobId = readPendingShareImageJobId(window.sessionStorage, targetSessionId);
       let status: ShareImageExportJobStatus | null;
       try {
-        status = await findShareImageJobForSession(targetSessionId, window.sessionStorage);
+        status = await findShareImageJobForSession(targetSessionId, window.sessionStorage, undefined, !shareExportDisabledReason);
       } catch (error) {
         console.error('Failed to query active share image export:', error);
         if (pendingJobId !== null) window.alert(tRef.current('share.exportFailed'));
@@ -4426,9 +4428,10 @@ function AppContent({
         }
       }
     })();
-  }, [monitorAndSaveShareImageJob, sessionId, setShareExportSessionActive]);
+  }, [monitorAndSaveShareImageJob, sessionId, setShareExportSessionActive, shareExportDisabledReason]);
 
   const handleExportShare = useCallback(async () => {
+    if (shareExportDisabledReason) return;
     const currentSessionId = sessionIdRef.current;
     if (window.jiuwenDesktop?.isElectron && typeof window.jiuwenDesktop.onShareImageExportProgress !== 'function') {
       window.alert(t('share.desktopRestartRequired'));
@@ -4511,6 +4514,7 @@ function AppContent({
     i18n.resolvedLanguage,
     isPaused,
     isProcessing,
+    shareExportDisabledReason,
     monitorAndSaveShareImageJob,
     setShareExportSessionActive,
     showSaveToast,
@@ -4718,7 +4722,8 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
                         isExportingShare={isExportingShare}
                         shareExportProgress={shareExportProgress[sessionId]}
                         isWaitingShareExportTab={waitingShareExportSessionIds.has(sessionId)}
-                        canExportShare={Boolean(sessionId && sessionId !== NEW_CONVERSATION_ID && (!isProcessing || isPaused))}
+                        shareExportDisabledReason={shareExportDisabledReason}
+                        canExportShare={Boolean(!shareExportDisabledReason && sessionId && sessionId !== NEW_CONVERSATION_ID && (!isProcessing || isPaused))}
                         sessionTitle={sessionTitle}
                         sessionProjectName={sessionProjectName}
                         sessionProject={sessionProject}
@@ -5156,8 +5161,10 @@ function App({
   settingsPageDefinition,
   resolveSettingsRequest,
   sidebarFooter,
+  shareExportDisabledReason,
 }: {
   sidebarFooter?: React.ReactNode;
+  shareExportDisabledReason?: string;
   settingsPageDefinition: SettingsPageDefinition;
   resolveSettingsRequest: (openSourceRequest: SettingsRequest) => SettingsRequest;
 }) {
@@ -5166,6 +5173,7 @@ function App({
       <DesktopTextEditContextMenu />
       <AppContent
         sidebarFooter={sidebarFooter}
+        shareExportDisabledReason={shareExportDisabledReason}
         settingsPageDefinition={settingsPageDefinition}
         resolveSettingsRequest={resolveSettingsRequest}
       />

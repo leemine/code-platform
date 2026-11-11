@@ -134,7 +134,9 @@ jobs:
         run: |
           npm run test:cloud-workspace
           npm run test:auth-store
+          npm run test:share-image
           npm run test:web-client-runtime-ack
+          node --test tests/webSocketStreamBoundary.test.mjs
           npm run test:subagent-history
           npm run test:context-usage
           npm run test:settle-historical-tool-executions

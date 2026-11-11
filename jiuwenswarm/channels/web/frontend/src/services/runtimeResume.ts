@@ -3,6 +3,8 @@ import type { WsEvent } from '../types/websocket';
 /** Transport cursors only; accepted inputs are never retried on reconnect. */
 export class RuntimeResume {
   private sessions = new Map<string, { instance: string; after: number; seen: Set<number>; historical: Set<string>;
+    snapshot?: { through: number; dispatches: Set<string> };
+    historyRequired?: boolean; historyRequestedThrough?: number;
     pending?: { through: number; ids: Set<string> } }>();
 
   observe(event: WsEvent): boolean {
@@ -28,7 +30,20 @@ export class RuntimeResume {
     this.sessions.set(sessionId, cursor);
     while (this.sessions.size > 256) this.sessions.delete(this.sessions.keys().next().value!);
     if (marker.replayed === true) {
-      if (typeof marker.dispatch_id === 'string' && cursor.historical.has(marker.dispatch_id)) return false;
+      // Finished dispatch records may expire before their journal frames. The
+      // durable history owns these older frames, including replay delivered
+      // before the reconnect metadata response. Do not reopen a completed turn.
+      if (typeof marker.dispatch_id === 'string' && (cursor.historical.has(marker.dispatch_id)
+        || (cursor.snapshot && marker.sequence <= cursor.snapshot.through
+          && !cursor.snapshot.dispatches.has(marker.dispatch_id)))) {
+        // A turn may have completed while disconnected. Reconcile durable
+        // history once per snapshot boundary instead of silently losing output.
+        if (cursor.snapshot && cursor.historyRequestedThrough !== cursor.snapshot.through) {
+          cursor.historyRequestedThrough = cursor.snapshot.through;
+          cursor.historyRequired = true;
+        }
+        return false;
+      }
       // Journal frames can outlive their dispatch records. Only the snapshot's
       // still-pending controls can become actionable again during replay.
       if (event.event === 'chat.ask_user_question' && cursor.pending && marker.sequence <= cursor.pending.through
@@ -56,6 +71,18 @@ export class RuntimeResume {
       }
     }
     if (Array.isArray(runtime.dispatches) && typeof runtime.cursor === 'number') {
+      // A fresh idle page loads durable history. Starting its later reconnect at
+      // zero needlessly replays the entire journal and can starve history RPCs.
+      // Waiting controls and observed/live executions still need their replay.
+      if (!cursor.snapshot && cursor.after === 0 && cursor.seen.size === 0 && runtime.is_processing === false
+        && !dispatches.some(dispatch => dispatch?.phase === 'waiting_for_control'
+          || (Array.isArray(dispatch?.pending_interactions) && dispatch.pending_interactions.length > 0))) {
+        cursor.after = runtime.cursor;
+      }
+      if (!cursor.snapshot || runtime.cursor >= cursor.snapshot.through) {
+        cursor.snapshot = { through: runtime.cursor, dispatches: new Set(dispatches
+          .filter(dispatch => typeof dispatch?.dispatch_id === 'string').map(dispatch => dispatch.dispatch_id)) };
+      }
       const ids = new Set<string>();
       for (const dispatch of dispatches) {
         for (const interaction of Array.isArray(dispatch?.pending_interactions) ? dispatch.pending_interactions : []) {
@@ -73,6 +100,13 @@ export class RuntimeResume {
       session_id,
       runtime_resume: { worker_instance: cursor.instance, after: cursor.after },
     }));
+  }
+
+  takeHistoryRequired(sessionId: unknown): boolean {
+    const cursor = typeof sessionId === 'string' ? this.sessions.get(sessionId) : undefined;
+    if (!cursor?.historyRequired) return false;
+    cursor.historyRequired = false;
+    return true;
   }
 
   clear(): void {

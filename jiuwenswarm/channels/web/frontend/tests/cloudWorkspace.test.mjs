@@ -52,13 +52,14 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); localStorage.clear(); sessionStorage.clear(); });
 after(() => { dom.window.close(); });
 async function mount() {
-  await act(async () => root.render(h(I18nextProvider, { i18n: i18next }, h(Gate, { children: footer => h('div', { 'data-testid': 'original-app' }, footer) }))));
+  await act(async () => root.render(h(I18nextProvider, { i18n: i18next }, h(Gate, { children: (footer, options) => h('div', { 'data-testid': 'original-app', 'data-export-disabled': options?.shareExportDisabledReason }, footer) }))));
   await tick();
 }
 
 test('explicitly absent legacy endpoint preserves original local App', async () => {
   route = async () => response({}, 404);
   await mount(); assert.ok(query('original-app')); assert.equal(calls.length, 1);
+  assert.equal(query('original-app').getAttribute('data-export-disabled'), null);
 });
 test('unauthenticated cloud shows login without mounting original App or creating an instance', async () => {
   route = async () => response({ enabled: true, authenticated: false, registration_enabled: false });
@@ -77,6 +78,7 @@ test('first allocation requires entry, uses no selectors, and mounts only after 
   assert.equal(calls.at(-1).options.body, '{}');
   await act(async () => finish(response({ state: 'READY' }))); await tick();
   assert.ok(query('original-app')); assert.equal(query('cloud-workspace-identity').textContent, 'AL');
+  assert.equal(query('original-app').getAttribute('data-export-disabled'), '当前云环境暂不支持导出长图');
   assert.equal(query('cloud-workspace-identity').getAttribute('aria-label'), 'alice');
   assert.equal(query('cloud-workspace-account').title, 'alice');
   assert.equal(query('auth-logout-button'), null);
@@ -237,3 +239,43 @@ for (const status of [503, 404]) {
     assert.equal(calls.filter(call => call.url.endsWith('/ensure')).length, 1);
   });
 }
+
+for (const stage of ['ready', 'after-ensure']) {
+  test(`same verified identity recovers ${stage} without clearing preferences or ensuring twice`, async () => {
+    let unavailable = false;
+    route = async path => {
+      if (path.endsWith('/status')) return unavailable ? response({}, 503) : response(identity);
+      if (path.endsWith('/ensure')) {
+        if (stage === 'after-ensure') unavailable = true;
+        return response({ state: 'READY' });
+      }
+      return response({ state: 'ALLOCATED' });
+    };
+    localStorage.setItem('jiuwenclaw_selected_model', 'same-user-model');
+    await mount();
+    if (stage === 'ready') {
+      assert.ok(query('original-app'));
+      unavailable = true;
+      await act(async () => window.dispatchEvent(new window.Event('focus')));
+    }
+    await waitFor(() => phase() === 'unavailable');
+    unavailable = false;
+    await click('cloud-workspace-retry');
+    assert.ok(query('original-app'));
+    assert.equal(localStorage.getItem('jiuwenclaw_selected_model'), 'same-user-model');
+    assert.equal(calls.filter(call => call.url.endsWith('/ensure')).length, 1);
+    assert.equal(disconnects, stage === 'ready' ? 1 : 0);
+  });
+}
+
+test('a different verified session still clears account caches after an outage', async () => {
+  route = async path => path.endsWith('/status') ? response(identity) : response({ state: path.endsWith('/ensure') ? 'READY' : 'ALLOCATED' });
+  await mount(); localStorage.setItem('jiuwenclaw_selected_model', 'old-user-model');
+  route = async () => response({}, 503);
+  await act(async () => window.dispatchEvent(new window.Event('focus')));
+  await waitFor(() => phase() === 'unavailable');
+  route = async () => response({ ...identity, session_revision: 'new-session' });
+  await click('cloud-workspace-retry');
+  assert.equal(query('original-app'), null);
+  assert.equal(localStorage.getItem('jiuwenclaw_selected_model'), null);
+});
