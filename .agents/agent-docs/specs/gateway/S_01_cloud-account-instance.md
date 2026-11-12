@@ -91,3 +91,10 @@ Web/TLS 失败恢复只属于可替换部署层 deploy/web/proxy_switch.py。停
 ### 首次待审批页面恢复
 
 WebClient仅在Worker完整执行快照确认全部未结束执行等待已有控制、且页面尚未观察运行事件时，可从快照游标订阅并恢复原pending_interactions。缺少快照、运行或排队执行仍走原增量重放；已观察输出不跳游标。较新事件推进后的旧快照不得重新激活控件；等待控制不因handler已返回或片段终态被当成执行完成。历史来自原持久历史接口，用户输入不得因恢复重发。
+
+
+## 可选部署运行安全装配
+
+私有Docker入口可选调用独立runtime_security模块，固定清单与操作员文件摘要、非特权、CapDrop=ALL、no-new-privileges及专属AppArmor／seccomp；只装配原请求，原物理回执附加策略摘要，不新增环境库或生命周期。完整契约由deploy/cloud-workspace/RUNTIME_SECURITY_CONTRACT.md维护。
+
+业务层权限映射不变；workspace-write仅限制写入，不提供同UID控制凭据读取保密性。新装配的启用须在可信服务与命令凭据边界验证后，不能以命名空间探针成功替代完整验收。当前候选未启用，旧部署无此防护，不宣称已完成沙箱修复。

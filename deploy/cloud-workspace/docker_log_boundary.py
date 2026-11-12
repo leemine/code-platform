@@ -183,6 +183,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if self.command != "POST":
                     raise ValueError("invalid create method")
                 decoded = json.loads(body)
+                security = getattr(self.server, "runtime_security", None)
+                if security is not None:
+                    decoded = security.rewrite(decoded)
                 print(json.dumps({"create_image": decoded.get("Image"), "create_user": decoded.get("User"),
                     "host_keys": sorted(decoded.get("HostConfig", {})),
                     "bind_count": len(decoded.get("HostConfig", {}).get("Binds", []))}), flush=True)
@@ -256,6 +259,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
                 # Persist intent before dispatch. Crash/timeout never implies no effect.
                 receipt["state"] = "SENT"
+                security = getattr(self.server, "runtime_security", None)
+                if security is not None:
+                    receipt["runtime_security_sha256"] = security.digest
                 resources.write(path, receipt)
                 upstream.settimeout(self.server.upstream_timeout)
                 upstream.sendall(head.encode() + body)
@@ -441,6 +447,8 @@ def main():
     parser.add_argument("--reconcile-listen")
     parser.add_argument("--reconcile-frontend")
     parser.add_argument("--reconcile-gid", type=int)
+    parser.add_argument("--runtime-security-manifest", type=Path)
+    parser.add_argument("--runtime-security-sha256")
     args = parser.parse_args()
     physical_args = [args.physical_journal_root, args.identity_root, args.identity_target,
                      args.reconcile_listen, args.reconcile_frontend, args.reconcile_gid]
@@ -448,11 +456,20 @@ def main():
         parser.error("physical confirmation requires all six explicit deployment parameters")
     if args.reconcile_gid is not None and args.reconcile_gid <= 0:
         parser.error("confirmation group must be non-root")
+    if (args.runtime_security_manifest is None) != (args.runtime_security_sha256 is None):
+        parser.error("runtime security requires both manifest and pinned SHA256")
+    if args.runtime_security_manifest is not None and args.physical_journal_root is None:
+        parser.error("runtime security requires existing physical dispatch confirmation")
     try:
         boundary = LogBoundary(workspace_root=args.workspace_root, workspace_name_pattern=args.workspace_name_pattern,
                                log_root=args.private_log_root, shared_log_dirs=args.shared_log_dir,
                                images=args.image, user=args.user, uid=args.uid)
-    except ValueError as error:
+        security = None
+        if args.runtime_security_manifest is not None:
+            from runtime_security import RuntimeSecurity
+            security = RuntimeSecurity(args.runtime_security_manifest, args.runtime_security_sha256,
+                images=boundary.images, user=boundary.user, workspace_root=boundary.workspace_root)
+    except (ValueError, TypeError, OSError) as error:
         parser.error(str(error))
     listen = Path(args.listen)
     upstream = Path(args.upstream)
@@ -491,6 +508,7 @@ def main():
                 identity = socket_identity(listen)
                 server.upstream, server.boundary = str(upstream), boundary
                 server.resources = resources
+                server.runtime_security = security
                 try:
                     server.serve_forever()
                 finally:

@@ -1,0 +1,7 @@
+# Initial permission fragment for a NEW isolated workspace config/config.yaml.
+# Merge via the existing configuration path before the first model request.
+# Do not replace an existing config or reset an explicitly selected profile.
+# This is not a complete model configuration or a credential isolation policy.
+permissions:
+  enabled: true
+  mode: manual
