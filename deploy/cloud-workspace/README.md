@@ -16,6 +16,14 @@
 
 ## 运行边界
 
+新建隔离工作区在首次模型调用前，必须通过原配置装配路径合入
+[显式 Default 权限片段](runtime-permissions.yaml.example)：`permissions.enabled: true`、
+`permissions.mode: manual`。该文件不是完整配置，不自动加载，也不覆盖既有工作区或用户已选择的权限。
+缺省字段不能当作 Default：当前配置面板对缺失 enabled 返回 false。
+就绪验收同时核对原 `config.get`、UI 权限选择和实际 Provider 有效权限；Codex 应为
+workspace-write/on-request。用户可通过原 UI 显式切换，单次审批不得写成持久权限提升。
+此要求属于部署装配，不修改 Gateway、Runtime 或 Provider 的全局缺省行为。
+
 - 账号：`--account-auth-file` 指向独立 0600 配置；非回环监听必须提供 TLS。仅该角色挂载账号数据库。
 - Gateway：原入口加 `CODE_PLATFORM_CLOUD_CONFIG`；原 AgentOS Router 与插件的 endpoint/URN/namespace 必须一致。只挂载所需账号服务地址/CA、环境控制状态和受管工作区，不挂账号密码库或 TLS 服务端私钥。
 - AgentServer：平台只声明本账号 `/data` 和本代只读 `/run/jiuwenswarm`；实际元戎还会注入 `/home/agentos` 工作区别名及共享运行时日志目录，完整挂载隔离需另行验收；镜像内 `agentos` 用户固定 UID/GID 1000:1000，配置传入用户名而非 `UID:GID`（元戎会拼接 `/home/<user>`）；Gateway 核验用户名对应当前 UID/GID，云角色缺少凭据拒绝授权。保持原 Runtime/协议。
@@ -60,3 +68,7 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 物理对账是独立于日志私有化的可选部署能力。新专属底座启用方法及六参数契约见[LOG_BOUNDARY_CONTRACT](LOG_BOUNDARY_CONTRACT.md)；[systemd附加模板](systemd/physical-confirmation.conf.example)仅为人工审阅模板，未安装现网。确认目录必须预建，Gateway只读挂载该目录；完整Docker端点及派发回执均不挂入Gateway或Agent。关闭服务会阻止未决删除后的重建，不应回退绕过确认。
 
 当前已验证候选的配置核对、逐状态恢复与交付边界集中见[CANDIDATE_HANDOFF](CANDIDATE_HANDOFF.md)；旧阶段缺口保留历史记录，不继续作为本轮收尾的新增开发任务。
+
+## Codex运行安全装配候选（2026-11-11）
+
+新增可选独立安全装配及无模型探针，见[配置、验收与退出契约](RUNTIME_SECURITY_CONTRACT.md)／[English](RUNTIME_SECURITY_CONTRACT.en.md)。原日志／物理确认入口仅补调用，不新增创建回收链，SDK及产品默认权限不变。当前真实探针显示命名空间可用、写边界生效，但同UID工作区外合成控制文件仍可读，因此不能启用于真实账号；未修改现有systemd或113运行配置。
