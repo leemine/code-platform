@@ -9,6 +9,7 @@ import {
 } from '../../services/organizationCredentialEvents';
 import { LoginPage } from '../auth/LoginPage';
 import { cloudRequest, environmentState } from './client';
+import { LocalCloudAccount } from './LocalCloudAccount';
 import './cloudWorkspace.css';
 
 type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 'unavailable' | 'environmentError' | 'logoutFailed';
@@ -183,7 +184,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       </DropdownMenuContent>
     </DropdownMenu>
   </div>;
-  if (phase === 'local') return children();
+  if (phase === 'local') return children(<LocalCloudAccount />);
   if (phase === 'login') return <LoginPage registrationEnabled={identity?.registration_enabled === true} />;
   if (phase === 'ready') return children(footer, { shareExportDisabledReason: t('cloudWorkspace.shareExportUnavailable') });
   const retry = ['unavailable', 'environmentError', 'logoutFailed'].includes(phase);

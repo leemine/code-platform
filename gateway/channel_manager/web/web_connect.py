@@ -1666,7 +1666,10 @@ class WebChannel(BaseWsChannel):
         setattr(ws, "_jiuwen_auth_session", _resolve_ws_auth_session(ws))
 
         # 上报连接事件
-        self.report_connect(ws)
+        # Authenticated RPC-only connections do not own an execution lifecycle.
+        rpc_only = bool(getattr(ws, "auth_rpc_only_prefix", ""))
+        if not rpc_only:
+            self.report_connect(ws)
 
         # 触发连接钩子（如发送 connection.ack）
         for hook in self._connect_hooks:
@@ -1736,7 +1739,8 @@ class WebChannel(BaseWsChannel):
             await self.unregister_ws(ws)
 
             # 上报断连事件
-            self.report_disconnect(ws)
+            if not rpc_only:
+                self.report_disconnect(ws)
 
             logger.info(
                 "WebChannel 连接清理完成: %s",
@@ -1901,6 +1905,11 @@ class WebChannel(BaseWsChannel):
             return
         if not isinstance(params, dict):
             params = {}
+
+        rpc_prefix = getattr(ws, "auth_rpc_only_prefix", "")
+        if rpc_prefix and not method.startswith(rpc_prefix):
+            await self.send_response(ws, req_id, ok=False, error="connection scope denied", code="FORBIDDEN")
+            return
 
         # Issue #4876: non-string params.mode / params.agent_id (list / dict / ...)
         # used to flow into AgentRef -> RoutingKey and blow up on hash() inside

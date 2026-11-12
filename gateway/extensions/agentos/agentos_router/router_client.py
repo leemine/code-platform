@@ -1917,21 +1917,39 @@ class AgentOSRouterClient(AgentServerClient):
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    async def send_existing_request(self, envelope, *, expected_instance_id, timeout=None):
+        """Use the original transport without creating or reclaiming an instance."""
+        if not expected_instance_id:
+            return self._routing_error_response(envelope, "existing instance required")
+        return await self.send_request(envelope, timeout=timeout, existing_instance_id=expected_instance_id)
+
     async def send_request(
         self,
         envelope: E2AEnvelope,
         *,
         timeout: float | None = None,
+        existing_instance_id: str | None = None,
     ) -> AgentResponse:
         # 3rdagent.list / 3rdagent.switch are handled by Gateway ThirdAgent
         # (TUI local_handler), not via E2A send_request.
-        if self._is_ssh_relay_request(envelope):
+        if existing_instance_id is None and self._is_ssh_relay_request(envelope):
             return await self._handle_ssh_relay(envelope)
-        await self._inject_external_cli_agents(envelope)
+        if existing_instance_id is None:
+            await self._inject_external_cli_agents(envelope)
 
         # chat.interrupt（含断连延迟 cancel）不得冷启动沙箱：没有就绪的
         # builtin 实例时直接视为成功 no-op，避免与断连清理竞态重建出孤儿沙箱。
-        if self._is_cancel_method(envelope):
+        if existing_instance_id is not None:
+            runtime = await self._agent_manager.get_agent(
+                self._extract_user_id(envelope), self._extract_agent_type(envelope),
+                key_values={"session_id": envelope.session_id}, acquire=True,
+            )
+            if runtime is None or not runtime.is_ready():
+                return self._routing_error_response(envelope, "existing instance unavailable")
+            if runtime.info.sandbox_id != existing_instance_id:
+                await self._agent_manager.release(runtime.key)
+                return self._routing_error_response(envelope, "existing instance changed")
+        elif self._is_cancel_method(envelope):
             runtime = await self._agent_manager.get_agent(
                 self._extract_user_id(envelope),
                 self._extract_agent_type(envelope),
@@ -1974,7 +1992,8 @@ class AgentOSRouterClient(AgentServerClient):
                 self._log_route(
                     "route.error", envelope, runtime, level=logging.WARNING, error=error
                 )
-                await self._cleanup_agent_on_instance_unavailable(runtime, exc=exc)
+                if existing_instance_id is None:
+                    await self._cleanup_agent_on_instance_unavailable(runtime, exc=exc)
                 return self._routing_error_response(envelope, error)
             except Exception as exc:
                 if not _is_agent_network_error(exc):
@@ -1983,9 +2002,10 @@ class AgentOSRouterClient(AgentServerClient):
                 self._log_route(
                     "route.error", envelope, runtime, level=logging.WARNING, error=error
                 )
-                await self._cleanup_agent_on_network_failure(
-                    runtime, reason=type(exc).__name__
-                )
+                if existing_instance_id is None:
+                    await self._cleanup_agent_on_network_failure(
+                        runtime, reason=type(exc).__name__
+                    )
                 return self._routing_error_response(envelope, error)
             self._log_route("route.unary", envelope, runtime)
             try:
@@ -2000,9 +2020,10 @@ class AgentOSRouterClient(AgentServerClient):
                 self._log_route(
                     "route.error", envelope, runtime, level=logging.WARNING, error=error
                 )
-                await self._cleanup_agent_on_network_failure(
-                    runtime, reason=type(exc).__name__
-                )
+                if existing_instance_id is None:
+                    await self._cleanup_agent_on_network_failure(
+                        runtime, reason=type(exc).__name__
+                    )
                 return self._routing_error_response(envelope, error)
         finally:
             await self._agent_manager.release(runtime.key)

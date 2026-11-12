@@ -1,0 +1,7 @@
+.local-cloud-account-dialog { width: min(420px, calc(100vw - 32px)); color: var(--color-text-primary); }
+.local-cloud-account-dialog section, .local-cloud-account-dialog form, .local-cloud-account-dialog label { display: flex; flex-direction: column; gap: 12px; }
+.local-cloud-account-dialog h2 { font-size: 18px; margin: 0; }
+.local-cloud-account-dialog p { color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.local-cloud-account-dialog input { width: 100%; padding: 8px; border: 1px solid var(--color-border-default); border-radius: 6px; color: var(--color-text-primary); background: var(--color-surface-elevated); }
+
+.local-cloud-account-dialog section { padding: 20px; }

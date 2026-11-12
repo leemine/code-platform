@@ -32,7 +32,7 @@ jobs:
         run: |
           extras=(--extra codex-direct --extra claude-direct)
           if [ "$PROFILE" = native ]; then extras+=(--extra native --extra codex); fi
-          uv sync --locked --no-default-groups --group test --no-editable --python 3.13 "${extras[@]}"
+          uv sync --locked --no-default-groups --group test --no-editable --reinstall-package workswarm --python 3.13 "${extras[@]}"
       - name: Verify installed sources
         env:
           PROFILE: ${{ matrix.profile }}
@@ -60,6 +60,12 @@ jobs:
           print('Locked protocol:', protocol['rev'], origin)
           dist = metadata.distribution('workswarm')
           assert not json.loads(dist.read_text('direct_url.json')).get('dir_info', {}).get('editable', False)
+          tracked = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], text=True).splitlines()
+          packaged = {str(file) for file in dist.files}
+          candidate_files = [name for name in tracked if name in packaged and name.startswith(('gateway/', 'jiuwenswarm/')) and name.endswith('.py')]
+          for name in candidate_files:
+              assert Path(dist.locate_file(name)).read_bytes() == Path(name).read_bytes(), name
+          print('Installed candidate Python files match:', len(candidate_files))
           if os.environ['PROFILE'] == 'native':
               package = next(p for p in lock['package'] if p['name'] == 'openjiuwen')
               assert package['source']['git'].endswith('#' + source['rev'])
@@ -95,6 +101,8 @@ jobs:
                   tests/unit_tests/test_session_history_empty_filter.py
                   tests/unit_tests/test_session_history_jsonl_read.py
                   tests/unit_tests/test_session_history_cursor.py
+                  tests/unit_tests/data_sync
+                  tests/unit_tests/test_project_store.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
             suites+=(tests/unit_tests/agentserver/test_session_token_usage.py
@@ -115,6 +123,7 @@ jobs:
                      tests/unit_tests/channel/test_web_channel_dual_protocol.py)
           else
             suites+=(tests/unit_tests/agentserver/test_command_workflows_handler.py::test_external_only_workflow_query_uses_same_empty_snapshot_without_native)
+            suites+=(tests/unit_tests/cloud_workspace/test_data_sync_cloud_role.py)
           fi
           .venv/bin/python -P -m pytest "${suites[@]}" --import-mode=importlib -o pythonpath= -q --no-cov --tb=short -rs
 
@@ -138,6 +147,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Test original history and approval UI
         run: |
+          npm run test:local-cloud-account
           npm run test:code-workspace
           npm run test:work-mode-storage
           npm run test:cloud-workspace

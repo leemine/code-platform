@@ -5623,5 +5623,17 @@
     "projectRootRequired": "此目录属于已有项目，请选择该项目根目录。",
     "unavailable": "工作区暂不可用，请检查连接并重试。",
     "unknown": "操作结果尚未确认，请刷新核对后再操作。"
-}
+},
+  "localCloudAccount": {
+    "title": "云账号",
+    "login": "登录云账号",
+    "username": "账号",
+    "password": "密码",
+    "destination": "云端地址：{{origin}}",
+    "signedIn": "已登录",
+    "logout": "退出云账号",
+    "retry": "重试",
+    "unavailable": "暂时无法连接云账号服务，请重试。",
+    "loginRequired": "登录已失效或账号信息不正确，请重新登录。"
+  }
 }
