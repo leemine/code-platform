@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 53 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 55 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -26,20 +26,20 @@ generated: true
 | [deploy/web](#module-9) | 1 |
 | [desktop](#module-10) | 2 |
 | [docs](#module-11) | 1 |
-| [gateway](#module-12) | 3 |
+| [gateway](#module-12) | 5 |
 | [gateway/channel_manager/im_platforms/xiaoyi](#module-13) | 1 |
 | [gateway/common](#module-14) | 3 |
 | [gateway/message_handler](#module-15) | 1 |
 | [gateway/routing](#module-16) | 1 |
 | [jiuwenswarm](#module-17) | 3 |
-| [jiuwenswarm/channels/web](#module-18) | 2 |
+| [jiuwenswarm/channels/web](#module-18) | 4 |
 | [jiuwenswarm/channels/web/frontend](#module-19) | 5 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-20) | 1 |
 | [jiuwenswarm/common](#module-21) | 5 |
 | [jiuwenswarm/common/config_panel](#module-22) | 1 |
 | [jiuwenswarm/gateway/channel_manager/web](#module-23) | 1 |
 | [jiuwenswarm/observability](#module-24) | 1 |
-| [jiuwenswarm/server](#module-25) | 2 |
+| [jiuwenswarm/server](#module-25) | 4 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-26) | 11 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-27) | 7 |
 | [jiuwenswarm/server/runtime/gateway_adapter](#module-28) | 1 |
@@ -157,8 +157,10 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
+| [F-20261112-1320-platform-code-workspace](features/F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [F_20261030_1939_external-desktop-builds](features/F_20261030_1939_external-desktop-builds.md) | F | 可选 Native 与外部 Provider 桌面测试包 | leemine | agent_adapter, desktop, gateway | pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml, .github/scripts/transfer-release-assets.py, .github/workflows/stable.yml, tests/unit_tests/test_release_asset_transfer.py | 无独立 D：用户确认两种安装组合和先 Linux 后 Windows/macOS 的实施范围；管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 第24节及 EXTERNAL_DESKTOP_BUILD_20261030 记录来源与验证。 |
 | [F_20261109_2205_cloud-original-instance-chain](features/F_20261109_2205_cloud-original-instance-chain.md) | F | 云账号提炼与原实例链收敛 | leemine | gateway, server/front, deploy/cloud-workspace, channels/web | deploy/cloud-workspace/runtime_security.py, deploy/cloud-workspace/codex_sandbox_probe.py, tests/unit_tests/cloud_workspace/test_runtime_security.py, tests/unit_tests/cloud_workspace/test_codex_sandbox_probe.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, deploy/cloud-workspace/CANDIDATE_HANDOFF.md, deploy/cloud-workspace/physical_resources.py, gateway/services/resource_reconciler.py, tests/unit_tests/cloud_workspace/test_physical_resources.py, deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_docker_log_boundary.py, gateway/extensions/cloud_workspace/config.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py, gateway/channel_manager/web/web_channel_app.py, gateway/channel_manager/web/web_connect.py, gateway/extensions/application_host.py, deploy/cloud-workspace/Dockerfile, deploy/cloud-workspace/Dockerfile.yuanrong, gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_workspace_assembly.py, gateway/auth/account_http.py, gateway/auth/account_authenticator.py, gateway/auth/request_scope.py, gateway/extensions/agentos/agentos_router/router_client.py, tests/unit_tests/cloud_workspace/test_integration_boundaries.py, tests/unit_tests/server/test_gateway_adapter.py | 无独立 D：依据管理仓 PLATFORM_CANDIDATE_DISPOSITION_20261109（M01-M12/C01-C22）及用户本会话授权；无独立D编号。 |
+| [S-02-code-workspace-entry](specs/gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
 | [S_01_cloud-account-instance](specs/gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py | — |
 
 <a id="module-13"></a>
@@ -211,8 +213,10 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
+| [F-20261112-1320-platform-code-workspace](features/F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [B_20261031_1418_session-recovery-lifecycle](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
 | [B_20261111_0300_account-probe-recovery](bugfix/web/B_20261111_0300_account-probe-recovery.md) | B | 账号探测短暂故障容错与串行自动恢复 | leemine | jiuwenswarm/channels/web, deploy/web | jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, deploy/web/proxy_switch.py | 无独立 D：补回 codeswarm 既有恢复行为，不新增账号或执行链。 |
+| [S-02-code-workspace-entry](specs/gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
 
 <a id="module-19"></a>
 
@@ -276,8 +280,10 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
+| [F-20261112-1320-platform-code-workspace](features/F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [F_20261031_1714_claude-main-agent-and-model-settings](features/F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
 | [B_20261031_1418_session-recovery-lifecycle](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
+| [S-02-code-workspace-entry](specs/gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
 
 <a id="module-26"></a>
 

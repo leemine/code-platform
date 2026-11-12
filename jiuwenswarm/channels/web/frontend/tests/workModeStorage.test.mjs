@@ -97,3 +97,14 @@ test('ignores storage access and write failures', () => {
   });
   assert.doesNotThrow(() => persistWorkMode('code'));
 });
+
+
+test('workspace entry navigation opens Code and consumes only the view hint', () => {
+  const writes = [], history = [];
+  setWindow({ location: {pathname: '/', search: '', hash: '#code-workspace'}, history: {replaceState: (...args) => history.push(args)}, localStorage: {getItem: () => 'work', setItem: (...args) => writes.push(args)} });
+  assert.equal(readStoredWorkMode(), 'code');
+  assert.deepEqual(writes, [['jiuwenswarm_work_mode', 'code']]);
+  assert.deepEqual(history, [[null, '', '/']]);
+  setWindow({ location: {pathname: '/chat/existing', hash: '#code-workspace'}, localStorage: {getItem: () => 'work'} });
+  assert.equal(readStoredWorkMode(), 'work');
+});

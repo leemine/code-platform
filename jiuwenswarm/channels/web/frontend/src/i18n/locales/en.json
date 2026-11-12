@@ -5597,5 +5597,34 @@
     "logoutFailed": "Logout was not confirmed. The current connection has been closed. Please retry.",
     "retry": "Retry",
     "logout": "Sign out"
-  }
+  },
+  "codeWorkspace": {
+    "draftPending": "Send or clear the draft first",
+    "local": "Local",
+    "cloud": "Cloud",
+    "loading": "Checking location…",
+    "notConnected": "Not connected",
+    "localDirectory": "Local directory",
+    "localUnavailable": "No local directory connection. Use the desktop app or open the local entry.",
+    "defaultEnvironment": "Default cloud environment",
+    "chooseDirectory": "Choose cloud directory",
+    "newFolder": "New cloud folder",
+    "createEnvironment": "Create cloud environment",
+    "environmentDescription": "Use the environment bound to this account. Existing environments are checked for readiness without allocating another instance.",
+    "folderName": "Folder name (created in the current directory above)",
+    "preparing": "Working, please wait…",
+    "create": "Create / prepare",
+    "open": "Open",
+    "cancel": "Cancel",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "up": "Parent directory",
+    "enter": "Enter selected directory",
+    "more": "Load more",
+    "empty": "No subfolders",
+    "exists": "Folder or project already exists. Refresh to check.",
+    "projectRootRequired": "This directory belongs to an existing project. Select its root directory.",
+    "unavailable": "Workspace unavailable. Check the connection and retry.",
+    "unknown": "The operation outcome is not confirmed. Refresh to reconcile before retrying."
+}
 }

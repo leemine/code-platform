@@ -5,6 +5,12 @@ const DEFAULT_WORK_MODE: WorkMode = 'work';
 
 export function readStoredWorkMode(): WorkMode {
   if (typeof window === 'undefined') return DEFAULT_WORK_MODE;
+  // The entry-switch hint carries view intent only, never routing identity.
+  if (window.location?.pathname === '/' && window.location.hash === '#code-workspace') {
+    try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* Embedded browser may restrict history. */ }
+    persistWorkMode('code');
+    return 'code';
+  }
   try {
     const stored = window.localStorage.getItem(WORK_MODE_STORAGE_KEY);
     return stored === 'code' || stored === 'design' ? stored : DEFAULT_WORK_MODE;
