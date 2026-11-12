@@ -58,8 +58,16 @@ async function mount() {
 
 test('explicitly absent legacy endpoint preserves original local App', async () => {
   route = async () => response({}, 404);
-  await mount(); assert.ok(query('original-app')); assert.equal(calls.length, 1);
+  await mount(); assert.ok(query('original-app'));
+  assert.deepEqual(calls.map(row => row.url), ['/api/v1/auth/organization/status', '/api/v1/data-sync/status']);
+  assert.equal(query('cloud-workspace-local-account-trigger'), null);
   assert.equal(query('original-app').getAttribute('data-export-disabled'), null);
+});
+test('local cloud account footer does not change the local execution gate', async () => {
+  route = async path => path.includes('/data-sync/')
+    ? response({ enabled: true, authenticated: false, kind: 'local' }) : response({}, 404);
+  await mount(); assert.ok(query('original-app')); assert.ok(query('cloud-workspace-local-account-trigger'));
+  assert.equal(calls.some(row => row.url.includes('/environment')), false);
 });
 test('unauthenticated cloud shows login without mounting original App or creating an instance', async () => {
   route = async () => response({ enabled: true, authenticated: false, registration_enabled: false });

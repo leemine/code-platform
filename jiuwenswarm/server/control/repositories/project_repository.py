@@ -8,6 +8,7 @@ Create, rename, pin, and all git operations stay on the execution plane.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from jiuwenswarm.common.schema.agent import AgentRequest, AgentResponse
@@ -55,6 +56,11 @@ async def handle_project_request(request: AgentRequest) -> AgentResponse:
     params = request.params if isinstance(request.params, dict) else {}
     try:
         if request.req_method == ReqMethod.PROJECT_LIST:
+            if "sync_export" in params:
+                from jiuwenswarm.data_sync.cloud_export import export_inventory
+
+                result = await asyncio.to_thread(export_inventory, params, request.user_id)
+                return _from_triple(request, result)
             return _from_triple(request, load_project_list(params))
         if request.req_method == ReqMethod.PROJECT_INFO:
             return _from_triple(request, load_project_info(params))

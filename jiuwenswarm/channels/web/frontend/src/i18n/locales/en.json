@@ -5626,5 +5626,17 @@
     "projectRootRequired": "This directory belongs to an existing project. Select its root directory.",
     "unavailable": "Workspace unavailable. Check the connection and retry.",
     "unknown": "The operation outcome is not confirmed. Refresh to reconcile before retrying."
-}
+},
+  "localCloudAccount": {
+    "title": "Cloud account",
+    "login": "Sign in to cloud",
+    "username": "Username",
+    "password": "Password",
+    "destination": "Cloud address: {{origin}}",
+    "signedIn": "Signed in",
+    "logout": "Sign out of cloud",
+    "retry": "Retry",
+    "unavailable": "The cloud account service is unavailable. Please retry.",
+    "loginRequired": "The session expired or the account details were rejected. Please sign in again."
+  }
 }

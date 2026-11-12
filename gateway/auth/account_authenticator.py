@@ -53,10 +53,13 @@ class AccountAuthenticator(CredentialAuthenticator):
             value = await asyncio.to_thread(self.accounts.session, token)
             principal = AccountPrincipal(self.accounts, token, value["user_id"], value["authority"])
             _current.set(principal)
+            connection_scope = next((v for k, v in context.headers.items()
+                                     if k.lower() == "x-jiuwen-connection-scope"), "")
             return AuthResult(success=True, user_id=principal.user_id, extensions={
                 "authority": principal.authority, "routing_user_id": principal.user_id,
                 "request_guard": principal.activate,
                 "delivery_guard": principal.check,
+                "rpc_only_prefix": "data_sync." if context.channel_type == "web" and connection_scope == "data-sync" else "",
             })
         except (PermissionError, RuntimeError, ValueError, OSError) as exc:
             from gateway.auth.remote_accounts import AccountAuthorityUnavailable

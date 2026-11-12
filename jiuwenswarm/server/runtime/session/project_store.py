@@ -18,6 +18,7 @@ import logging
 import os
 import secrets
 import sys
+import stat
 import threading
 import time
 from contextlib import contextmanager
@@ -489,6 +490,42 @@ def list_projects(
             continue
         result.append(Project.from_dict(p))
     return result
+
+
+def snapshot_projects_for_export() -> list[Project]:
+    """Read one complete durable inventory; never turn read errors into deletion.
+
+    The ordinary UI's tolerant reader and lazy migration remain unchanged.
+    Export only supports hosts with no-follow file opens until equivalent
+    platform IO is provided. A missing registry is not a complete empty source.
+    """
+    path = _projects_file()
+    if not hasattr(os, "O_NOFOLLOW") or path.parent.resolve() != path.parent.absolute():
+        raise OSError("secure project inventory export unavailable")
+    with file_lock(path):
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError("project registry is not a regular file")
+            raw_bytes = stream.read(16 * 1024 * 1024 + 1)
+        if len(raw_bytes) > 16 * 1024 * 1024:
+            raise ValueError("project registry exceeds export budget")
+        raw = json.loads(raw_bytes)
+        if (not isinstance(raw, dict) or raw.get("version", _VERSION) != _VERSION
+                or not isinstance(raw.get("projects"), list)):
+            raise ValueError("invalid project registry")
+        rows = raw["projects"]
+        if any(not isinstance(row, dict) or not isinstance(row.get("project_id"), str)
+               or not row["project_id"] for row in rows):
+            raise ValueError("incomplete project registry")
+        if len({row["project_id"] for row in rows}) != len(rows):
+            raise ValueError("duplicate project identity")
+        if any(type(row.get("hidden", False)) is not bool
+               or (row.get("work_mode") not in (None, "")
+                   and (not isinstance(row["work_mode"], str)
+                        or row["work_mode"].strip().lower() not in SUPPORTED_WORK_MODES)) for row in rows):
+            raise ValueError("invalid project visibility or mode")
+        return [Project.from_dict(row) for row in rows if not row.get("hidden", False)]
 
 
 def resolve_cron_project_id(

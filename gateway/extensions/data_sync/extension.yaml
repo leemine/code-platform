@@ -1,0 +1,6 @@
+id: data_sync
+name: Project Directory Sync
+version: 0.1.0
+package_type: application
+description: Account-scoped project projections, snapshots and durable receipts
+permissions: []

@@ -1348,6 +1348,9 @@ class ProjectAdapter(GatewayAdapter):
                 result_mode="dual_replace", probe=probe,
             )
         if method == ReqMethod.PROJECT_LIST:
+            if "sync_export" in params:
+                from jiuwenswarm.data_sync.cloud_export import export_inventory
+                return await _run_threaded(request, "project.sync_export", export_inventory, params, request.user_id)
             return await _run_threaded(request, "project.list", _load_project_list, params)
         if method == ReqMethod.PROJECT_RENAME:
             return await _run_threaded(request, "project.rename", _rename_project, params)

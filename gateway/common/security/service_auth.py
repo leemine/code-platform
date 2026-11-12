@@ -45,6 +45,13 @@ class ServiceAuthenticator:
         self._seen: dict[str, float] = {}
         self._config()
 
+    def public_binding(self):
+        """Return transport binding evidence without exposing its signing key."""
+        cfg = self._config()
+        return {"environment_id": cfg["instance_id"], "epoch": cfg["epoch"],
+                "owner": dict(cfg["login_owner"]),
+                "workspace_digest": hashlib.sha256(canonical(cfg["workspace"])).hexdigest()}
+
     def _config(self):
         if self.path.is_symlink():
             raise PermissionError("invalid instance credential")

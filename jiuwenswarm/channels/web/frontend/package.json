@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:local-cloud-account": "node --test tests/localCloudAccount.test.mjs",
     "test:code-workspace": "node --test tests/codeWorkspaceControls.test.mjs",
     "test:cloud-workspace": "node --test tests/cloudWorkspace.test.mjs",
     "test:execution-provider": "node --test tests/executionProviderSelection.test.mjs",

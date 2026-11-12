@@ -182,6 +182,19 @@ class EnvironmentStore:
         value["name"] = value["environment_id"] + "-" + value["operation_id"]
         return value
 
+    @contextmanager
+    def guard_binding(self, principal, expected):
+        """Keep a checked binding stable during a short, synchronous publication."""
+        if principal["authority"] != self.authority:
+            raise PermissionError("account authority differs")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM environment_bindings WHERE account_id=?", (principal["user_id"],)).fetchone()
+            keys = ("environment_id", "epoch", "operation_id", "instance_id", "workspace", "state", "auth_override")
+            if row is None or row["state"] != "ALLOCATED" or any(row[key] != expected[key] for key in keys):
+                raise EnvironmentUnavailable("environment binding changed during request")
+            yield
+
     def rows(self):
         with self.connect() as db:
             users = [r[0] for r in db.execute("SELECT account_id FROM environment_bindings")]
