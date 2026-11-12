@@ -5437,6 +5437,38 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
 
     channel.register_method("path.get", _path_get)
     channel.register_method("path.set", _path_set)
+    async def _workspace_locations(ws, req_id, params, session_id, user_id=None):
+        from gateway.routing.workspace_locations import catalog
+        try:
+            if params:
+                raise ValueError("location catalog takes no selectors")
+            payload = catalog(_resolve(agent_client))
+            await channel.send_response(ws, req_id, ok=True, payload=payload)
+        except ValueError as exc:
+            await channel.send_response(ws, req_id, ok=False, code="UNSUPPORTED", error=str(exc))
+
+    channel.register_method("workspace.locations", _workspace_locations)
+
+    def _register_workspace_directory(operation):
+        from gateway.routing.e2a_proxy import proxy_unary_request
+        from jiuwenswarm.common.schema.message import ReqMethod
+        async def handler(ws, req_id, params, session_id, user_id=None):
+            # WebChannel supplies a transport correlation ID even without a
+            # session selector. Only explicit params may bind a business session.
+            if not isinstance(params, dict) or set(params) - {"path", "name", "offset", "work_mode"} or params.get("work_mode", "code") != "code":
+                await channel.send_response(ws, req_id, ok=False, code="BAD_REQUEST", error="draft directory operation required")
+                return
+            await proxy_unary_request(
+                channel=channel, agent_client=_resolve(agent_client), ws=ws, req_id=req_id,
+                params={**params, "workspace_operation": operation, "work_mode": "code"},
+                session_id=None, user_id=user_id, req_method=ReqMethod.PATH_SELECT_DIRECTORY,
+                label="project.workspace." + operation, preserve_error_payload=True,
+            )
+        channel.register_method("project.workspace." + operation, handler)
+
+    for workspace_operation in ("list", "mkdir", "open"):
+        _register_workspace_directory(workspace_operation)
+
     channel.register_method("path.select_directory", _path_select_directory)
     channel.register_method("path.select_files", _path_select_files)
     channel.register_method("path.select_file", _path_select_file)

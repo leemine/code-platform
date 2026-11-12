@@ -1,3 +1,4 @@
+import { CodeWorkspaceControls } from './CodeWorkspaceControls';
 import {
   useState,
   useRef,
@@ -939,7 +940,9 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   // prompt is a one-shot compose: no abort, and no second prompt while it runs.
   const isDesignLanding = workMode === 'design' && activeSessionId === NEW_CONVERSATION_ID;
   const designLandingSubmitting = isDesignLanding && isProcessing;
+  const [workspaceBlocked, setWorkspaceBlocked] = useState(true);
   const composerDisabled =
+    (workMode === 'code' && activeSessionId === NEW_CONVERSATION_ID && workspaceBlocked) ||
     agentGroupUnavailable ||
     organizationTeamUnavailable ||
     isCompactRunning ||
@@ -3914,6 +3917,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
           className={cx(
             'chat-input-container',
             showWorkContextRow && 'chat-input-container--work-home',
+            showWorkContextRow && workMode === 'code' && 'chat-input-container--code-workspace',
             (isModeMenuOpen || workMenuOpen) && 'chat-input-container--menu-open',
             composerSuggestion && !showSlashSuggestionBelow && 'chat-input-container--suggestion-open',
             isListening && 'chat-input-container--recording',
@@ -5475,6 +5479,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                 />
               )}
               <div ref={workMenuRef} className="chat-work-context-row" data-testid="chat-panel-work-context-row">
+                <CodeWorkspaceControls navigationBlocked={hasDraft || selectedSkills.length > 0} enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
                 <div
                   className={clsx('chat-work-select', workMenuOpen === 'project' && 'chat-work-select--open')}
                   data-testid="chat-panel-work-select"
@@ -5628,6 +5633,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                     </div>
                   ) : null}
                 </div>
+                } />
                 {workMode === 'code' ? (
                   <CodeBranchSelector project={displayedProject} disabled={isProcessing} compact />
                 ) : null}

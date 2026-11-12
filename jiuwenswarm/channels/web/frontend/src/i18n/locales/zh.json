@@ -5594,5 +5594,34 @@
     "logoutFailed": "退出未确认成功，已关闭当前连接。请重试。",
     "retry": "重试",
     "logout": "退出登录"
-  }
+  },
+  "codeWorkspace": {
+    "draftPending": "请先发送或清空草稿",
+    "local": "本地",
+    "cloud": "云端",
+    "loading": "正在核对位置…",
+    "notConnected": "未连接",
+    "localDirectory": "本地目录",
+    "localUnavailable": "未连接本机目录，请在桌面端选择或打开本地入口。",
+    "defaultEnvironment": "默认云端环境",
+    "chooseDirectory": "选择云端目录",
+    "newFolder": "新建云端文件夹",
+    "createEnvironment": "创建云端环境",
+    "environmentDescription": "使用当前账号绑定的云端环境；已有环境将检查就绪状态，不会重复分配实例。",
+    "folderName": "文件夹名称（在上方当前目录中创建）",
+    "preparing": "正在处理，请稍候…",
+    "create": "创建／准备",
+    "open": "打开",
+    "cancel": "取消",
+    "refresh": "刷新",
+    "retry": "重试",
+    "up": "上级目录",
+    "enter": "进入选中目录",
+    "more": "加载更多",
+    "empty": "暂无子文件夹",
+    "exists": "文件夹或项目已存在，请刷新核对。",
+    "projectRootRequired": "此目录属于已有项目，请选择该项目根目录。",
+    "unavailable": "工作区暂不可用，请检查连接并重试。",
+    "unknown": "操作结果尚未确认，请刷新核对后再操作。"
+}
 }

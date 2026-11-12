@@ -77,3 +77,11 @@ Completed output is reconciled through existing history loading. Expired replay 
 Image export is explicitly disabled with an explanation in the current cloud-instance deployment. The page no longer queries unsupported export jobs automatically, and existing job records are retained. Local deployments retain image export. Server-side file access restrictions are unchanged.
 
 When a page is reloaded while awaiting approval, the existing control and cursor can be restored directly only when the authoritative execution snapshot confirms that every unfinished execution awaits a known control. Running, queued, or incomplete snapshots retain incremental replay. Recovery neither resubmits a task nor approves a tool automatically.
+
+## Code workspace entry (P1S-01 candidate)
+
+A new Code chat has three controls: local directory, Local/Cloud, and a cloud environment/project menu visible in Cloud. The menu browses cloud Code directories, creates folders, and creates or reuses the account's default environment. After creating a folder, select Open to bind the project. For a subdirectory of an existing project, select its registered project root.
+
+Cloud paths belong to the routed instance. A browser cannot supply an arbitrary server root. Local directory access requires the desktop bridge or the local service; a cloud browser never falls back to a server-native picker.
+
+Operators may configure `CODE_PLATFORM_LOCAL_ENTRY_URL` and `CODE_PLATFORM_CLOUD_ENTRY_URL` on each Gateway. Both accept HTTPS root URLs; Local also accepts loopback HTTP. Switching navigates to the target entry and uses its normal authentication. Unsent drafts, attachments, or selected skills disable navigation. This candidate does not synchronize drafts, history or files, and does not create multiple named environments. Environment creation uses the existing idempotent default binding service.

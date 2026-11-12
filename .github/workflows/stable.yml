@@ -107,6 +107,8 @@ jobs:
                      tests/unit_tests/test_model_resource_fixes.py
                      tests/unit_tests/cloud_workspace
                      tests/unit_tests/server/test_workspace_file_boundary.py
+                     tests/unit_tests/server/test_project_workspace.py
+                     tests/unit_tests/gateway/test_workspace_locations.py
                      tests/unit_tests/extensions/test_agentos_router.py
                      tests/unit_tests/extensions/test_yuanrong_frontend_client.py
                      tests/unit_tests/gateway/test_message_handler_evolution.py
@@ -129,9 +131,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.12.0'
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: '0.12.5'
+          enable-cache: false
       - run: npm ci --no-audit --no-fund
       - name: Test original history and approval UI
         run: |
+          npm run test:code-workspace
+          npm run test:work-mode-storage
           npm run test:cloud-workspace
           npm run test:auth-store
           npm run test:share-image
@@ -145,6 +153,21 @@ jobs:
           npm run test:model-reasoning
           npm run test:session-input
       - run: npm run build
+      - name: Verify wheel web assets
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/workspace-wheel" ../../../..
+          python3 - <<'PYCODE'
+          import os, zipfile
+          from pathlib import Path
+          root = Path('dist')
+          expected = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+          wheel = next((Path(os.environ['RUNNER_TEMP']) / 'workspace-wheel').glob('*.whl'))
+          prefix = 'jiuwenswarm/channels/web/frontend/dist/'
+          with zipfile.ZipFile(wheel) as archive:
+              actual = {n[len(prefix):]: archive.read(n) for n in archive.namelist() if n.startswith(prefix) and not n.endswith('/')}
+          assert expected and actual == expected, 'wheel frontend differs from the final build (including stale files)'
+          print(f'Exact wheel frontend: {len(actual)} files')
+          PYCODE
 
   stable:
     if: always()

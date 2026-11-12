@@ -261,6 +261,17 @@ class WorkspaceFileAdapter(GatewayAdapter):
 
     async def _handle_select_directory(self, request: AgentRequest) -> AgentResponse:
         params = request.params if isinstance(request.params, dict) else {}
+        if "workspace_operation" in params:
+            from jiuwenswarm.server.runtime.gateway_adapter.project_workspace import execute
+            from jiuwenswarm.server.runtime.gateway_adapter.workspace_file_io import WorkspaceFileError
+            try:
+                payload = await asyncio.to_thread(execute, params, request.channel_id)
+                return AgentResponse(request_id=request.request_id, channel_id=request.channel_id,
+                                     ok=True, payload=payload, metadata=request.metadata)
+            except WorkspaceFileError as exc:
+                return build_error_response(request, str(exc), code=exc.code)
+            except ValueError as exc:
+                return build_error_response(request, str(exc), code="BAD_REQUEST")
         try:
             initial_dir = _parse_optional_str(params, "initial_dir")
         except ValueError as exc:
