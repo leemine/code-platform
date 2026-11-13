@@ -84,4 +84,12 @@ A new Code chat has three controls: local directory, Local/Cloud, and a cloud en
 
 Cloud paths belong to the routed instance. A browser cannot supply an arbitrary server root. Local directory access requires the desktop bridge or the local service; a cloud browser never falls back to a server-native picker.
 
-Operators may configure `CODE_PLATFORM_LOCAL_ENTRY_URL` and `CODE_PLATFORM_CLOUD_ENTRY_URL` on each Gateway. Both accept HTTPS root URLs; Local also accepts loopback HTTP. Switching navigates to the target entry and uses its normal authentication. Unsent drafts, attachments, or selected skills disable navigation. This candidate does not synchronize drafts, history or files, and does not create multiple named environments. Environment creation uses the existing idempotent default binding service.
+Choosing Cloud in the local page immediately reveals cloud controls while retaining the URL, draft and attachments. Explicit environment, directory or folder actions use the existing local cloud-account dialog and same-origin service to access the configured cloud host. Login resumes the original form. Cloud directories do not replace the local project selection, and files are not copied automatically. Deployments reuse the private CODE_PLATFORM_LOCAL_SYNC_CONFIG. Legacy entry URLs remain compatible with older clients, but the new controls do not navigate. The account still has one default environment, prepared through the existing idempotent service.
+
+This candidate connects same-page environment and directory management. Cloud session execution from the local page is not connected yet: sending remains blocked while Cloud is selected to prevent local execution. This is not acceptance of complete Local/Cloud execution switching.
+
+
+The local sidebar uses the same circular avatar and account menu as the cloud UI. Before sign-in, a user icon opens the sign-in dialog. After sign-in, the avatar shows the first two uppercase username characters (for example, CH); click it to view the full username or sign out. Signing out restores the user icon.
+
+
+The local dialog and cloud page share the account sign-in form. An existing valid session resumes cloud actions without another confirmation. Signing in only restores the form and never submits a creation automatically. Folder names can be entered while directories load, and loading can be dismissed; creation waits for directory validation. HTTP and WebSocket transports are reused while every operation still receives fresh authorization checks.

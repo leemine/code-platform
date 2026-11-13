@@ -5,6 +5,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from websockets.exceptions import WebSocketException
+
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
@@ -19,7 +21,8 @@ from jiuwenswarm.data_sync.contract import SyncError
 PREFIX = "/api/v1/data-sync"
 FIELDS = {"status": set(), "login": {"username", "password"}, "logout": set(),
           "view": {"offset", "version"}, "choices": set(), "publish": {"operation_id", "project_ids"},
-          "refresh": set(), "revoke": {"source_id"}}
+          "refresh": set(), "revoke": {"source_id"},
+          "workspace": {"operation", "path", "name", "offset"}}
 
 
 class DirectoryUIPlugin(ApplicationPluginExtension):
@@ -35,7 +38,8 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
         return None
 
     async def shutdown(self):
-        return None
+        if self.local:
+            await self.local.close()
 
     async def configure_services(self, services):
         if self.local:
@@ -56,7 +60,7 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
         except SyncError as exc:
             response = JSONResponse({"code": exc.code}, status_code=409)
         except (EnvironmentUnavailable, AccountAuthorityUnavailable, TimeoutError, ConnectionError,
-                OSError, sqlite3.Error, http.client.HTTPException):
+                OSError, sqlite3.Error, http.client.HTTPException, WebSocketException):
             response = JSONResponse({"code": "SYNC_UNAVAILABLE"}, status_code=503)
         except (ValueError, KeyError, TypeError):
             response = JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
@@ -97,13 +101,17 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 if set(params) != FIELDS["login"] or any(not isinstance(v, str) or len(v) > 512 for v in params.values()):
                     raise ValueError()
                 value = await asyncio.to_thread(self.local.accounts.call, "login", None, params)
+                await self.local.workspaces.discard(token)
                 response = JSONResponse({"authenticated": True})
                 response.set_cookie(COOKIE, value["token"], secure=expected[0] == "https", httponly=True,
                                     samesite="strict", path=PREFIX)
                 return response
             if action == "logout":
                 if token:
-                    await asyncio.to_thread(self.local.accounts.call, "logout", token, {})
+                    try:
+                        await asyncio.to_thread(self.local.accounts.call, "logout", token, {})
+                    finally:
+                        await self.local.workspaces.discard(token)
                 response = JSONResponse({"authenticated": False})
                 response.delete_cookie(COOKIE, path=PREFIX, secure=expected[0] == "https", httponly=True, samesite="strict")
                 return response
@@ -119,12 +127,17 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                                      "username": identity.get("username", ""),
                                      "scope": [identity["authority"], identity["actor_id"]],
                                      "cloud_origin": self.local.config["cloud_origin"]})
-            value = await self.local.run(identity, token, action, params)
+            if action == "workspace":
+                from gateway.services.cloud_workspace_client import workspace_request
+                value = await workspace_request(self.local, token, params)
+            else:
+                value = await self.local.run(identity, token, action, params)
             latest = await self.local.identity(token)
             if (latest["authority"], latest["actor_id"]) != (identity["authority"], identity["actor_id"]):
+                await self.local.workspaces.discard(token)
                 raise PermissionError()
         else:
-            if action in {"login", "logout"}:
+            if action in {"login", "logout", "workspace"}:
                 raise ValueError()  # The existing cloud account UI owns its session.
             cloud = self.cloud()
             result = await cloud.authenticator.authenticate(AuthContext(channel_type="http", headers=dict(request.headers)))

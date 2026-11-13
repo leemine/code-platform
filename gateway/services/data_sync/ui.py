@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import asyncio
-import http.client
 from http.cookies import SimpleCookie
 import json
 import os
 from pathlib import Path
 import secrets
-import ssl
 import stat
+import threading
+import time
 from urllib.parse import urlsplit
 
 from jiuwenswarm.data_sync.connector import DirectoryConnector, DirectoryReplica, register_source
@@ -36,44 +36,58 @@ class CloudAccountClient:
         self.config = config
         self.target = urlsplit(config["cloud_origin"])
         origin(config["cloud_origin"])
-        self.context = ssl.create_default_context(cafile=config.get("ca_file"))
+        self._pool = None
+        self._pool_key = None
+        self._pool_lock = threading.Lock()
+
+    def close(self):
+        with self._pool_lock:
+            if self._pool is not None:
+                self._pool.close()
+                self._pool = None
+
+    def connection_pool(self):
+        from gateway.auth.account_transport import AccountHTTPPool, _trust_stamp
+        key = (self.config["cloud_origin"], _trust_stamp(self.config.get("ca_file")), int(time.monotonic() // 300))
+        with self._pool_lock:
+            if self._pool is None or key != self._pool_key:
+                if self._pool is not None:
+                    self._pool.close()
+                self._pool = AccountHTTPPool(self.config["cloud_origin"], self.config.get("ca_file"))
+                self._pool_key = key
+            return self._pool
 
     def call(self, action, token=None, body=None):
-        if action not in {"login", "logout", "status"}:
+        if action not in {"login", "logout", "status", "environment", "environment/ensure"}:
             raise ValueError("account operation required")
-        connection = http.client.HTTPSConnection(self.target.hostname, self.target.port,
-                                                context=self.context, timeout=10)
         headers = {"Content-Type": "application/json", "X-Jiuwen-Auth": "1"}
         if token:
             headers["Authorization"] = "Bearer " + token
-        try:
-            connection.request("GET" if body is None else "POST", "/api/v1/auth/organization/" + action,
-                               None if body is None else encoded(body), headers)
-            response = connection.getresponse()
-            raw = response.read(65537)
-            if response.status in {401, 403}:
-                raise PermissionError()
-            if response.status != 200 or len(raw) > 65536:
+        status, raw, response_headers = self.connection_pool().request(
+            "GET" if body is None else "POST", "/api/v1/auth/organization/" + action,
+            None if body is None else encoded(body), headers, operation=action,
+            retry_read=action in {"status", "environment"}, timeout=150 if action == "environment/ensure" else 10)
+        if status in {401, 403}:
+            raise PermissionError()
+        if status != 200:
+            raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
+        value = json.loads(raw)
+        if action == "login":
+            cookies = SimpleCookie()
+            for key, val in response_headers:
+                if key.lower() == "set-cookie":
+                    cookies.load(val)
+            item = cookies.get("jiuwenswarm_organization")
+            if item is None or not 32 <= len(item.value) <= 512:
                 raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
-            value = json.loads(raw)
-            if action == "login":
-                cookies = SimpleCookie()
-                for key, val in response.getheaders():
-                    if key.lower() == "set-cookie":
-                        cookies.load(val)
-                item = cookies.get("jiuwenswarm_organization")
-                if item is None or not 32 <= len(item.value) <= 512:
-                    raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
-                value["token"] = item.value
-            if action == "status":
-                if value.get("authenticated") is not True:
-                    raise PermissionError()
-                if (value.get("auth_backend") != "builtin" or not value.get("authority")
-                        or not value.get("actor_id")):
-                    raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
-            return value
-        finally:
-            connection.close()
+            value["token"] = item.value
+        if action == "status":
+            if value.get("authenticated") is not True:
+                raise PermissionError()
+            if (value.get("auth_backend") != "builtin" or not value.get("authority")
+                    or not value.get("actor_id")):
+                raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
+        return value
 
 
 def load_local_config():
@@ -123,11 +137,21 @@ class LocalDirectoryUI:
         self.accounts = CloudAccountClient(config)
         self.endpoint = "wss://" + urlsplit(config["cloud_origin"]).netloc + "/ws"
         self.lock = asyncio.Lock()
+        from gateway.services.cloud_workspace_client import WorkspaceConnections
+        self.workspaces = WorkspaceConnections(self)
+
+    async def close(self):
+        await self.workspaces.close()
+        await asyncio.to_thread(self.accounts.close)
 
     async def identity(self, token):
         if not token:
             raise PermissionError()
-        return await asyncio.to_thread(self.accounts.call, "status", token)
+        try:
+            return await asyncio.to_thread(self.accounts.call, "status", token)
+        except PermissionError:
+            await self.workspaces.discard(token)
+            raise
 
     async def run(self, identity, token, action, params):
         async with self.lock:

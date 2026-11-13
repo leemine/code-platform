@@ -17,9 +17,10 @@ const text=async(id,value)=>{await act(async()=>{const el=query(id);Object.getOw
 const bindBlocked=value=>{blocked=value;};
 before(async()=>{
  dom=new JSDOM('<div id="root"></div>',{url:'https://cloud.test',pretendToBeVisual:true});
- for(const [key,value] of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,Node:dom.window.Node,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,BroadcastChannel:undefined,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)}))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
+ for(const [key,value] of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,Node:dom.window.Node,Event:dom.window.Event,CustomEvent:dom.window.CustomEvent,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,BroadcastChannel:undefined,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)}))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
  window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};window.HTMLDialogElement.prototype.close=function(){this.open=false;};
  ({createRoot}=await import('react-dom/client'));
+ globalThis.fetch=async(_url, options)=>{const body=JSON.parse(options.body);calls.push({method:'bridge.'+body.operation,params:body});try{return new Response(JSON.stringify(await request('bridge.'+body.operation,body)),{status:200});}catch(error){return new Response(JSON.stringify({code:error.code}),{status:error.code==='UNAUTHORIZED'?401:409});}};
  globalThis.__workspaceRequest=async(method,params)=>{calls.push({method,params});return request(method,params);};
  globalThis.__workspaceConnection=fn=>{connection=fn;return ()=>{};};
  globalThis.__workspaceStore={selectedProject:null,setSelectedProject:p=>{selected=p;},loadProjects:async()=>{}};
@@ -36,7 +37,7 @@ afterEach(async()=>{await act(async()=>root.unmount());});after(()=>dom.window.c
 async function mount(enabled=true,navigationBlocked=false){await act(async()=>root.render(h(I18nextProvider,{i18n:i18next},h(api.CodeWorkspaceControls,{enabled,navigationBlocked,disabled:false,onBlockedChange:bindBlocked,localControl:h('button',{'data-testid':'existing-local-picker'},'original local')}))));await tick();}
 test('cloud has three controls and all original cloud actions; no automatic ensure',async()=>{
  await mount();assert.ok(query('chat-panel-code-local-directory'));assert.ok(query('chat-panel-code-location-trigger'));assert.ok(query('chat-panel-code-cloud-trigger'));assert.equal(query('existing-local-picker'),null);assert.equal(blocked,false);
- await click('chat-panel-code-cloud-trigger');for(const id of ['directory','mkdir','create'])assert.ok(query('chat-panel-code-cloud-'+id));assert.equal(calls.some(c=>c.method==='cloud.environment.ensure'),false);
+ await click('chat-panel-code-cloud-trigger');for(const id of ['directory','mkdir','create'])assert.ok(query('chat-panel-code-cloud-'+id));assert.equal(calls.some(c=>c.method.startsWith('cloud.environment.')),false);
 });
 test('local uses original picker and hides cloud control; Work does not query catalog',async()=>{
  request=async()=>catalog('local');await mount();assert.ok(query('existing-local-picker'));assert.equal(query('chat-panel-code-cloud-trigger'),null);
@@ -64,10 +65,6 @@ test('catalog fails closed for malicious navigation, duplicates and malformed pa
  const bad=catalog('cloud');bad.entries[0].url='javascript:alert(1)';assert.throws(()=>api.parseWorkspaceCatalog(bad));bad.entries[0].url='https://a.test/chat/secret';assert.throws(()=>api.parseWorkspaceCatalog(bad));assert.throws(()=>api.parseWorkspacePage(page('',[{name:'../outside',path:'../outside'}]),''));
 });
 
-test('unsent draft disables cross-entry navigation while keeping current selection',async()=>{
- const target=catalog('cloud');target.entries[0].url='http://127.0.0.1:18080/';request=async method=>method==='workspace.locations'?target:{environment_id:'env-1'};
- await mount(true,true);await click('chat-panel-code-location-trigger');const local=document.querySelector('[data-testid="chat-panel-code-location-option"][data-variant="local"]');assert.equal(local.disabled,true);assert.match(local.textContent,/草稿/);
-});
 test('switching to Work discards late directory replies without replacing the original picker',async()=>{
  let finish;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1'}:new Promise(r=>{finish=r;});
  await mount();await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-directory');await mount(false);await act(async()=>finish(page('',[{name:'stale',path:'stale'}])));await tick();assert.ok(query('existing-local-picker'));assert.equal(query('chat-panel-code-cloud-trigger'),null);assert.equal(blocked,false);
@@ -75,4 +72,63 @@ test('switching to Work discards late directory replies without replacing the or
 
 test('Escape closes the workspace menu even when focus remains in the composer',async()=>{
  await mount();await click('chat-panel-code-location-trigger');await act(async()=>window.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape'})));await act(async()=>{await new Promise(r=>setTimeout(r,150));});assert.equal(query('chat-panel-code-location-menu'),null);
+});
+
+async function choose(kind){await click('chat-panel-code-location-trigger');await act(async()=>document.querySelector(`[data-testid="chat-panel-code-location-option"][data-variant="${kind}"]`).click());await tick();}
+test('Local/Cloud selection is immediate with a draft and does not contact the cloud or navigate',async()=>{
+ request=async()=>catalog('local');await mount(true,true);const initial=calls.length;const href=window.location.href;
+ await choose('cloud');assert.ok(query('chat-panel-code-cloud-trigger'));assert.equal(query('chat-panel-code-location-trigger').textContent,'云端');assert.equal(calls.length,initial);assert.equal(window.location.href,href);assert.equal(blocked,true);
+ await choose('local');assert.equal(query('chat-panel-code-cloud-trigger'),null);assert.equal(blocked,false);assert.equal(calls.length,initial);
+});
+test('cloud selection survives a late current-host catalog',async()=>{
+ let finish;request=()=>new Promise(r=>{finish=r;});await mount();await choose('cloud');await act(async()=>finish(catalog('local')));await tick();assert.equal(query('chat-panel-code-location-trigger').textContent,'云端');assert.equal(calls.length,1);
+});
+test('local page opens and creates cloud directories through the bridge without replacing the local project',async()=>{
+ const remoteProject={project_id:'remote',project_dir:'/cloud/code/new',work_mode:'code',name:'new'};
+ request=async(method,params)=>method==='workspace.locations'?catalog('local'):method==='bridge.mkdir'?{path:params.name,created:true}:method==='bridge.open'?{project:remoteProject}:page();
+ await mount();const href=window.location.href;await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');await text('chat-panel-code-folder-name','new');await click('chat-panel-code-workspace-confirm');await click('chat-panel-code-workspace-confirm');
+ assert.equal(selected,null);assert.equal(window.location.href,href);assert.equal(blocked,true);assert.match(query('chat-panel-code-cloud-trigger').textContent,/new/);assert.equal(query('chat-panel-code-cloud-execution-pending'),null);
+ assert.deepEqual(calls.map(row=>row.method),['workspace.locations','bridge.list','bridge.mkdir','bridge.open']);
+ await choose('local');assert.equal(blocked,false);
+});
+test('unauthenticated directory action asks the original local login dialog and resumes only the view',async()=>{
+ let loggedIn=false,complete;const listener=event=>{complete=event.detail;};window.addEventListener('jiuwenswarm-cloud-login-request',listener);
+ try{
+  request=async method=>{if(method==='workspace.locations')return catalog('local');if(!loggedIn)throw {code:'UNAUTHORIZED'};return page();};
+  await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');assert.equal(typeof complete,'function');assert.equal(query('chat-panel-code-workspace-dialog').closest('dialog').open,false);
+  loggedIn=true;await act(async()=>{window.dispatchEvent(new Event('jiuwenswarm-cloud-account'));complete(true);});await tick();assert.equal(query('chat-panel-code-workspace-dialog').dataset.variant,'folder');assert.equal(query('chat-panel-code-workspace-dialog').closest('dialog').open,true);assert.equal(calls.some(row=>row.method==='bridge.mkdir'),false);
+ }finally{window.removeEventListener('jiuwenswarm-cloud-login-request',listener);}
+});
+test('switching back to Local cancels a pending login intention',async()=>{
+ let complete;const listener=e=>{complete=e.detail;};window.addEventListener('jiuwenswarm-cloud-login-request',listener);
+ try{request=async method=>{if(method==='workspace.locations')return catalog('local');throw {code:'UNAUTHORIZED'};};await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-directory');await choose('local');const before=calls.length;await act(async()=>complete(true));await tick();assert.equal(calls.length,before);assert.equal(blocked,false);}finally{window.removeEventListener('jiuwenswarm-cloud-login-request',listener);}
+});
+test('environment selection reads status on demand and prepares only on explicit confirmation',async()=>{
+ request=async method=>method==='workspace.locations'?catalog('local'):{environment_id:'env',state:method==='bridge.ensure'?'READY':'ALLOCATED'};
+ await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-environment');assert.equal(calls.at(-1).method,'bridge.environment');assert.equal(calls.some(row=>row.method==='bridge.ensure'),false);await click('chat-panel-code-workspace-confirm');assert.equal(calls.at(-1).method,'bridge.ensure');assert.equal(window.location.pathname,'/');
+});
+test('switching Local invalidates a slow cloud directory response without waiting',async()=>{
+ let finish;request=async method=>method==='workspace.locations'?catalog('local'):new Promise(r=>{finish=r;});await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-directory');await choose('local');assert.equal(blocked,false);await act(async()=>finish(page('',[{name:'late',path:'late'}])));await tick();assert.equal(query('chat-panel-code-directory-item'),null);assert.equal(selected,null);
+});
+
+
+test('folder name is editable during directory loading and cancelling rejects late replies',async()=>{
+ let finish;request=async method=>method==='workspace.locations'?catalog('local'):new Promise(r=>{finish=r;});
+ await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');
+ assert.equal(query('chat-panel-code-folder-name').disabled,false);assert.equal(query('chat-panel-code-workspace-cancel').disabled,false);
+ await text('chat-panel-code-folder-name','draft-name');assert.equal(query('chat-panel-code-workspace-confirm').disabled,true);
+ await click('chat-panel-code-workspace-cancel');await act(async()=>finish(page('',[{name:'late',path:'late'}])));await tick();
+ assert.equal(query('chat-panel-code-workspace-dialog').closest('dialog').open,false);assert.equal(query('chat-panel-code-directory-item'),null);
+ assert.equal(calls.some(row=>row.method==='bridge.mkdir'),false);
+});
+
+test('a folder draft survives the required login without replaying create',async()=>{
+ let fail,complete;const listener=e=>{complete=e.detail;};window.addEventListener('jiuwenswarm-cloud-login-request',listener);
+ try{
+  request=async method=>method==='workspace.locations'?catalog('local'):new Promise((_,reject)=>{fail=reject;});
+  await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');await text('chat-panel-code-folder-name','keep-name');
+  await act(async()=>fail({code:'UNAUTHORIZED'}));await tick();request=async()=>page();
+  await act(async()=>{window.dispatchEvent(new Event('jiuwenswarm-cloud-account'));complete(true);});await tick();
+  assert.equal(query('chat-panel-code-folder-name').value,'keep-name');assert.equal(calls.some(row=>row.method==='bridge.mkdir'),false);
+ }finally{window.removeEventListener('jiuwenswarm-cloud-login-request',listener);}
 });

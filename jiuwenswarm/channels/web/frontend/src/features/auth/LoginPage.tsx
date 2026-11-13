@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../../components/ui/Button/Button';
-import { Input } from '../../components/ui/Input/Input';
+import { AccountLoginForm } from './AccountLoginForm';
 import { clearAccountCaches, notifyOrganizationCredentialChange } from '../../services/organizationCredentialEvents';
 import { cloudRequest, CloudRequestError } from '../cloudWorkspace/client';
 import '../cloudWorkspace/cloudWorkspace.css';
@@ -43,24 +43,18 @@ export function LoginPage({ registrationEnabled }: { registrationEnabled: boolea
     <section className="cloud-workspace-card">
       <h1 data-testid="auth-login-title">{t(registering ? 'auth.register' : 'auth.title')}</h1>
       <p>{t('auth.accountSubtitle')}</p>
-      <form onSubmit={submit} data-testid="auth-login-form">
-        <label htmlFor="cloud-username">{t('auth.username')}</label>
-        <Input id="cloud-username" data-testid="auth-login-username-input" autoComplete="username" required
-          value={username} onChange={setUsername} changeOnBlur={false} disabled={submitting} />
-        <label htmlFor="cloud-password">{t('auth.password')}</label>
-        <Input id="cloud-password" data-testid="auth-login-password-input" type="password" required
-          autoComplete={registering ? 'new-password' : 'current-password'} value={password}
-          onChange={setPassword} changeOnBlur={false} disabled={submitting} />
-        {error && <p role="alert" className="text-warn" data-testid="auth-login-error">{error}</p>}
-        {notice && <p role="status" data-testid="auth-registration-notice">{notice}</p>}
-        <Button type="submit" variant="primary" loading={submitting} data-testid="auth-login-submit-button">
-          {t(submitting ? 'auth.loggingIn' : registering ? 'auth.register' : 'auth.login')}
-        </Button>
-        {registrationEnabled && <Button variant="quiet" disabled={submitting} data-testid="auth-registration-toggle"
+      <AccountLoginForm username={username} password={password} onUsername={setUsername} onPassword={setPassword}
+        onSubmit={submit} busy={submitting} registering={registering}
+        submitLabel={t(submitting ? 'auth.loggingIn' : registering ? 'auth.register' : 'auth.login')}
+        footer={registrationEnabled && <Button variant="quiet" disabled={submitting} data-testid="auth-registration-toggle"
           onClick={() => { setRegistering(!registering); setError(''); setNotice(''); }}>
           {t(registering ? 'auth.backToLogin' : 'auth.createAccount')}
         </Button>}
-      </form>
+        ids={{ form: 'auth-login-form', username: 'auth-login-username-input', password: 'auth-login-password-input', submit: 'auth-login-submit-button' }}>
+        {error && <p role="alert" className="text-warn" data-testid="auth-login-error">{error}</p>}
+        {notice && <p role="status" data-testid="auth-registration-notice">{notice}</p>}
+
+      </AccountLoginForm>
       <p className="text-text-muted">{t('auth.accountHint')}</p>
     </section>
   </main>;

@@ -5596,7 +5596,7 @@
     "logout": "退出登录"
   },
   "codeWorkspace": {
-    "draftPending": "请先发送或清空草稿",
+    "draftPending": "有未发送内容",
     "local": "本地",
     "cloud": "云端",
     "loading": "正在核对位置…",
@@ -5622,8 +5622,18 @@
     "exists": "文件夹或项目已存在，请刷新核对。",
     "projectRootRequired": "此目录属于已有项目，请选择该项目根目录。",
     "unavailable": "工作区暂不可用，请检查连接并重试。",
-    "unknown": "操作结果尚未确认，请刷新核对后再操作。"
-},
+    "unknown": "操作结果尚未确认，请刷新核对后再操作。",
+    "entryUnavailable": "当前入口暂不可用，请重试。",
+    "chooseCloudContext": "选择云端目录或环境",
+    "chooseEnvironment": "选择云端环境",
+    "selectEnvironment": "选择此环境",
+    "localClientRequired": "请从本地客户端访问本地目录",
+    "environmentState": {
+      "NEW": "尚未创建",
+      "ALLOCATED": "已创建，按需连接",
+      "READY": "已连接"
+    }
+  },
   "localCloudAccount": {
     "title": "云账号",
     "login": "登录云账号",
@@ -5634,6 +5644,7 @@
     "logout": "退出云账号",
     "retry": "重试",
     "unavailable": "暂时无法连接云账号服务，请重试。",
-    "loginRequired": "登录已失效或账号信息不正确，请重新登录。"
+    "loginRequired": "登录已失效或账号信息不正确，请重新登录。",
+    "continue": "继续云端操作"
   }
 }
