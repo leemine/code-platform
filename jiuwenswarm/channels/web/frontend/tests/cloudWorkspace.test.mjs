@@ -78,6 +78,51 @@ test('authority failure and malformed status fail closed with explicit retry', a
   route = async () => response({}, 503);
   await mount(); await waitFor(() => phase() === 'unavailable'); assert.ok(query('cloud-workspace-retry')); assert.equal(query('original-app'), null);
 });
+test('outage recovery keeps the error visible, backs off and never overlaps manual retry', async () => {
+  const originalSetTimeout = window.setTimeout;
+  const originalClearTimeout = window.clearTimeout;
+  const timers = new Map();
+  let nextTimer = 0;
+  window.setTimeout = (callback, delay) => {
+    const id = ++nextTimer;
+    timers.set(id, { callback, delay });
+    return id;
+  };
+  window.clearTimeout = id => timers.delete(id);
+  const fire = async expectedDelay => {
+    const [id, timer] = timers.entries().next().value;
+    timers.delete(id);
+    assert.equal(timer.delay, expectedDelay);
+    await act(async () => timer.callback());
+    await tick();
+  };
+  try {
+    await mount();
+    route = async () => response({}, 400);
+    await act(async () => window.dispatchEvent(new window.Event('focus')));
+    await waitFor(() => phase() === 'unavailable');
+    let finish;
+    route = async () => new Promise(resolve => { finish = resolve; });
+    await fire(2000);
+    assert.equal(phase(), 'unavailable');
+    const count = calls.length;
+    await click('cloud-workspace-retry');
+    assert.equal(calls.length, count);
+    assert.equal(phase(), 'unavailable');
+    await act(async () => finish(response({}, 400)));
+    route = async () => response({}, 400);
+    await fire(4000);
+    assert.equal(phase(), 'unavailable');
+    route = async () => response(identity);
+    await fire(8000);
+    assert.equal(phase(), 'entry');
+    assert.equal(timers.size, 0);
+    assert.ok(calls.every(call => !call.url.endsWith('/login')));
+  } finally {
+    window.setTimeout = originalSetTimeout;
+    window.clearTimeout = originalClearTimeout;
+  }
+});
 test('first allocation requires entry, uses no selectors, and mounts only after READY', async () => {
   await mount(); assert.equal(phase(), 'entry'); assert.equal(calls.length, 2);
   let finish;
@@ -195,7 +240,7 @@ test('persistent outage retries automatically only after the previous probe sett
   let finish;
   route = async () => new Promise(resolve => { finish = resolve; });
   await waitFor(() => !!finish, 3000);
-  assert.equal(phase(), 'checking'); assert.equal(calls.length, 3);
+  assert.equal(phase(), 'unavailable'); assert.equal(calls.length, 3);
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
   assert.equal(calls.length, 3, 'slow retry must not be overlapped or invalidated');
   await act(async () => finish(response({}, 400))); await tick();

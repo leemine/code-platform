@@ -9,6 +9,7 @@ import { onOrganizationCredentialChange } from '../../services/organizationCrede
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import type { ProjectInfo } from '../../features/workspace/projectTypes';
 import { localCloudWorkspaceRequest, onLocalCloudAccountChange, requestLocalCloudLogin } from '../../features/cloudWorkspace/localCloudAccountClient';
+import { isCloudResource } from '../../features/cloudWorkspace/resourceAddress';
 import './CodeWorkspaceControls.css';
 
 type Location = 'local' | 'cloud';
@@ -42,8 +43,8 @@ export function parseWorkspacePage(page: Page, path: string): Page {
 }
 
 /** Three controls; explicit cloud actions reuse the local account bridge without navigation. */
-export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlockedChange }: {
-  localControl: ReactNode; enabled: boolean; disabled: boolean; onBlockedChange: (blocked: boolean) => void;
+export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlockedChange, sessionId }: {
+  sessionId?: string; localControl: ReactNode; enabled: boolean; disabled: boolean; onBlockedChange: (blocked: boolean) => void;
 }) {
   const { t } = useTranslation();
   const titleId = useId();
@@ -53,7 +54,9 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [menu, setMenu] = useState<'location' | 'cloud' | null>(null);
   const [dialog, setDialog] = useState<CloudAction | null>(null);
-  const [remoteProject, setRemoteProject] = useState<ProjectInfo | null>(null);
+  const remoteProject = useWorkspaceStore(s => s.cloudProject);
+  const setRemoteProject = useWorkspaceStore(s => s.setCloudProject);
+  const codeLocation = useWorkspaceStore(s => s.codeLocation);
   const intent = useRef(0);
   const currentAction = useRef<CloudAction | null>(null);
   const [page, setPage] = useState<Page | null>(null);
@@ -66,11 +69,11 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
   const [reload, setReload] = useState(0);
   const generation = useRef(0), working = useRef(false);
   const selectedProject = useWorkspaceStore(s => s.selectedProject);
-  const selectedLocation = location || catalog?.kind || 'local';
+  const selectedLocation = sessionId && sessionId !== 'new' ? (isCloudResource(sessionId) ? 'cloud' : catalog?.kind || 'local') : (catalog?.kind === 'local' ? codeLocation : location || catalog?.kind) || 'local';
   const remote = catalog?.kind === 'local' && selectedLocation === 'cloud';
   const needsEntry = !catalog || selectedLocation !== catalog.kind;
   const cloudProject = remote ? remoteProject : selectedProject;
-  const blocked = enabled && (needsEntry || busy || Boolean(dialog));
+  const blocked = enabled && !(sessionId && sessionId !== 'new') && ((!catalog || (needsEntry && (!remote || !remoteProject))) || busy || Boolean(dialog));
   useEffect(() => { onBlockedChange(blocked); }, [blocked, onBlockedChange]);
   useEffect(() => {
     if (!menu) return;
@@ -154,8 +157,8 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
         if (result.path !== expected || !result.created) throw new Error('INVALID_DIRECTORY');
         if (epoch === generation.current) { setDialog('directory'); setFolder(''); setPage(null); setSelected(result.path); }
       } else {
-        const result = await workspaceRequest<{ project: ProjectInfo }>('open', { path: selected || path });
-        if (!result.project?.project_id || result.project.work_mode !== 'code' || !result.project.project_dir) throw new Error('INVALID_PROJECT');
+        const result = await workspaceRequest<{ project: ProjectInfo }>('open', { path: selected || path, ...(remote ? { address_version: 1 } : {}) });
+        if (!result.project?.project_id || remote && !isCloudResource(result.project.project_id) || result.project.work_mode !== 'code' || !result.project.project_dir) throw new Error('INVALID_PROJECT');
         if (epoch === generation.current) {
           if (remote) setRemoteProject(result.project);
           else {
@@ -174,6 +177,7 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     intent.current++; currentAction.current = null;
     chosen.current = true;
     setLocation(kind); setMenu(null); setDialog(null); setError('');
+    useWorkspaceStore.getState().setCodeLocation(kind);
   }
   async function perform(action: CloudAction, preserveDraft = false) {
     if (disabled || working.current) return;

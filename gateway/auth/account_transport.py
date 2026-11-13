@@ -14,6 +14,7 @@ import json
 import logging
 from pathlib import Path
 import queue
+import select
 import ssl
 import threading
 import time
@@ -35,6 +36,7 @@ class AccountHTTPPool:
                         if self.url.scheme == "https" else None)
         self.idle = queue.LifoQueue(CONNECTIONS)
         self.closed = False
+        self.idle_seconds = 4.0
         for _ in range(CONNECTIONS):
             self.idle.put(None)
 
@@ -61,6 +63,18 @@ class AccountHTTPPool:
             raise OSError("account connection capacity exceeded") from exc
         slot_acquired = time.monotonic()
         try:
+            if connection is not None and connection.sock is not None:
+                expired = slot_acquired - getattr(connection, "_account_idle_since", started) >= self.idle_seconds
+                # All response bytes were consumed before pooling. Readable idle
+                # sockets may contain EOF/TLS close-notify; discard before sending
+                # any new request, including non-replayable login/ensure calls.
+                try:
+                    readable = bool(select.select([connection.sock], [], [], 0)[0])
+                except (OSError, ValueError):
+                    readable = True
+                if expired or readable:
+                    connection.close()
+                    connection = None
             for attempt in range(2 if retry_read else 1):
                 remaining = timeout - (time.monotonic() - started)
                 if self.closed:
@@ -87,9 +101,12 @@ class AccountHTTPPool:
                     if len(value) > MAX_RESPONSE:
                         raise ValueError("account response budget exceeded")
                     return response.status, value, response.getheaders()
-                except ssl.SSLError:
-                    raise  # Trust/hostname failures never retry with weaker verification.
-                except (http.client.HTTPException, OSError):
+                except (http.client.HTTPException, OSError) as exc:
+                    # EOF is a transport loss, including a peer closing a pooled
+                    # TLS socket. Retry only reads within the original budget;
+                    # certificate/hostname/protocol failures remain fail-closed.
+                    if isinstance(exc, ssl.SSLError) and not isinstance(exc, (ssl.SSLEOFError, ssl.SSLZeroReturnError)):
+                        raise
                     connection.close()
                     connection = None
                     if attempt != 0 or not retry_read:
@@ -111,6 +128,8 @@ class AccountHTTPPool:
                 if connection is not None:
                     connection.close()
             else:
+                if connection is not None:
+                    connection._account_idle_since = time.monotonic()
                 self.idle.put_nowait(connection)
 
 

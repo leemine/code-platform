@@ -85,6 +85,13 @@ export function resetNewConversationRuntime(settings: ConversationRuntimeSetting
   useGoalStore.getState().removeRuntime(NEW_CONVERSATION_ID);
   usePlanStore.getState().removeRuntime(NEW_CONVERSATION_ID);
   applyRuntimeSettings(NEW_CONVERSATION_ID, { ...settings, executionProvider: settings.executionProvider ?? previousRuntime?.executionProvider });
+  if (previousRuntime?.executionTarget === 'cloud') {
+    const state = useSessionStore.getState();
+    useSessionStore.setState({ runtimes: { ...state.runtimes, [NEW_CONVERSATION_ID]: {
+      ...state.runtimes[NEW_CONVERSATION_ID], executionTarget: 'cloud',
+      selectedModelName: previousRuntime.selectedModelName, selectedModelSelection: previousRuntime.selectedModelSelection,
+    } } });
+  }
   if (preservedAgentSelection) {
     useSessionStore.getState().setAgentSelectionIntent(NEW_CONVERSATION_ID, preservedAgentSelection);
   }

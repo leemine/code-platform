@@ -506,6 +506,8 @@ export interface HistoryCompactionReplay {
 
 interface BeginHistoryRestoreOptions {
   sessionId: string;
+  /** The transport owns its connection deadline until the first request is sent. */
+  deferTimeoutUntilRequest?: boolean;
   subagentId?: string;
   /** Continue initial restore past batches with no restorable content. */
   requestNextBatch: (cursor: string) => Promise<unknown>;
@@ -552,6 +554,7 @@ export interface HistoryRestoreFailure {
 export interface HistoryRestoreHandle {
   generation: number;
   dispose: () => void;
+  requestStarted?: () => void;
 }
 
 let restoreGeneration = 0;
@@ -2570,16 +2573,17 @@ export function beginHistoryRestore(options: BeginHistoryRestoreOptions): Histor
     }
   }
 
-  const handle: HistoryRestoreHandle = { generation, dispose };
+  const handle: HistoryRestoreHandle = { generation, dispose, requestStarted: resetRestoreTimer };
   activeHistoryRequests.set(requestKey, handle);
   function resetRestoreTimer(): void {
+    if (disposed || finalized) return;
     if (restoreTimer) clearTimeout(restoreTimer);
     restoreTimer = setTimeout(() => {
       if (disposed || finalized) return;
       fail({ code: 'HISTORY_RESTORE_TIMEOUT', message: 'history restore timed out' });
     }, HISTORY_RESTORE_TIMEOUT_MS);
   }
-  resetRestoreTimer();
+  if (!options.deferTimeoutUntilRequest) resetRestoreTimer();
   return handle;
 }
 

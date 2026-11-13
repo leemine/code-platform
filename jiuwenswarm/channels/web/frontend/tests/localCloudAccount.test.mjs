@@ -125,3 +125,32 @@ test('local account avatar uses the cloud style and keeps logout failure visible
   await click('trigger'); assert.equal(query('trigger').getAttribute('aria-expanded'),'true');
   await click('menu-logout'); assert.equal(query('dialog').closest('dialog').open,true); assert.ok(query('error')); assert.equal(query('trigger').textContent,'TE');
 });
+
+
+test('concurrent status reads share only the unfinished request and account changes invalidate it', async () => {
+  let resolveOld;
+  handler = () => new Promise(resolve => { resolveOld = resolve; });
+  const first = api.localCloudAccountRequest('status');
+  const joined = api.localCloudAccountRequest('status');
+  assert.equal(first, joined);
+  assert.equal(calls.length, 1);
+  api.notifyLocalCloudAccountChange();
+  handler = async () => ({ enabled: true, authenticated: false });
+  const fresh = api.localCloudAccountRequest('status');
+  assert.notEqual(fresh, first);
+  assert.equal((await fresh).authenticated, false);
+  resolveOld(identity('local'));
+  await first;
+  await api.localCloudAccountRequest('status');
+  assert.equal(calls.length, 3, 'settled identities must not be cached');
+});
+
+test('failed status reads are not retained and login starts a fresh identity generation', async () => {
+  handler = async () => { throw new Error('temporary failure'); };
+  await assert.rejects(api.localCloudAccountRequest('status'), /temporary failure/);
+  handler = async () => identity('local');
+  await api.localCloudAccountRequest('status');
+  await api.localCloudAccountRequest('login', { username: 'test-user', password: 'test-secret' });
+  await api.localCloudAccountRequest('status');
+  assert.deepEqual(calls.map(c => c.action), ['status', 'status', 'login', 'status']);
+});

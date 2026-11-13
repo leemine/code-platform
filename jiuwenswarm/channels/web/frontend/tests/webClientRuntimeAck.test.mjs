@@ -855,3 +855,97 @@ test('live completion while subscribing cannot restore an obsolete pending contr
   assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot()), false);
   assert.equal(resume.takePendingRestore('waiting-page', waitingSnapshot({ cursor: 3352 })), false);
 });
+
+test('cloud calls share one separate connection and route streams, approval and history without touching Local', async () => {
+  const previousFetch = globalThis.fetch;
+  let statuses = 0;
+  globalThis.fetch = async () => { statuses++; return new Response(JSON.stringify({ authenticated: true })); };
+  const client = new webClient.constructor();
+  await client.connect();
+  const local = FakeWebSocket.instance;
+  const sid = 'clouds_0123456789abcdef01234567_c2Vzc18x';
+  const received = [];
+  const off = client.on('chat.chunk', ({payload}) => received.push(payload));
+  try {
+    const p1 = client.request('models.list', { execution_target: 'cloud' });
+    const p2 = client.request('config.get', { execution_target: 'cloud' });
+    await new Promise(r => setTimeout(r, 10));
+    const cloud = FakeWebSocket.instance;
+    assert.notEqual(cloud, local);
+    assert.match(cloud.url, /\/api\/v1\/data-sync\/ws$/);
+    assert.equal(statuses, 1);
+    assert.equal(cloud.sentRequests.length, 0, 'transport open must wait for fresh Cloud authorization');
+    cloud.receive({ type: 'event', event: 'connection.ack', payload: { transport: 'cloud-bridge' } });
+    await new Promise(r => setTimeout(r, 0));
+    for (const request of cloud.sentRequests) cloud.receive({ type: 'res', id: request.id, ok: true, payload: {} });
+    await Promise.all([p1, p2]);
+    for (const method of ['chat.send', 'chat.user_answer', 'chat.interrupt', 'history.get']) {
+      const p = client.request(method, { session_id: sid });
+      await new Promise(r => setTimeout(r, 0));
+      assert.equal(cloud.lastRequest.method, method);
+      cloud.receive({ type: 'res', id: cloud.lastRequest.id, ok: true, payload: {} });
+      await p;
+    }
+    cloud.receive({ type: 'event', event: 'chat.chunk', payload: { session_id: sid, content: 'cloud' } });
+    assert.deepEqual(received, [{ session_id: sid, content: 'cloud' }]);
+    assert.equal(local.sentRequests.length, 0);
+  } finally { off(); await client.disconnect(); globalThis.fetch = previousFetch; }
+});
+
+test('a new Local session never inherits a Cloud previous-session reference', async () => {
+  const client = new webClient.constructor();
+  await client.connect();
+  const socket = FakeWebSocket.instance;
+  try {
+    const p = client.request('session.create', { project_id: 'local-project',
+      previous_session_id: 'clouds_0123456789abcdef01234567_c2Vzc18x', previous_mode: 'agent' });
+    await new Promise(r => setTimeout(r, 0));
+    assert.deepEqual(socket.lastRequest.params, { project_id: 'local-project' });
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: {} });
+    await p;
+  } finally { await client.disconnect(); }
+});
+
+test('cloud completion cannot clear a still-running Local task indicator', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ authenticated: true }));
+  const client = new webClient.constructor();
+  await client.connect();
+  const local = FakeWebSocket.instance, states = [];
+  const off = client.on('task.global_running', ({payload}) => states.push(payload.running));
+  try {
+    const p = client.request('config.get', { execution_target: 'cloud' });
+    await new Promise(r => setTimeout(r, 10));
+    const cloud = FakeWebSocket.instance;
+    cloud.receive({type:'event',event:'connection.ack',payload:{transport:'cloud-bridge'}});
+    await new Promise(r => setTimeout(r, 0));
+    cloud.receive({type:'res',id:cloud.lastRequest.id,ok:true,payload:{}});await p;
+    local.receive({type:'event',event:'task.global_running',payload:{running:true}});
+    cloud.receive({type:'event',event:'task.global_running',payload:{running:false}});
+    local.receive({type:'event',event:'task.global_running',payload:{running:false}});
+    assert.deepEqual(states,[true,true,false]);
+  } finally { off();await client.disconnect();globalThis.fetch=previousFetch; }
+});
+
+
+test('cloud history starts without Local readiness and exposes only authorized Cloud readiness', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ authenticated: true }));
+  const client = new webClient.constructor(), ready = [];
+  const off = client.on('connection.cloud_ready', event => ready.push(event.payload));
+  try {
+    const read = client.request('history.get', { session_id: 'clouds_0123456789abcdef01234567_c2Vzc18x' });
+    await new Promise(r => setTimeout(r, 10));
+    const socket = FakeWebSocket.instance;
+    assert.equal(client.getState(), 'idle');
+    assert.equal(socket.sentRequests.length, 0);
+    assert.deepEqual(ready, []);
+    socket.receive({ type: 'event', event: 'connection.ack', payload: { transport: 'cloud-bridge' } });
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(ready.length, 1);
+    assert.equal(socket.lastRequest.method, 'history.get');
+    socket.receive({ type: 'res', id: socket.lastRequest.id, ok: true, payload: {} });
+    await read;
+    assert.equal(client.getState(), 'idle');
+  } finally { off(); await client.disconnect(); globalThis.fetch = previousFetch; }
+});

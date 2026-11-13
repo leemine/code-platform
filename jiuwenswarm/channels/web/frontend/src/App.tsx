@@ -1,3 +1,4 @@
+import { onLocalCloudAccountChange } from './features/cloudWorkspace/localCloudAccountClient';
 import type { Permission } from './types';
 import { providerPermissionProfiles, type RuntimePermissionStatus } from './config/permissionProfiles';
 import { isConversationModelGroupBlocked } from './multi-session/state/conversationModelSelection';
@@ -16,7 +17,7 @@ import { AssetPublishHost } from './components/AssetPublishDrawer';
  * 应用主布局，整合所有组件
  */
 
-import { useState, useCallback, useEffect, useRef, Component, ReactNode, useMemo, lazy, Suspense, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, Component, ReactNode, useMemo, lazy, Suspense, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { usePromptSuggestionBox } from './hooks/usePromptSuggestionBox';
 import { DesktopTextEditContextMenu } from './components/DesktopTextEditContextMenu';
@@ -87,7 +88,7 @@ import { readAgentTemplateName } from './features/agentIdentity';
 import { normalizeTeamLeaderIdentity } from './features/teamLeaderIdentity';
 import { normalizeTeamGroupIdentity } from './features/teamGroupIdentity';
 import { useWebSocket, mergePersistedGoalCompletionMessages, stampGoalObjectiveMessages, useResponsiveLayout, useResponsivePanelResize } from './hooks';
-import { webClient, webRequest } from './services/webClient';
+import { webClient, webRequest, isCloudResource } from './services/webClient';
 import { attachTeamSession, resetTeamAttachments } from './services/teamAttach';
 import type { WorkflowRun } from './components/teamArea/workflowTypes';
 import { useTeamPanelState } from './features/teamPanelState';
@@ -289,6 +290,11 @@ function restoreSessionModelSelection(
 ): void {
   const store = useSessionStore.getState();
   const restoredSelection = parseModelSelection(modelSelection);
+  if (isCloudResource(sessionId)) {
+    store.setSelectedModelSelection(sessionId, restoredSelection);
+    if (modelName && !restoredSelection) store.setSelectedModelName(sessionId, modelName);
+    return;
+  }
   if (restoredSelection) {
     // Catalog often arrives after session.get_metadata on refresh (#5860). Keep the
     // server selection until models.list is ready; do not clear or write back yet.
@@ -322,6 +328,7 @@ function restoreSessionModelSelection(
 }
 
 function getWorkContextForSession(sessionId: string): {
+  execution_target?: 'cloud';
   project_id?: string;
   project_dir?: string;
   work_mode?: WorkMode;
@@ -332,7 +339,8 @@ function getWorkContextForSession(sessionId: string): {
     sessionState.currentSession?.session_id === sessionId
       ? sessionState.currentSession
       : sessionState.sessions.find((item) => item.session_id === sessionId);
-  const selectedProject = workspaceState.selectedProject;
+  const selectedProject = isCloudResource(sessionId) ? null : sessionId === NEW_CONVERSATION_ID && workspaceState.workMode === 'code' && workspaceState.codeLocation === 'cloud'
+    ? workspaceState.cloudProject : workspaceState.selectedProject;
 
   // work_mode 取值顺序与 hooks/useWebSocket.ts 的 getSessionWorkMode 一致：
   // session → selectedProject → 全局 workMode。用 .trim() 过滤空白而非纯 falsy
@@ -347,6 +355,7 @@ function getWorkContextForSession(sessionId: string): {
   ) as WorkMode | undefined;
 
   return {
+    ...(sessionId === NEW_CONVERSATION_ID && workspaceState.workMode === 'code' && workspaceState.codeLocation === 'cloud' ? { execution_target: 'cloud' as const } : {}),
     project_id: session?.project_id || selectedProject?.project_id || undefined,
     project_dir: session?.project_dir || selectedProject?.project_dir || undefined,
     work_mode,
@@ -502,6 +511,29 @@ function AppContent({
 }) {
   const { t, i18n } = useTranslation();
   const { route, navigate } = useChatRoute();
+  useEffect(() => onLocalCloudAccountChange(() => {
+    const sessions = useSessionStore.getState();
+    for (const id of Object.keys(sessions.runtimes).filter(isCloudResource)) {
+      useSessionStore.getState().removeRuntime(id);
+      useChatStore.getState().removeRuntime(id);
+      useTodoStore.getState().removeRuntime(id);
+      useHarnessStore.getState().removeRuntime(id);
+      useGoalStore.getState().removeRuntime(id);
+      usePlanStore.getState().removeRuntime(id);
+      useSubagentStore.getState().removeRuntime(id);
+    }
+    useSessionStore.setState({ sessions: sessions.sessions.filter(s => !isCloudResource(s.session_id)),
+      currentSession: isCloudResource(sessions.currentSession?.session_id) ? null : sessions.currentSession });
+    const workspace = useWorkspaceStore.getState();
+    workspace.setCloudProject(null);
+    const draft = useSessionStore.getState().runtimes[NEW_CONVERSATION_ID];
+    if (draft?.executionTarget === 'cloud') useSessionStore.setState(state => ({ runtimes: { ...state.runtimes,
+      [NEW_CONVERSATION_ID]: { ...draft, selectedModelName: null, selectedModelSelection: null, executionProvider: 'harness' },
+    } }));
+    useWorkspaceStore.setState({ projectSessions: Object.fromEntries(Object.entries(workspace.projectSessions).filter(([id]) => !isCloudResource(id))),
+      pinnedSessions: workspace.pinnedSessions.filter(s => !isCloudResource(s.session_id)) });
+    if (isCloudResource(useChatStore.getState().activeSessionId)) navigate({ kind: 'chat-new' }, { replace: true });
+  }), [navigate]);
   const tRef = useRef(t);
   // 优先使用存储的会话 ID，避免每次刷新创建新会话
   const [sessionId, setSessionId] = useState<string>(() => {
@@ -806,7 +838,7 @@ function AppContent({
     }
   }, [navigate, route, setSecondarySidebarCollapsed, setSingleAgentPanelExpanded, setTeamAreaExpanded, setToolPanelHidden]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     ensureSessionRuntimes(sessionId);
     useChatStore.getState().setActiveSessionId(sessionId);
     useSubagentStore.getState().hydrateRuntime(sessionId);
@@ -1926,6 +1958,14 @@ function AppContent({
         }
         return null;
       }
+      if (isCloudResource(targetSessionId) && session.project_id
+          && useWorkspaceStore.getState().cloudProject?.project_id !== session.project_id) {
+        void request<{ projects: ProjectInfo[] }>('project.list', { execution_target: 'cloud', work_mode: 'code' }).then(value => {
+          if (sessionIdRef.current !== targetSessionId) return;
+          const project = value.projects.find(p => p.project_id === session.project_id);
+          if (project) useWorkspaceStore.getState().setCloudProject(project);
+        }).catch(() => {});
+      }
       if (Array.isArray(queuedMessages)) {
         useChatStore.getState().reconcileQueuedSessionMessageSnapshot(
           targetSessionId,
@@ -2046,7 +2086,8 @@ function AppContent({
       return session;
     } catch (error) {
       console.warn('Failed to fetch session metadata:', error);
-      if (sessionIdRef.current === targetSessionId) {
+      // A transport/authority failure is not evidence that a session was deleted.
+      if (sessionIdRef.current === targetSessionId && (error as { code?: string })?.code === 'NOT_FOUND') {
         setMissingSessionId(targetSessionId);
       }
       return null;
@@ -2593,13 +2634,14 @@ function AppContent({
     };
   }, [initialDataLoaded, isConnected, loadProjects]);
 
-  useEffect(() => {
-    if (!isConnected || !routeSessionId) {
+  const metadataTransportReady = isConnected || isCloudResource(routeSessionId);
+  useLayoutEffect(() => {
+    if (!metadataTransportReady || !routeSessionId) {
       setMissingSessionId(null);
       return;
     }
     void loadSessionMetadata(routeSessionId);
-  }, [isConnected, loadSessionMetadata, routeSessionId]);
+  }, [metadataTransportReady, loadSessionMetadata, routeSessionId]);
 
   useEffect(() => {
     if (!isConnected || !sessionId) return;
@@ -2618,6 +2660,15 @@ function AppContent({
     sessionId,
     setHistoryPagerMeta,
   ]);
+
+  useEffect(() => webClient.on('connection.cloud_ready', () => {
+    const sid = sessionIdRef.current;
+    if (!isCloudResource(sid)) return;
+    void loadSessionMetadata(sid);
+    if (!historyRestoreHandlesRef.current.has(sid) && !useChatStore.getState().runtimes[sid]?.historyPagerMeta) {
+      setHistoryBootstrapKey(key => key + 1);
+    }
+  }), [loadSessionMetadata]);
 
   // 聊天处理完成后更新本地会话元数据，以便拾取自动生成的标题等更新。
   const prevProcessingBySessionRef = useRef(new Map<string, boolean>());
@@ -2662,9 +2713,11 @@ function AppContent({
     });
   }, [isConnected, loadPersonalContextConfig]);
 
-  // 当会话 ID 变化或页面加载时，自动加载历史会话
-  useEffect(() => {
-    if (!isConnected || !sessionId || sessionId === NEW_CONVERSATION_ID) return;
+  // Start cloud restoration before auxiliary passive effects and independently
+  // of Local readiness. Transport authorization still completes before sending.
+  const historyTransportReady = isConnected || isCloudResource(sessionId);
+  useLayoutEffect(() => {
+    if (!historyTransportReady || !sessionId || sessionId === NEW_CONVERSATION_ID) return;
     const forceRefresh = forcedHistoryRefreshRef.current.delete(sessionId);
     
     if (!forceRefresh && sessionIdsCreatedInThisPageRef.current.has(sessionId)) {
@@ -2757,6 +2810,7 @@ function AppContent({
     // 开始历史会话加载
     const restoreHandle = beginHistoryRestore({
       sessionId: sessionId,
+      deferTimeoutUntilRequest: isCloudResource(sessionId),
       requestNextBatch: (cursor) => request(HISTORY_GET_METHOD, {
         session_id: sessionId,
         cursor,
@@ -2989,7 +3043,7 @@ function AppContent({
           session_id: sessionId,
           cursor: null,
           limit: 50,
-        });
+        }, isCloudResource(sessionId) ? { onRequestId: () => restoreHandle.requestStarted?.() } : undefined);
       } catch (error) {
         historyRestoreFromPanelHintRef.current = false;
         restoreHandle.dispose();
@@ -3012,7 +3066,7 @@ function AppContent({
       }
     })();
   }, [
-    isConnected,
+    historyTransportReady,
     sessionId,
     historyBootstrapKey,
     request,
@@ -3352,6 +3406,7 @@ function AppContent({
         createParams.previous_session_id = previousSession.sessionId;
         createParams.previous_mode = previousSession.mode;
       }
+      if (workContext.execution_target) createParams.execution_target = workContext.execution_target;
       Object.assign(createParams, useSessionStore.getState().getModelSelectionPayload(NEW_CONVERSATION_ID), { execution_provider: runtimeSettings.executionProvider });
       if (workContext.project_id) createParams.project_id = workContext.project_id;
       if (workContext.project_dir) createParams.project_dir = workContext.project_dir;
@@ -3574,6 +3629,7 @@ function AppContent({
           createParams.previous_session_id = previousSession.sessionId;
           createParams.previous_mode = previousSession.mode;
         }
+        if (workContext.execution_target) createParams.execution_target = workContext.execution_target;
         Object.assign(createParams, useSessionStore.getState().getModelSelectionPayload(NEW_CONVERSATION_ID), { execution_provider: runtimeSettings.executionProvider });
         if (workContext.project_id) {
           createParams.project_id = workContext.project_id;

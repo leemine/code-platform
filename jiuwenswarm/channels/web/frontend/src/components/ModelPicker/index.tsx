@@ -18,6 +18,7 @@ import { ModelProviderIcon } from '../ModelProviderIcon';
 import ModelGroupIcon from '../../assets/model-group.svg?react';
 
 interface ModelPickerProps {
+  catalog?: { models: ModelEntry[]; groups: ModelGroup[] };
   value: string | null;
   /** Both conversation and scheduled-task callers receive the canonical model_name. */
   onChange: (modelName: string) => void;
@@ -74,10 +75,13 @@ export default function ModelPicker({
   excludeFreeModels = false,
   testIdPrefix = 'model-picker',
   unavailableSelectionLabel,
+  catalog,
 }: ModelPickerProps): JSX.Element {
   const { t } = useTranslation();
-  const allModels = useSessionStore((state) => state.chatAvailableModels);
-  const catalogModels = useSessionStore((state) => state.availableModels);
+  const localModels = useSessionStore((state) => state.chatAvailableModels);
+  const localCatalogModels = useSessionStore((state) => state.availableModels);
+  const allModels = catalog?.models ?? localModels;
+  const catalogModels = catalog?.models ?? localCatalogModels;
   const models = useMemo(
     () => (excludeFreeModels ? allModels.filter((model) => model.is_free !== true) : allModels),
     [allModels, excludeFreeModels],
@@ -87,7 +91,8 @@ export default function ModelPicker({
   const { tooltip: optionTooltip, handlers: optionTooltipHandlers } = useAdaptiveTooltip({
     placement: 'right',
   });
-  const modelGroups = useSessionStore((state) => state.availableModelGroups);
+  const localGroups = useSessionStore((state) => state.availableModelGroups);
+  const modelGroups = catalog?.groups ?? localGroups;
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<CSSProperties | null>(null);
   const [activePlanKey, setActivePlanKey] = useState<string | null>(null);

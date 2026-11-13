@@ -14,6 +14,9 @@ import i18n from '../i18n';
 import { GoalRecord } from '../types/goal';
 import { createSessionEventGate } from './sessionEventGate';
 import { RuntimeResume } from './runtimeResume';
+import { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
+export { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
+import { localCloudAccountRequest, onLocalCloudAccountChange, requestLocalCloudLogin } from '../features/cloudWorkspace/localCloudAccountClient';
 
 type EventHandler = (event: WsEvent) => void;
 type TypedEventHandler<TPayload> = (event: WsEvent & { payload: TPayload }) => void;
@@ -80,6 +83,15 @@ function logDevWsTraffic(entry: DevWsLogEntry): void {
 }
 
 class WebClient {
+  constructor(private readonly cloud = false) {}
+  private preparing: Promise<void> | null = null;
+  private accountGeneration = 0;
+  private cloudReady?: () => void;
+  resetCloudAccount(): void {
+    this.accountGeneration++;
+    this.runtimeResume.clear();
+    void this.disconnect("cloud account changed");
+  }
   private readonly runtimeResume = new RuntimeResume();
   private resumeOwner = '';
   private connectedOnce = false;
@@ -132,13 +144,28 @@ class WebClient {
   }
 
   async connect(options: WebConnectOptions = {}): Promise<void> {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN && this.state === 'ready') {
       return;
     }
     if (this.connectPromise) {
       return this.connectPromise;
     }
+    if (!this.cloud) return this.connectTransport(options);
+    if (this.preparing) return this.preparing;
+    const generation = this.accountGeneration;
+    this.preparing = (async () => {
+      const identity = await localCloudAccountRequest('status');
+      if (generation !== this.accountGeneration) throw this.createWebError('Cloud account changed', 'UNAUTHORIZED');
+      if (!identity.authenticated) {
+        requestLocalCloudLogin(() => {});
+        throw this.createWebError(i18n.t('localCloudAccount.loginRequired'), 'UNAUTHORIZED');
+      }
+      return this.connectTransport(options);
+    })().finally(() => { this.preparing = null; });
+    return this.preparing;
+  }
 
+  private connectTransport(options: WebConnectOptions): Promise<void> {
     this.lastConnectOptions = options;
     const owner = resolveUserId() || '';
     if (owner !== this.resumeOwner) this.runtimeResume.clear();
@@ -153,6 +180,28 @@ class WebClient {
       this.ws = ws;
       const rejectClosedConnection = () =>
         reject(this.createWebError(i18n.t('network.connectionClosed'), 'WS_CLOSED', undefined, false));
+      let readinessTimer: number | undefined;
+      const clearReadiness = () => { if (readinessTimer !== undefined) window.clearTimeout(readinessTimer); };
+      const ready = () => {
+        if (this.ws !== ws || this.state === 'ready') return;
+        clearReadiness();
+        this.cloudReady = undefined;
+        this.reconnectAttempts = 0;
+        this.updateState('ready');
+        this.connectPromise = null;
+        resolve();
+        if (this.connectedOnce) void this.resumeExecutions();
+        this.connectedOnce = true;
+      };
+      if (this.cloud) {
+        this.cloudReady = ready;
+        readinessTimer = window.setTimeout(() => {
+          if (this.ws !== ws) return;
+          this.manualClose = true;
+          reject(this.createWebError(i18n.t('network.wsError'), 'WS_NOT_READY', undefined, true));
+          ws.close(1000, 'cloud readiness timeout');
+        }, 175_000);
+      }
 
       ws.onopen = () => {
         if (this.ws !== ws) {
@@ -163,12 +212,7 @@ class WebClient {
           direction: 'lifecycle',
           data: { event: 'open', url },
         });
-        this.reconnectAttempts = 0;
-        this.updateState('ready');
-        this.connectPromise = null;
-        resolve();
-        if (this.connectedOnce) void this.resumeExecutions();
-        this.connectedOnce = true;
+        if (!this.cloud) ready();
       };
 
       ws.onmessage = (event) => {
@@ -177,6 +221,7 @@ class WebClient {
       };
 
       ws.onerror = () => {
+        clearReadiness();
         if (this.ws !== ws) {
           rejectClosedConnection();
           return;
@@ -193,6 +238,7 @@ class WebClient {
       };
 
       ws.onclose = (closeEvent) => {
+        clearReadiness();
         if (this.ws !== ws) {
           rejectClosedConnection();
           return;
@@ -208,6 +254,8 @@ class WebClient {
         });
         this.ws = null;
         this.connectPromise = null;
+        this.cloudReady = undefined;
+        rejectClosedConnection();
         this.rejectAllPending(
           this.createWebError(
             i18n.t('network.connectionClosedWithCode', { code: closeEvent.code }),
@@ -216,7 +264,7 @@ class WebClient {
             true,
           ),
         );
-        if (this.manualClose || closeEvent.code === 1000) {
+        if (this.manualClose || closeEvent.code === 1000 || this.cloud && closeEvent.code === 1008) {
           this.updateState('closed');
           return;
         }
@@ -460,6 +508,10 @@ class WebClient {
     if (message.type === 'res') {
       this.resolvePending(message);
       return;
+    }
+
+    if (this.cloud && message.event === 'connection.ack' && message.payload.transport === 'cloud-bridge') {
+      this.cloudReady?.();
     }
 
     if (!this.runtimeResume.observe(message)) {
@@ -724,6 +776,7 @@ class WebClient {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const base = wsBase || `${protocol}//${host}`;
+    if (this.cloud) return `${base.replace(/\/ws(?:\/gateway)?$/, '')}/api/v1/data-sync/ws`;
     const path = base.endsWith('/ws') || base.endsWith('/ws/gateway') ? '' : '/ws';
     const params = new URLSearchParams();
     if (options.provider) params.set('provider', options.provider);
@@ -767,7 +820,79 @@ class WebClient {
   }
 }
 
-export const webClient = new WebClient();
+function cloudRequestTarget(params?: Record<string, unknown>): boolean {
+  return params?.execution_target === 'cloud' || ['session_id', 'project_id', 'conversation_id'].some(
+    key => isCloudResource(params?.[key]),
+  ) || ['session_ids', 'project_ids'].some(key => Array.isArray(params?.[key]) && (params![key] as unknown[]).some(isCloudResource));
+}
+
+/** One original client per transport; cloud resource addresses never reach Local. */
+class RoutedWebClient extends WebClient {
+  private readonly remote = new WebClient(true);
+
+  private accountSubscription?: () => void;
+
+  private cloudClient(): WebClient {
+    if (!this.accountSubscription && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      this.accountSubscription = onLocalCloudAccountChange(() => this.remote.resetCloudAccount());
+    }
+    return this.remote;
+  }
+
+  override on<TPayload = Record<string, unknown>>(eventName: string, handler: TypedEventHandler<TPayload>): () => void {
+    if (eventName === 'task.global_running') {
+      const running = { local: false, cloud: false };
+      const observe = (side: 'local' | 'cloud') => (event: WsEvent & { payload: TPayload }) => {
+        running[side] = Boolean(event.payload.running);
+        handler({ ...event, payload: { ...event.payload, running: running.local || running.cloud } });
+      };
+      const local = super.on(eventName, observe('local'));
+      const remote = this.remote.on(eventName, observe('cloud'));
+      return () => { local(); remote(); };
+    }
+    if (eventName === 'connection.cloud_ready') {
+      return this.remote.on<TPayload>('connection.ack', event => {
+        if ((event.payload as Record<string, unknown>).transport === 'cloud-bridge') handler(event);
+      });
+    }
+    const local = super.on(eventName, handler);
+    // Cloud configuration invalidates only its own display catalog.
+    const remote = eventName.startsWith('connection.') ? () => {} : this.remote.on(eventName,
+      eventName === 'models.updated' || eventName === 'config.changed'
+        ? () => { window.dispatchEvent(new Event('jiuwenswarm-cloud-catalog-refresh')); }
+        : handler);
+    return () => { local(); remote(); };
+  }
+
+  override suspendSessionEvents(sessionId: string): () => void {
+    return isCloudResource(sessionId) ? this.remote.suspendSessionEvents(sessionId) : super.suspendSessionEvents(sessionId);
+  }
+
+  override request<T = unknown>(method: string, params?: Record<string, unknown>, options: WebRequestOptions = {}): Promise<T> {
+    if (cloudRequestTarget(params)) return this.cloudClient().request<T>(method, params, options);
+    if (method === 'session.create' && isCloudResource(params?.previous_session_id)) {
+      const localParams = { ...params };
+      delete localParams.previous_session_id; delete localParams.previous_mode;
+      return super.request<T>(method, localParams, options);
+    }
+    return super.request<T>(method, params, options);
+  }
+
+  override sendFireAndForget(method: string, params?: Record<string, unknown>, options: WebRequestOptions = {}): Promise<void> {
+    return cloudRequestTarget(params) ? this.cloudClient().sendFireAndForget(method, params, options) : super.sendFireAndForget(method, params, options);
+  }
+
+  override async disconnect(reason = 'User disconnect'): Promise<void> {
+    if (reason !== 'connect options changed') {
+      await this.remote.disconnect(reason);
+      this.accountSubscription?.();
+      this.accountSubscription = undefined;
+    }
+    await super.disconnect(reason);
+  }
+}
+
+export const webClient = new RoutedWebClient();
 
 export async function webRequest<T = unknown>(
   method: string,

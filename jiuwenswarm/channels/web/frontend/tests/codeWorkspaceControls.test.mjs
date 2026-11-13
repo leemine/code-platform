@@ -23,7 +23,7 @@ before(async()=>{
  globalThis.fetch=async(_url, options)=>{const body=JSON.parse(options.body);calls.push({method:'bridge.'+body.operation,params:body});try{return new Response(JSON.stringify(await request('bridge.'+body.operation,body)),{status:200});}catch(error){return new Response(JSON.stringify({code:error.code}),{status:error.code==='UNAUTHORIZED'?401:409});}};
  globalThis.__workspaceRequest=async(method,params)=>{calls.push({method,params});return request(method,params);};
  globalThis.__workspaceConnection=fn=>{connection=fn;return ()=>{};};
- globalThis.__workspaceStore={selectedProject:null,setSelectedProject:p=>{selected=p;},loadProjects:async()=>{}};
+ globalThis.__workspaceStore={codeLocation:'local',cloudProject:null,setCloudProject:p=>{globalThis.__workspaceStore.cloudProject=p;},setCodeLocation:l=>{globalThis.__workspaceStore.codeLocation=l;},selectedProject:null,setSelectedProject:p=>{selected=p;},loadProjects:async()=>{}};
  const result=await build({stdin:{contents:"export * from './src/components/ChatPanel/CodeWorkspaceControls';",resolveDir:process.cwd(),loader:'ts'},bundle:true,packages:'external',platform:'node',format:'esm',write:false,loader:{'.css':'empty','.svg':'text'},define:{'import.meta.env':'{}'},plugins:[{name:'boundary',setup(b){
  b.onResolve({filter:/services\/webClient$/},()=>({path:'transport',namespace:'workspace-test'}));
  b.onResolve({filter:/stores\/workspaceStore$/},()=>({path:'store',namespace:'workspace-test'}));
@@ -32,7 +32,7 @@ before(async()=>{
  await mkdir('node_modules/.cache/code-workspace',{recursive:true});await writeFile('node_modules/.cache/code-workspace/test.mjs',result.outputFiles[0].text);api=await import('../node_modules/.cache/code-workspace/test.mjs');
  await i18next.init({lng:'zh',resources:{zh:{translation:JSON.parse(await readFile('src/i18n/locales/zh.json','utf8'))}}});
 });
-beforeEach(()=>{calls=[];blocked=false;selected=null;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1',state:'ALLOCATED'}:page();root=createRoot(document.getElementById('root'));});
+beforeEach(()=>{globalThis.__workspaceStore.codeLocation='local';globalThis.__workspaceStore.cloudProject=null;calls=[];blocked=false;selected=null;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1',state:'ALLOCATED'}:page();root=createRoot(document.getElementById('root'));});
 afterEach(async()=>{await act(async()=>root.unmount());});after(()=>dom.window.close());
 async function mount(enabled=true,navigationBlocked=false){await act(async()=>root.render(h(I18nextProvider,{i18n:i18next},h(api.CodeWorkspaceControls,{enabled,navigationBlocked,disabled:false,onBlockedChange:bindBlocked,localControl:h('button',{'data-testid':'existing-local-picker'},'original local')}))));await tick();}
 test('cloud has three controls and all original cloud actions; no automatic ensure',async()=>{
@@ -84,10 +84,10 @@ test('cloud selection survives a late current-host catalog',async()=>{
  let finish;request=()=>new Promise(r=>{finish=r;});await mount();await choose('cloud');await act(async()=>finish(catalog('local')));await tick();assert.equal(query('chat-panel-code-location-trigger').textContent,'云端');assert.equal(calls.length,1);
 });
 test('local page opens and creates cloud directories through the bridge without replacing the local project',async()=>{
- const remoteProject={project_id:'remote',project_dir:'/cloud/code/new',work_mode:'code',name:'new'};
+ const remoteProject={project_id:'cloudp_0123456789abcdef01234567_cHJval8x',project_dir:'/cloud/code/new',work_mode:'code',name:'new'};
  request=async(method,params)=>method==='workspace.locations'?catalog('local'):method==='bridge.mkdir'?{path:params.name,created:true}:method==='bridge.open'?{project:remoteProject}:page();
  await mount();const href=window.location.href;await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');await text('chat-panel-code-folder-name','new');await click('chat-panel-code-workspace-confirm');await click('chat-panel-code-workspace-confirm');
- assert.equal(selected,null);assert.equal(window.location.href,href);assert.equal(blocked,true);assert.match(query('chat-panel-code-cloud-trigger').textContent,/new/);assert.equal(query('chat-panel-code-cloud-execution-pending'),null);
+ assert.equal(selected,null);assert.equal(window.location.href,href);assert.equal(blocked,false);assert.match(query('chat-panel-code-cloud-trigger').textContent,/new/);assert.equal(query('chat-panel-code-cloud-execution-pending'),null);
  assert.deepEqual(calls.map(row=>row.method),['workspace.locations','bridge.list','bridge.mkdir','bridge.open']);
  await choose('local');assert.equal(blocked,false);
 });

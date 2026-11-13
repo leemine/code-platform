@@ -93,7 +93,7 @@ import { useOrganizationConversationKey } from '../../features/teamOrganization/
 import { useOrganizationProcessing } from '../../features/teamOrganization/processing';
 import { requestLogin, useAuthStore } from '../../stores/authStore';
 import type { PromptSuggestionBox } from '../../hooks/usePromptSuggestionBox';
-import { webClient, webRequest } from '../../services/webClient';
+import { isCloudResource, webClient, webRequest } from '../../services/webClient';
 import {
   buildDynamicTopicStarterSlate,
   buildDirectInputEvent,
@@ -2078,6 +2078,9 @@ export const ChatPanel = React.memo(function ChatPanel({
     if (!isConnected || !activeSessionId || hasConversation) {
       return;
     }
+    // During creation the project prop can advance before the active editor.
+    // Never send its local/new sentinel into a cloud resource request.
+    if (isCloudResource(topicStarterProjectId) && !isCloudResource(activeSessionId)) return;
     const requestSessionId = activeSessionId;
     const requestParams = buildTopicStarterRequest(requestSessionId, topicStarterProjectId);
     let active = true;

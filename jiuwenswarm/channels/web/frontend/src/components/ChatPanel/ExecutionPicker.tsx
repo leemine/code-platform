@@ -7,10 +7,12 @@ import { webRequest } from '../../services/webClient';
 import { NEW_CONVERSATION_ID } from '../../multi-session/state/newConversationLifecycle';
 import { SETTINGS_CONFIG_CHANGED_EVENT } from '../../features/settings/services/settingsContract';
 import { parseExecutionProviderCatalog, type ExecutionProviderOption } from '../../services/executionProviderCatalog';
+import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
 import './ExecutionPicker.css';
 
 export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: string; disabled?: boolean }) {
   const { t } = useTranslation();
+  const cloud = useCloudCatalog(sessionId);
   const draft = sessionId === NEW_CONVERSATION_ID;
   const selectedId = useSessionStore((s) => s.runtimes[sessionId]?.executionProvider ?? 'harness');
   const mode = useSessionStore((s) => s.runtimes[sessionId]?.mode ?? 'agent');
@@ -32,11 +34,16 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
     setOptions(null);
     setError(false);
     setOpen(false);
+    if (cloud.active) {
+      if (cloud.catalog) setOptions(parseExecutionProviderCatalog(cloud.catalog.config.execution_provider_catalog));
+      setError(cloud.error);
+      return;
+    }
     void webRequest<Record<string, unknown>>('config.get').then((config) => {
       if (active) setOptions(parseExecutionProviderCatalog(config.execution_provider_catalog));
     }).catch(() => { if (active) setError(true); });
     return () => { active = false; };
-  }, [sessionId, reload]);
+  }, [sessionId, reload, cloud.active, cloud.catalog, cloud.error]);
   useEffect(() => { setOpen(false); }, [mode, disabled]);
 
   useEffect(() => {
@@ -157,7 +164,7 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
                 type="button"
                 className="chat-mode-select__option"
                 data-testid="chat-panel-execution-retry"
-                onClick={() => setReload((n) => n + 1)}
+                onClick={() => { if (cloud.active) cloud.retry(); else setReload((n) => n + 1); }}
               >
                 <RefreshCw size={14} />
                 {t('chat.executionProvider.retry')}

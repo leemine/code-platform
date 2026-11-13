@@ -102,6 +102,8 @@ jobs:
                   tests/unit_tests/test_session_history_jsonl_read.py
                   tests/unit_tests/test_session_history_cursor.py
                   tests/unit_tests/data_sync
+                  tests/unit_tests/channels/web/test_cloud_proxy_deadline.py
+                  tests/unit_tests/channels/web/test_app_web_ws_tunnel.py
                   tests/unit_tests/test_project_store.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
@@ -154,6 +156,10 @@ jobs:
           npm run test:auth-store
           npm run test:share-image
           npm run test:web-client-runtime-ack
+          npm run test:history-restore-pagination
+          npm run test:chat-model-selection
+          npm run test:execution-provider
+          npm run test:workspace-store
           node --test tests/webSocketStreamBoundary.test.mjs
           npm run test:subagent-history
           npm run test:context-usage

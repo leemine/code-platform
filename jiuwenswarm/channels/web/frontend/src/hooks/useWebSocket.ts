@@ -79,7 +79,7 @@ import {
 } from '../stores/pendingQuestionQueue';
 import { requestLogin } from '../stores/authStore';
 import { describeChatError } from '../features/free-models/chatError';
-import { webClient, requestGoalAction, sendGoalStreamCommand } from '../services/webClient';
+import { isCloudResource, webClient, requestGoalAction, sendGoalStreamCommand } from '../services/webClient';
 import { createStreamDeltaBatcher } from '../services/streamDeltaBatcher';
 import {
   fetchTtsAudio,
@@ -557,7 +557,8 @@ function getSessionWorkMode(sessionId: string): string | undefined {
     sessionStore.currentSession?.session_id === sessionId
       ? sessionStore.currentSession
       : sessionStore.sessions.find((item) => item.session_id === sessionId);
-  const selectedProject = workspaceStore.selectedProject;
+  const selectedProject = isCloudResource(sessionId) ? null : sessionId === NEW_CONVERSATION_ID && workspaceStore.workMode === 'code' && workspaceStore.codeLocation === 'cloud'
+    ? workspaceStore.cloudProject : workspaceStore.selectedProject;
   // 用 .trim() 过滤空白而非纯 falsy 短路：session.work_mode 存在但为空串时，
   // 旧逻辑会 fallback 到全局 workspaceStore.workMode，把 code profile 的会话
   // 路由成 work（profile 由 resolveOutgoingMode 拼进 mode 字段，错位会被后端
@@ -837,7 +838,8 @@ function getSessionWorkContext(sessionId: string): Record<string, unknown> {
     sessionStore.currentSession?.session_id === sessionId
       ? sessionStore.currentSession
       : sessionStore.sessions.find((item) => item.session_id === sessionId);
-  const selectedProject = workspaceStore.selectedProject;
+  const selectedProject = isCloudResource(sessionId) ? null : sessionId === NEW_CONVERSATION_ID && workspaceStore.workMode === 'code' && workspaceStore.codeLocation === 'cloud'
+    ? workspaceStore.cloudProject : workspaceStore.selectedProject;
   const projectId = session?.project_id || selectedProject?.project_id || '';
   const projectDir = session?.project_dir || selectedProject?.project_dir || '';
   // 注意：work_mode 不再 spread 到 chat.send 的 params 里——mode 解析已改认

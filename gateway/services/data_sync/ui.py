@@ -139,8 +139,11 @@ class LocalDirectoryUI:
         self.lock = asyncio.Lock()
         from gateway.services.cloud_workspace_client import WorkspaceConnections
         self.workspaces = WorkspaceConnections(self)
+        from gateway.services.cloud_execution_bridge import CloudExecutionBridge
+        self.execution = CloudExecutionBridge(self)
 
     async def close(self):
+        await self.execution.close()
         await self.workspaces.close()
         await asyncio.to_thread(self.accounts.close)
 
@@ -151,6 +154,7 @@ class LocalDirectoryUI:
             return await asyncio.to_thread(self.accounts.call, "status", token)
         except PermissionError:
             await self.workspaces.discard(token)
+            await self.execution.discard(token)
             raise
 
     async def run(self, identity, token, action, params):

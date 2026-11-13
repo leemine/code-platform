@@ -86,10 +86,15 @@ Cloud paths belong to the routed instance. A browser cannot supply an arbitrary 
 
 Choosing Cloud in the local page immediately reveals cloud controls while retaining the URL, draft and attachments. Explicit environment, directory or folder actions use the existing local cloud-account dialog and same-origin service to access the configured cloud host. Login resumes the original form. Cloud directories do not replace the local project selection, and files are not copied automatically. Deployments reuse the private CODE_PLATFORM_LOCAL_SYNC_CONFIG. Legacy entry URLs remain compatible with older clients, but the new controls do not navigate. The account still has one default environment, prepared through the existing idempotent service.
 
-This candidate connects same-page environment and directory management. Cloud session execution from the local page is not connected yet: sending remains blocked while Cloud is selected to prevent local execution. This is not acceptance of complete Local/Cloud execution switching.
+After selecting and opening a cloud directory, create a cloud session from the local page. Models and execution providers come from the cloud environment. Messages, tool approvals, stopping and history reads use the original cloud session without page navigation. Local project selection remains independent. Signing out closes cloud connections and clears their displayed session state. Reconnection recovers original session state without resending input. This does not copy files or history, or migrate running tasks between hosts.
 
 
 The local sidebar uses the same circular avatar and account menu as the cloud UI. Before sign-in, a user icon opens the sign-in dialog. After sign-in, the avatar shows the first two uppercase username characters (for example, CH); click it to view the full username or sign out. Signing out restores the user icon.
 
 
 The local dialog and cloud page share the account sign-in form. An existing valid session resumes cloud actions without another confirmation. Signing in only restores the form and never submits a creation automatically. Folder names can be entered while directories load, and loading can be dismissed; creation waits for directory validation. HTTP and WebSocket transports are reused while every operation still receives fresh authorization checks.
+
+Directory operations have a 150-second total processing budget, a 155-second browser deadline and a 175-second local Web proxy deadline; ordinary HTTP requests retain 30 seconds. Unknown creation outcomes are not replayed: read back the directory first. Diagnostics contain stage, status and elapsed time, without credentials or directory contents.
+
+
+Cloud history restoration starts before auxiliary initialization and independently of Local connection readiness. Connection setup and history responses have separate timeout budgets; transport failures are not treated as deleted sessions. Reconnection rereads session state and unfinished history without resending user messages. Only concurrent unfinished account status requests are coalesced; authorization remains live.
