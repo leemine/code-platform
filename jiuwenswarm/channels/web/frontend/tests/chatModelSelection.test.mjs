@@ -362,3 +362,19 @@ for (const cachedKind of ['legacy', 'model_group']) {
     });
   }
 }
+
+test('cloud session model IDs and an unconfigured cloud model never fall back to Local', () => {
+  const previous = useSessionStore.getState();
+  const sid = 'clouds_0123456789abcdef01234567_c2Vzc18x';
+  try {
+    const store = useSessionStore.getState();
+    store.setAvailableModels(models, 'main-model');
+    store.ensureRuntime(sid);
+    store.initializeDefaultModel(sid);
+    assert.equal(store.getEffectiveModelName(sid), null);
+    store.setSelectedModelSelection(sid, { type: 'model', id: 'cloud-model-only' });
+    store.setAvailableModels(models, 'single-agent-model');
+    assert.deepEqual(store.getModelSelectionPayload(sid).model_selection, { type: 'model', id: 'cloud-model-only' });
+    assert.equal(store.getEffectiveModelName(sid), null);
+  } finally { useSessionStore.setState(previous, true); }
+});

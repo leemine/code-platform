@@ -5480,7 +5480,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                 />
               )}
               <div ref={workMenuRef} className="chat-work-context-row" data-testid="chat-panel-work-context-row">
-                <CodeWorkspaceControls enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
+                <CodeWorkspaceControls sessionId={activeSessionId ?? undefined} enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
                 <div
                   className={clsx('chat-work-select', workMenuOpen === 'project' && 'chat-work-select--open')}
                   data-testid="chat-panel-work-select"

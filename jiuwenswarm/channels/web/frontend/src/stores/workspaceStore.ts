@@ -5,10 +5,26 @@ import { archivedTaskClient, findBatchSessionResult } from '../features/workspac
 import { persistWorkMode, readStoredWorkMode } from '../features/workspace/workModeStorage';
 import type { ProjectInfo, Session, WorkMode } from '../types';
 import { useChatStore } from './chatStore';
+import { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
 import { useSessionStore } from './sessionStore';
 import { useCronStore } from './cronStore';
 import { parseChatRoute } from '../multi-session/routing/route';
 
+const draftChoices = new Map<string, { selectedModelName: string | null; selectedModelSelection: import('../types').ModelSelection | null; executionProvider: string }>();
+function setDraftTarget(target: 'local' | 'cloud'): void {
+  const state = useSessionStore.getState();
+  const runtime = state.runtimes['new'];
+  if (!runtime || (runtime.executionTarget ?? 'local') === target) return;
+  draftChoices.set(runtime.executionTarget ?? 'local', {
+    selectedModelName: runtime.selectedModelName,
+    selectedModelSelection: runtime.selectedModelSelection,
+    executionProvider: runtime.executionProvider,
+  });
+  useSessionStore.setState({ runtimes: { ...state.runtimes, new: {
+    ...runtime, executionTarget: target, selectedModelName: null, selectedModelSelection: null,
+    executionProvider: 'harness', ...draftChoices.get(target),
+  } } });
+}
 export const PROJECT_SESSION_PAGE_SIZE = 10;
 const DEFAULT_PROJECT_ID = 'default';
 const DEFAULT_CODE_PROJECT_ID = 'default_code';
@@ -44,6 +60,10 @@ interface WorkspaceState {
   sessionVisibility: Record<string, { visibleCount: number }>;
   pinnedSessions: Session[];
   selectedProject: ProjectInfo | null;
+  codeLocation: 'local' | 'cloud';
+  cloudProject: ProjectInfo | null;
+  setCodeLocation: (location: 'local' | 'cloud') => void;
+  setCloudProject: (project: ProjectInfo | null) => void;
   expandedProjectIds: Record<string, boolean>;
   isLoadingProjects: boolean;
   error: string | null;
@@ -325,12 +345,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   sessionVisibility: {},
   pinnedSessions: [],
   selectedProject: null,
+  codeLocation: 'local',
+  cloudProject: null,
+  setCodeLocation: (codeLocation) => {
+    setDraftTarget(get().workMode === 'code' ? codeLocation : 'local');
+    set({ codeLocation });
+  },
+  setCloudProject: (cloudProject) => {
+    if (!cloudProject) draftChoices.delete('cloud');
+    set((state) => ({
+    cloudProject,
+    projects: cloudProject ? [...state.projects.filter(p => p.project_id !== cloudProject.project_id), cloudProject]
+      : state.projects.filter(p => !isCloudResource(p.project_id)),
+    }));
+  },
   expandedProjectIds: {},
   isLoadingProjects: false,
   error: null,
 
   setWorkMode: async (workMode) => {
     if (get().workMode === workMode) return;
+    setDraftTarget(workMode === 'code' ? get().codeLocation : 'local');
     // Invalidate pending lists even when switching back to a previously used mode.
     appliedProjectListRequestId = ++projectListRequestId;
     persistWorkMode(workMode);
@@ -358,7 +393,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (refreshEpoch !== undefined && refreshEpoch !== workspaceRefreshEpoch) return true;
       // Apply results in request order, without making createProject wait for later pending lists.
       if (requestId < appliedProjectListRequestId) return true;
-      const projects = (payload.projects || []).map((project) => (
+      const cloudProject = requestedWorkMode === 'code' ? get().cloudProject : null;
+      const projects = [...(payload.projects || []), ...(cloudProject ? [cloudProject] : [])].map((project) => (
         normalizeProject(project, requestedWorkMode)
       ));
       if (requestedWorkMode === 'design' && !projects.some(isDefaultProject)) {
@@ -462,7 +498,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  setSelectedProject: (project) => set({ selectedProject: project }),
+  setSelectedProject: (project) => {
+    if (isCloudResource(project?.project_id)) {
+      get().setCodeLocation('cloud');
+      set({ cloudProject: project });
+    } else {
+      if (project) get().setCodeLocation('local');
+      set({ selectedProject: project });
+    }
+  },
   toggleProjectExpanded: (projectId) => set((state) => ({
     expandedProjectIds: {
       ...state.expandedProjectIds,

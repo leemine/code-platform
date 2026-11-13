@@ -21,6 +21,7 @@ import type { ModelSelection } from '../../types';
 import ModelPicker from '../ModelPicker';
 import { useTeamSelectorStore } from '../../stores/teamSelectorStore';
 import { useTeamOrganizationUiEnabled } from '../../features/teamOrganization/featureConfig';
+import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
 
 function openModelSettings(): void {
   requestSettingsModule('models');
@@ -46,10 +47,13 @@ function ConversationModelSelector({
   allowModelGroups?: boolean;
 }): JSX.Element | null {
   const { t } = useTranslation();
-  const models = useSessionStore((state) => state.chatAvailableModels);
-  const modelGroups = useSessionStore((state) => state.availableModelGroups);
+  const localModels = useSessionStore((state) => state.chatAvailableModels);
+  const localModelGroups = useSessionStore((state) => state.availableModelGroups);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
   const boundSessionId = sessionId || activeSessionId;
+  const cloud = useCloudCatalog(boundSessionId || NEW_CONVERSATION_ID);
+  const models = cloud.active ? cloud.catalog?.models ?? [] : localModels;
+  const modelGroups = cloud.active ? cloud.catalog?.groups ?? [] : localModelGroups;
   const organizationEnabled = useTeamOrganizationUiEnabled();
   const selectedChildTeam = useTeamSelectorStore((state) => {
     if (!organizationEnabled) return undefined;
@@ -87,7 +91,7 @@ function ConversationModelSelector({
 
   // Deleted/disabled model groups must fall back and be written back (#5424).
   useEffect(() => {
-    if (selectedChildTeam) return;
+    if (selectedChildTeam || cloud.active) return;
     if (!boundSessionId || disabled) return;
     if (groupBlocked && allowModelGroups) return;
     if (!selectedModelSelection) return;
@@ -104,6 +108,12 @@ function ConversationModelSelector({
       return;
     }
     setSelectedModelSelection(boundSessionId, next);
+    if (cloud.active) {
+      const state = useSessionStore.getState(), runtime = state.runtimes[boundSessionId];
+      if (runtime) useSessionStore.setState({ runtimes: { ...state.runtimes, [boundSessionId]: {
+        ...runtime, selectedModelName: next.type === 'model' ? models.find(m => m.model_id === next.id)?.model_name ?? null : null,
+      } } });
+    }
     if (boundSessionId === NEW_CONVERSATION_ID) return;
     void webRequest('session.selection.set', {
       session_id: boundSessionId,
@@ -120,6 +130,7 @@ function ConversationModelSelector({
     groupBlocked,
     selectedModelSelection,
     selectedChildTeam,
+    cloud.active,
     models,
     selectableGroups,
     setSelectedModelSelection,
@@ -127,13 +138,13 @@ function ConversationModelSelector({
   ]);
 
   // Preserve the saved stable choice, even if the feature or its catalog entry is unavailable.
-  const selected = resolveChatModelSelection(models, selectedModelName, defaultModelName);
+  const selected = resolveChatModelSelection(models, selectedModelName, cloud.active ? null : defaultModelName);
   const inferredSelection =
     selectedModelSelection
     ?? selectionFromModel(selected)
     ?? null;
   const catalogPending = isModelCatalogPending(models, modelGroups);
-  const healedSelection = selectedModelSelection
+  const healedSelection = cloud.active ? selectedModelSelection : selectedModelSelection
     && !catalogPending
     && !isModelSelectionAvailable(selectedModelSelection, models, selectableGroups)
     ? resolveAvailableModelSelection(selectedModelSelection, models, selectableGroups)
@@ -151,6 +162,12 @@ function ConversationModelSelector({
     if (!boundSessionId || disabled || useChatStore.getState().getRuntime(boundSessionId)?.isProcessing) return;
     setSelectionError('');
     setSelectedModelSelection(boundSessionId, next);
+    if (cloud.active) {
+      const state = useSessionStore.getState(), runtime = state.runtimes[boundSessionId];
+      if (runtime) useSessionStore.setState({ runtimes: { ...state.runtimes, [boundSessionId]: {
+        ...runtime, selectedModelName: next.type === 'model' ? models.find(m => m.model_id === next.id)?.model_name ?? null : null,
+      } } });
+    }
     if (boundSessionId === NEW_CONVERSATION_ID) return;
     try {
       await webRequest('session.selection.set', {
@@ -167,6 +184,7 @@ function ConversationModelSelector({
   return (
     <div className="chat-model-selector" data-testid="chat-panel-model-selector-wrap">
       <ModelPicker
+        catalog={cloud.active ? { models, groups: modelGroups } : undefined}
         testIdPrefix="chat-panel-model-selector"
         value={selectedChildTeam?.execution_model_name ?? selected?.model_name ?? selectedModelName}
         selection={selectedChildTeam?.execution_model_selection ?? pickerSelection}
@@ -181,8 +199,8 @@ function ConversationModelSelector({
         onSelectionChange={(next) => {
           void persistSelection(next);
         }}
-        disabled={disabled || Boolean(selectedChildTeam)}
-        onAddModel={openModelSettings}
+        disabled={disabled || Boolean(selectedChildTeam) || cloud.active && !cloud.catalog}
+        onAddModel={cloud.active ? undefined : openModelSettings}
       />
       {selectionError ? (
         <div className="chat-model-selector__error" role="alert" data-testid="chat-panel-model-selector-error">

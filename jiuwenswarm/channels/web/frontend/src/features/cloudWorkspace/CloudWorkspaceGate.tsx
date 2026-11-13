@@ -21,6 +21,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   const [identity, setIdentity] = useState<OrganizationStatus | null>(null);
   const epoch = useRef(0);
   const entering = useRef(false);
+  const retryingIdentity = useRef(false);
   const recoveryPhase = useRef<Phase>('entry');
   const identityRef = useRef<OrganizationStatus | null>(null);
 
@@ -125,9 +126,11 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     };
   }, [identity, phase, discard]);
 
-  const retryIdentity = useCallback(async () => {
+  const retryIdentity = useCallback(async (background = false) => {
+    if (retryingIdentity.current) return;
+    retryingIdentity.current = true;
     const generation = epoch.current;
-    setPhase('checking');
+    if (!background) setPhase('checking');
     try {
       const current = await readOrganizationStatus();
       if (generation !== epoch.current) return;
@@ -144,15 +147,26 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       else window.location.reload();
     } catch {
       if (generation === epoch.current) setPhase('unavailable');
+    } finally {
+      retryingIdentity.current = false;
     }
   }, [discard]);
 
   useEffect(() => {
     if (phase !== 'unavailable') return;
-    // Extracted from codeswarm: schedule only after the preceding probe settles.
-    // Do not periodically invalidate a slow successful authentication response.
-    const timer = window.setTimeout(() => void retryIdentity(), 2000);
-    return () => window.clearTimeout(timer);
+    // Keep the error view stable while recovering; never resubmit credentials.
+    // Schedule after settlement, with bounded backoff and one probe in flight.
+    let disposed = false;
+    let delay = 2000;
+    let timer: number;
+    const recover = async () => {
+      await retryIdentity(true);
+      if (disposed) return;
+      delay = Math.min(delay * 2, 30000);
+      timer = window.setTimeout(() => void recover(), delay);
+    };
+    timer = window.setTimeout(() => void recover(), delay);
+    return () => { disposed = true; window.clearTimeout(timer); };
   }, [phase, retryIdentity]);
 
   async function logout() {

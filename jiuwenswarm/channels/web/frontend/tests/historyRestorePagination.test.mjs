@@ -222,3 +222,31 @@ test('each continuation retains the original per-batch restore timeout', async (
     context.mock.timers.reset();
   }
 });
+
+
+test('cloud connection time does not consume the history response budget', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const state = restore({ deferTimeoutUntilRequest: true });
+  try {
+    context.mock.timers.tick(175000);
+    assert.deepEqual(state.calls.failed, []);
+    state.handle.requestStarted();
+    context.mock.timers.tick(29999);
+    assert.deepEqual(state.calls.failed, []);
+    batch(state, null, visibleRecords, null);
+    assert.equal(state.calls.ready.length, 1);
+    state.handle.requestStarted();
+    context.mock.timers.tick(30001);
+    assert.deepEqual(state.calls.failed, []);
+  } finally { state.handle.dispose(); context.mock.timers.reset(); }
+});
+
+test('a sent cloud history read still expires at the original response deadline', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const state = restore({ deferTimeoutUntilRequest: true });
+  try {
+    state.handle.requestStarted();
+    context.mock.timers.tick(30000);
+    assert.equal(state.calls.failed[0].code, 'HISTORY_RESTORE_TIMEOUT');
+  } finally { state.handle.dispose(); context.mock.timers.reset(); }
+});

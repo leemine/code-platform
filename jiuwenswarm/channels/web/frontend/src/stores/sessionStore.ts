@@ -5,6 +5,7 @@
  */
 
 import { create } from 'zustand';
+import { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
 import { parseModelSelection } from '../features/settings/modules/models/modelGroupAdapters';
 import {
   buildConversationModelPayload,
@@ -654,6 +655,7 @@ export interface TeamMemberExecutionEvent {
  * 原 B 类全局字段全部迁移到这里，按 session 隔离。
  */
 export interface SessionRuntime {
+  executionTarget?: 'local' | 'cloud';
   executionProvider: string;
   mode: AgentMode;
   selectedModelName: string | null;
@@ -946,7 +948,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   initializeDefaultModel: (sessionId) => {
     const runtime = get().ensureRuntime(sessionId);
-    if (runtime.selectedModelSelection || runtime.selectedModelName) return;
+    if (isCloudResource(sessionId) || runtime.executionTarget === 'cloud' || runtime.selectedModelSelection || runtime.selectedModelName) return;
     const defaultModelName = get().defaultModelName;
     if (defaultModelName) get().setSelectedModelName(sessionId, defaultModelName);
   },
@@ -961,6 +963,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get();
     const runtime = state.runtimes[sessionId];
     if (!runtime) return null;
+    if (isCloudResource(sessionId) || runtime.executionTarget === 'cloud') return runtime.selectedModelName;
     // Group selections intentionally have no model_name identity; callers that still
     // need a display/legacy name should not invent one from active_model/default.
     if (runtime.selectedModelSelection?.type === 'model_group') {
@@ -1009,7 +1012,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       (model) => model.model_name === effectiveModelName && Boolean(model.model_id?.trim()),
     );
     const selectedModelSelection = runtime?.selectedModelSelection
-      ?? (individualModel?.model_id ? { type: 'model' as const, id: individualModel.model_id.trim() } : null);
+      ?? (!isCloudResource(sessionId) && runtime?.executionTarget !== 'cloud' && individualModel?.model_id
+        ? { type: 'model' as const, id: individualModel.model_id.trim() } : null);
     return buildConversationModelPayload({
       executionProvider: runtime?.executionProvider ?? session?.execution_provider ?? 'harness',
       mode: runtime?.mode,
@@ -2289,7 +2293,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // 选择的模型不受影响。已创建的真实会话 runtime 依然不在此处重置。
       const runtimes = { ...state.runtimes };
       const pendingNewRuntime = runtimes['new'];
-      if (pendingNewRuntime) {
+      if (pendingNewRuntime && pendingNewRuntime.executionTarget !== 'cloud') {
         runtimes['new'] = restoreNewConversationSelection(
           pendingNewRuntime,
           chatModels,
@@ -2303,7 +2307,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setAvailableModelGroups: (groups) => {
     set((state) => {
       const pendingNewRuntime = state.runtimes[TRANSIENT_NEW_CONVERSATION_ID];
-      if (!pendingNewRuntime) return { availableModelGroups: groups };
+      if (!pendingNewRuntime || pendingNewRuntime.executionTarget === 'cloud') return { availableModelGroups: groups };
       // Historical sessions keep a dead selection until ChatModelSelector /
       // session restore can fall back and persist session.selection.set (#5424).
       return {
@@ -2323,7 +2327,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setSelectedModelName: (sessionId, name) => {
     const currentState = get();
     if (!currentState.runtimes[sessionId]) return;
-    const model = name
+    const cloud = isCloudResource(sessionId) || currentState.runtimes[sessionId].executionTarget === 'cloud';
+    const model = name && !cloud
       ? currentState.availableModels.find((entry) => entry.model_name === name)
         ?? currentState.chatAvailableModels.find((entry) => entry.model_name === name)
       : null;
@@ -2374,7 +2379,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const runtime = state.runtimes[sessionId];
       if (!runtime) return state;
       let selectedModelName = runtime.selectedModelName;
-      if (selection?.type === 'model') {
+      if ((isCloudResource(sessionId) || runtime.executionTarget === 'cloud')) {
+        selectedModelName = null;
+      } else if (selection?.type === 'model') {
         const model = state.availableModels.find((entry) => entry.model_id === selection.id)
           ?? state.chatAvailableModels.find((entry) => entry.model_id === selection.id);
         if (model) selectedModelName = model.model_name;
@@ -2392,6 +2399,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         },
       };
     });
-    if (sessionId === TRANSIENT_NEW_CONVERSATION_ID && selection) cacheLastModelSelection(selection);
+    if (sessionId === TRANSIENT_NEW_CONVERSATION_ID && selection && get().runtimes[sessionId]?.executionTarget !== 'cloud') cacheLastModelSelection(selection);
   },
 }));

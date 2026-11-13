@@ -43,6 +43,24 @@ beforeEach((t) => {
   t.mock.method(useCronStore.getState(), 'loadJobs', async () => {});
 });
 
+test('leaving Cloud Code restores Local draft choices and returning retains Cloud choices', async (t) => {
+  t.mock.method(projectRegistryClient, 'list', async () => ({ projects: [] }));
+  useSessionStore.getState().ensureRuntime('new');
+  useSessionStore.getState().setSelectedModelSelection('new', { type: 'model', id: 'local-model' });
+  useWorkspaceStore.getState().setCodeLocation('cloud');
+  useSessionStore.getState().setSelectedModelSelection('new', { type: 'model', id: 'cloud-model' });
+  await useWorkspaceStore.getState().setWorkMode('work');
+  assert.equal(useSessionStore.getState().runtimes.new.executionTarget, 'local');
+  assert.equal(useSessionStore.getState().runtimes.new.selectedModelSelection.id, 'local-model');
+  await useWorkspaceStore.getState().setWorkMode('code');
+  assert.equal(useWorkspaceStore.getState().codeLocation, 'cloud');
+  assert.equal(useSessionStore.getState().runtimes.new.executionTarget, 'cloud');
+  assert.equal(useSessionStore.getState().runtimes.new.selectedModelSelection.id, 'cloud-model');
+  useWorkspaceStore.getState().setSelectedProject(project);
+  assert.equal(useWorkspaceStore.getState().codeLocation, 'local');
+  assert.equal(useSessionStore.getState().runtimes.new.selectedModelSelection.id, 'local-model');
+});
+
 test('a late pre-creation list cannot clear the newly created project selection', async (t) => {
   const oldList = deferred();
   let calls = 0;

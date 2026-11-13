@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 12 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 13 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -23,10 +23,10 @@ generated: true
 | [gateway](#module-6) | 3 |
 | [gateway/channel_manager/web](#module-7) | 1 |
 | [gateway/common](#module-8) | 1 |
-| [gateway/extensions/data_sync](#module-9) | 2 |
-| [gateway/services](#module-10) | 1 |
+| [gateway/extensions/data_sync](#module-9) | 3 |
+| [gateway/services](#module-10) | 2 |
 | [gateway/services/data_sync](#module-11) | 1 |
-| [jiuwenswarm/channels/web](#module-12) | 1 |
+| [jiuwenswarm/channels/web](#module-12) | 2 |
 | [jiuwenswarm/channels/web/frontend](#module-13) | 4 |
 | [jiuwenswarm/channels/web/frontend/src/components/ChatPanel](#module-14) | 1 |
 | [jiuwenswarm/common](#module-15) | 2 |
@@ -114,6 +114,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [F-20261112-1545-platform-directory-sync](F_20261112_1545_platform-directory-sync.md) | F | P1S-02 显式项目目录同步首轮候选 | leemine | gateway/extensions/data_sync, gateway/services/data_sync, jiuwenswarm/data_sync, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend/src/components/ChatPanel, gateway/channel_manager/web | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/store.py, jiuwenswarm/data_sync/connector.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/data_sync/__main__.py, jiuwenswarm/server/runtime/session/project_store.py, tests/unit_tests/data_sync, tests/unit_tests/cloud_workspace/test_data_sync_cloud_role.py, gateway/services/data_sync/cloud_source.py, jiuwenswarm/data_sync/cloud_export.py, gateway/services/cloud_environments.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py, jiuwenswarm/server/runtime/gateway_adapter/project_adapter.py, .github/workflows/stable.yml, gateway/services/data_sync/ui.py, gateway/extensions/data_sync/ui_extension.py, gateway/auth/account_authenticator.py, gateway/extensions/auth/common.py, gateway/channel_manager/web/web_connect.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/tests/directorySyncDialog.test.mjs, jiuwenswarm/server/control/repositories/project_repository.py | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [F_20261113_1044_local-cloud-inline](F_20261113_1044_local-cloud-inline.md) | F | Local/Cloud 即时选择与本地同页云目录访问 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/data_sync, jiuwenswarm/channels/web/frontend | gateway/auth/account_transport.py, jiuwenswarm/channels/web/frontend/src/features/auth/AccountLoginForm.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/AccountControl.tsx, gateway/services/cloud_workspace_client.py, gateway/services/data_sync/ui.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/InputArea.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
+| [F_20261113_2015_local-cloud-execution](F_20261113_2015_local-cloud-execution.md) | F | 本地页面云会话执行与目录请求期限 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/channels/web | gateway/services/cloud_execution_bridge.py, gateway/services/cloud_resource_address.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useCloudCatalog.ts | 无独立 D：用户明确授权定位旧目录失败并沿用三段式UI接通本地页面云会话，验证后提交CI和合入；本记录保存实施事实，当前契约归S_02_code-workspace-entry。 |
 
 <a id="module-10"></a>
 
@@ -122,6 +123,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261113_1044_local-cloud-inline](F_20261113_1044_local-cloud-inline.md) | F | Local/Cloud 即时选择与本地同页云目录访问 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/data_sync, jiuwenswarm/channels/web/frontend | gateway/auth/account_transport.py, jiuwenswarm/channels/web/frontend/src/features/auth/AccountLoginForm.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/AccountControl.tsx, gateway/services/cloud_workspace_client.py, gateway/services/data_sync/ui.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/InputArea.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
+| [F_20261113_2015_local-cloud-execution](F_20261113_2015_local-cloud-execution.md) | F | 本地页面云会话执行与目录请求期限 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/channels/web | gateway/services/cloud_execution_bridge.py, gateway/services/cloud_resource_address.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useCloudCatalog.ts | 无独立 D：用户明确授权定位旧目录失败并沿用三段式UI接通本地页面云会话，验证后提交CI和合入；本记录保存实施事实，当前契约归S_02_code-workspace-entry。 |
 
 <a id="module-11"></a>
 
@@ -138,6 +140,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F-20261112-1320-platform-code-workspace](F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
+| [F_20261113_2015_local-cloud-execution](F_20261113_2015_local-cloud-execution.md) | F | 本地页面云会话执行与目录请求期限 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/channels/web | gateway/services/cloud_execution_bridge.py, gateway/services/cloud_resource_address.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useCloudCatalog.ts | 无独立 D：用户明确授权定位旧目录失败并沿用三段式UI接通本地页面云会话，验证后提交CI和合入；本记录保存实施事实，当前契约归S_02_code-workspace-entry。 |
 
 <a id="module-13"></a>
 

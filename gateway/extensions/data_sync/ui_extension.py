@@ -2,7 +2,9 @@
 import asyncio
 import http.client
 import json
+import logging
 import sqlite3
+import time
 from pathlib import Path
 
 from websockets.exceptions import WebSocketException
@@ -13,16 +15,17 @@ from fastapi.responses import JSONResponse
 from gateway.auth.account_authenticator import current_account
 from gateway.auth.remote_accounts import AccountAuthorityUnavailable
 from gateway.extensions.auth.credential_authenticator import AuthContext
-from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution
+from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution, WebSocketRouteContribution
 from gateway.services.cloud_environments import EnvironmentUnavailable
 from gateway.services.data_sync.ui import COOKIE, CloudDirectoryUI, LocalDirectoryUI, origin
 from jiuwenswarm.data_sync.contract import SyncError
 
 PREFIX = "/api/v1/data-sync"
+logger = logging.getLogger(__name__)
 FIELDS = {"status": set(), "login": {"username", "password"}, "logout": set(),
           "view": {"offset", "version"}, "choices": set(), "publish": {"operation_id", "project_ids"},
           "refresh": set(), "revoke": {"source_id"},
-          "workspace": {"operation", "path", "name", "offset"}}
+          "workspace": {"operation", "path", "name", "offset", "address_version"}}
 
 
 class DirectoryUIPlugin(ApplicationPluginExtension):
@@ -51,19 +54,31 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
         return tuple(HTTPRouteContribution(PREFIX + "/" + action, self.http,
                      ("GET",) if action == "status" else ("POST",)) for action in FIELDS)
 
+    def websocket_routes(self):
+        from gateway.services.cloud_execution_bridge import PATH
+        return (WebSocketRouteContribution(PATH, self.local.execution.serve),) if self.local else ()
+
     async def http(self, request: Request):
+        started = time.monotonic()
+        request.state.cloud_stage = "admission"
         try:
-            async with self.slots:
+            async with asyncio.timeout(150), self.slots:
                 response = await self._http(request)
         except PermissionError:
             response = JSONResponse({"code": "UNAUTHORIZED"}, status_code=401)
         except SyncError as exc:
             response = JSONResponse({"code": exc.code}, status_code=409)
         except (EnvironmentUnavailable, AccountAuthorityUnavailable, TimeoutError, ConnectionError,
-                OSError, sqlite3.Error, http.client.HTTPException, WebSocketException):
+                OSError, sqlite3.Error, http.client.HTTPException, WebSocketException) as exc:
+            logger.warning("Cloud UI unavailable stage=%s kind=%s elapsed_ms=%.1f",
+                           request.state.cloud_stage, type(exc).__name__, (time.monotonic() - started) * 1000)
             response = JSONResponse({"code": "SYNC_UNAVAILABLE"}, status_code=503)
         except (ValueError, KeyError, TypeError):
             response = JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
+        if self.local and request.url.path.endswith('/workspace'):
+            logger.info("Cloud workspace response stage=%s status=%s elapsed_ms=%.1f",
+                        request.state.cloud_stage, response.status_code, (time.monotonic() - started) * 1000)
+        response.headers["Server-Timing"] = f'cloud;dur={(time.monotonic() - started) * 1000:.1f}'
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -102,6 +117,7 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                     raise ValueError()
                 value = await asyncio.to_thread(self.local.accounts.call, "login", None, params)
                 await self.local.workspaces.discard(token)
+                await self.local.execution.discard(token)
                 response = JSONResponse({"authenticated": True})
                 response.set_cookie(COOKIE, value["token"], secure=expected[0] == "https", httponly=True,
                                     samesite="strict", path=PREFIX)
@@ -112,10 +128,12 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                         await asyncio.to_thread(self.local.accounts.call, "logout", token, {})
                     finally:
                         await self.local.workspaces.discard(token)
+                        await self.local.execution.discard(token)
                 response = JSONResponse({"authenticated": False})
                 response.delete_cookie(COOKIE, path=PREFIX, secure=expected[0] == "https", httponly=True, samesite="strict")
                 return response
             try:
+                request.state.cloud_stage = "identity_before"
                 identity = await self.local.identity(token)
             except PermissionError:
                 if action == "status":
@@ -129,9 +147,17 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                                      "cloud_origin": self.local.config["cloud_origin"]})
             if action == "workspace":
                 from gateway.services.cloud_workspace_client import workspace_request
+                address_version = params.pop("address_version", None)
+                if address_version is not None and (type(address_version) is not int or address_version != 1 or params.get("operation") != "open"):
+                    raise ValueError("unsupported cloud address version")
+                request.state.cloud_stage = "workspace_" + str(params.get("operation") if params.get("operation") in {"environment", "ensure", "list", "mkdir", "open"} else "invalid")
                 value = await workspace_request(self.local, token, params)
+                if address_version == 1:
+                    from gateway.services.cloud_resource_address import CloudAddresses
+                    value = CloudAddresses(self.local.endpoint, identity).result(value)
             else:
                 value = await self.local.run(identity, token, action, params)
+            request.state.cloud_stage = "identity_after"
             latest = await self.local.identity(token)
             if (latest["authority"], latest["actor_id"]) != (identity["authority"], identity["actor_id"]):
                 await self.local.workspaces.discard(token)

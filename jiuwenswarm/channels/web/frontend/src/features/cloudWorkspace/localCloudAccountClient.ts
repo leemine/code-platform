@@ -2,7 +2,7 @@ import { getApiBase } from '../../utils/env';
 
 export type LocalCloudIdentity = { enabled: boolean; authenticated?: boolean; kind?: 'local' | 'cloud'; username?: string; cloud_origin?: string };
 
-export async function localCloudAccountRequest(action: 'status' | 'login' | 'logout', body?: Record<string, string>): Promise<LocalCloudIdentity> {
+async function performAccountRequest(action: 'status' | 'login' | 'logout', body?: Record<string, string>): Promise<LocalCloudIdentity> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 30000);
   try {
@@ -18,10 +18,26 @@ export async function localCloudAccountRequest(action: 'status' | 'login' | 'log
   } finally { window.clearTimeout(timer); }
 }
 
+// Share only unfinished reads; completed identities are never cached.
+let pendingStatus: Promise<LocalCloudIdentity> | null = null;
+export function localCloudAccountRequest(action: 'status' | 'login' | 'logout', body?: Record<string, string>): Promise<LocalCloudIdentity> {
+  if (action !== 'status') {
+    pendingStatus = null;
+    return performAccountRequest(action, body).finally(() => { pendingStatus = null; });
+  }
+  if (pendingStatus) return pendingStatus;
+  const current = performAccountRequest(action).finally(() => {
+    if (pendingStatus === current) pendingStatus = null;
+  });
+  pendingStatus = current;
+  return current;
+}
+
 // Window events notify this document; BroadcastChannel only notifies other documents.
 const localAccountSender = Math.random().toString(36).slice(2);
 
 export function notifyLocalCloudAccountChange() {
+  pendingStatus = null;
   window.dispatchEvent(new Event('jiuwenswarm-cloud-account'));
   if (typeof BroadcastChannel !== 'undefined') {
     const channel = new BroadcastChannel('jiuwenswarm-cloud-account'); channel.postMessage({ type: 'changed', sender: localAccountSender }); channel.close();
@@ -32,7 +48,7 @@ export function onLocalCloudAccountChange(callback: () => void) {
   window.addEventListener('jiuwenswarm-cloud-account', callback);
   const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('jiuwenswarm-cloud-account');
   if (channel) channel.onmessage = event => {
-    if (event.data?.sender !== localAccountSender) callback();
+    if (event.data?.sender !== localAccountSender) { pendingStatus = null; callback(); }
   };
   return () => { window.removeEventListener('jiuwenswarm-cloud-account', callback); channel?.close(); };
 }

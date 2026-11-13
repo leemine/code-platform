@@ -348,6 +348,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
     }
     _WS_LOG_MAX_CHARS = 2000
     _HTTP_PROXY_TIMEOUT = 30
+    _CLOUD_WORKSPACE_TIMEOUT = 175
     _SHARE_IMAGE_UPLOAD_IDLE_TIMEOUT = 60 * 60
     _WS_CONNECT_TIMEOUT = 10
     _WS_HANDSHAKE_TIMEOUT = 10
@@ -517,7 +518,8 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
         return urlparse(self.path).path.startswith("/api")
 
     def _is_ws_route(self) -> bool:
-        return urlparse(self.path).path.startswith("/ws")
+        path = urlparse(self.path).path
+        return path.startswith("/ws") or path == "/api/v1/data-sync/ws"
 
     def _is_file_api_route(self) -> bool:
         return urlparse(self.path).path.startswith("/file-api/")
@@ -617,19 +619,21 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             self._write_proxy_error(400, "invalid Host header")
             return
         parsed = urlparse(self.api_target)
+        timeout = (self._CLOUD_WORKSPACE_TIMEOUT
+                   if urlparse(self.path).path == "/api/v1/data-sync/workspace" else self._HTTP_PROXY_TIMEOUT)
         if parsed.scheme == "https":
             ssl_ctx = None if _get_ssl_verify() else _get_insecure_ssl_context()
             conn: http.client.HTTPConnection = http.client.HTTPSConnection(
                 parsed.hostname,
                 parsed.port or self._DEFAULT_HTTPS_PORT,
-                timeout=self._HTTP_PROXY_TIMEOUT,
+                timeout=timeout,
                 context=ssl_ctx,
             )
         else:
             conn = http.client.HTTPConnection(
                 parsed.hostname,
                 parsed.port or self._DEFAULT_HTTP_PORT,
-                timeout=self._HTTP_PROXY_TIMEOUT,
+                timeout=timeout,
             )
 
         try:
@@ -720,7 +724,13 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
         # The 0.25s timeout above only paces connect retries. Keeping it for the
         # handshake made every reconnect fail with 502 whenever the gateway loop
         # needed more than 250ms to answer the Upgrade.
-        upstream.settimeout(self._WS_HANDSHAKE_TIMEOUT)
+        cloud_bridge = urlparse(self.path).path == "/api/v1/data-sync/ws"
+        bridge_host = self._clean_outer_host() if cloud_bridge else None
+        if cloud_bridge and bridge_host is None:
+            upstream.close()
+            self.send_error(400, "invalid Host header")
+            return
+        upstream.settimeout(self._CLOUD_WORKSPACE_TIMEOUT if cloud_bridge else self._WS_HANDSHAKE_TIMEOUT)
         try:
             if parsed.scheme in ("wss", "https"):
                 ctx = ssl.create_default_context() if _get_ssl_verify() else _get_insecure_ssl_context()
@@ -732,7 +742,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
                 if self.ws_disable_compress and key.lower() == "sec-websocket-extensions":
                     continue
                 if key.lower() == "host":
-                    request_lines.append(f"Host: {upstream_host}:{upstream_port}")
+                    request_lines.append(f"Host: {bridge_host or f'{upstream_host}:{upstream_port}'}")
                 else:
                     request_lines.append(f"{key}: {value}")
             if not any(line.lower().startswith("host:") for line in request_lines[1:]):
@@ -976,7 +986,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
         return True
 
     def _dispatch_proxy(self) -> bool:
-        if self._is_api_route():
+        if self._is_api_route() and not self._is_ws_route():
             self._proxy_http()
             return True
         if self._is_ws_route():
