@@ -941,8 +941,8 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   const isDesignLanding = workMode === 'design' && activeSessionId === NEW_CONVERSATION_ID;
   const designLandingSubmitting = isDesignLanding && isProcessing;
   const [workspaceBlocked, setWorkspaceBlocked] = useState(true);
+  const workspaceSendBlocked = workMode === 'code' && activeSessionId === NEW_CONVERSATION_ID && workspaceBlocked;
   const composerDisabled =
-    (workMode === 'code' && activeSessionId === NEW_CONVERSATION_ID && workspaceBlocked) ||
     agentGroupUnavailable ||
     organizationTeamUnavailable ||
     isCompactRunning ||
@@ -2666,7 +2666,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   );
 
   const handleSubmit = useCallback(() => {
-    if (composerDisabled || isListening || isTranscribing || modelGroupSendBlocked) return;
+    if (workspaceSendBlocked || composerDisabled || isListening || isTranscribing || modelGroupSendBlocked) return;
 
     // 用富文本（含 chip 标记）作为发送内容，气泡可交织渲染技能
     const richContent = extractRichContent();
@@ -2825,6 +2825,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
     hasUploadingAttachments,
     hasAttachmentErrors,
     composerDisabled,
+    workspaceSendBlocked,
     isListening,
     isTranscribing,
     modelGroupSendBlocked,
@@ -2857,7 +2858,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   const hasReadyMedia = readyMediaItems.length > 0;
   const canSubmit =
     showStop ||
-    (!composerDisabled &&
+    (!workspaceSendBlocked && !composerDisabled &&
       !isListening &&
       !isTranscribing &&
       !modelGroupSendBlocked &&
@@ -2879,7 +2880,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
 
   const fullDuplexActionEligible =
     !showStop &&
-    !composerDisabled &&
+    !workspaceSendBlocked && !composerDisabled &&
     attachments.length === 0 &&
     !isListening &&
     !isTranscribing &&
@@ -5479,7 +5480,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                 />
               )}
               <div ref={workMenuRef} className="chat-work-context-row" data-testid="chat-panel-work-context-row">
-                <CodeWorkspaceControls navigationBlocked={hasDraft || selectedSkills.length > 0} enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
+                <CodeWorkspaceControls enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
                 <div
                   className={clsx('chat-work-select', workMenuOpen === 'project' && 'chat-work-select--open')}
                   data-testid="chat-panel-work-select"

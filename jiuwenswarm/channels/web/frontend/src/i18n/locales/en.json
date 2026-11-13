@@ -5599,7 +5599,7 @@
     "logout": "Sign out"
   },
   "codeWorkspace": {
-    "draftPending": "Send or clear the draft first",
+    "draftPending": "Unsent content",
     "local": "Local",
     "cloud": "Cloud",
     "loading": "Checking location…",
@@ -5625,8 +5625,18 @@
     "exists": "Folder or project already exists. Refresh to check.",
     "projectRootRequired": "This directory belongs to an existing project. Select its root directory.",
     "unavailable": "Workspace unavailable. Check the connection and retry.",
-    "unknown": "The operation outcome is not confirmed. Refresh to reconcile before retrying."
-},
+    "unknown": "The operation outcome is not confirmed. Refresh to reconcile before retrying.",
+    "entryUnavailable": "The current entry is unavailable. Please retry.",
+    "chooseCloudContext": "Choose cloud directory or environment",
+    "chooseEnvironment": "Choose cloud environment",
+    "selectEnvironment": "Select environment",
+    "localClientRequired": "Use the local client to access local directories",
+    "environmentState": {
+      "NEW": "Not created",
+      "ALLOCATED": "Created; connect on demand",
+      "READY": "Connected"
+    }
+  },
   "localCloudAccount": {
     "title": "Cloud account",
     "login": "Sign in to cloud",
@@ -5637,6 +5647,7 @@
     "logout": "Sign out of cloud",
     "retry": "Retry",
     "unavailable": "The cloud account service is unavailable. Please retry.",
-    "loginRequired": "The session expired or the account details were rejected. Please sign in again."
+    "loginRequired": "The session expired or the account details were rejected. Please sign in again.",
+    "continue": "Continue cloud action"
   }
 }

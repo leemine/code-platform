@@ -46,7 +46,7 @@ async def ui_hosts(tmp_path, monkeypatch):
     monkeypatch.setenv("JIUWENSWARM_CONFIG_URL", "off")
     from jiuwenswarm.common import utils
     from jiuwenswarm.server.runtime.session import project_store
-    monkeypatch.setattr(utils, "_workspace_base_dir", str(tmp_path / "local-data"))
+    monkeypatch.setattr(utils, "_workspace_base_dir", tmp_path / "local-data")
     monkeypatch.setattr(project_store, "get_agent_root_dir", lambda: tmp_path / "local-data/agent")
     project = project_store.create_project("Local UI project", str(tmp_path / "source-files"), "code")
     (tmp_path / "source-files").mkdir()
@@ -97,8 +97,9 @@ async def ui_hosts(tmp_path, monkeypatch):
                                      headers={"X-Jiuwen-Sync": "1", "Origin": "http://127.0.0.1:12345"}) as client:
             yield SimpleNamespace(client=client, local=local, directory=directory, accounts=accounts,
                                   project=project, root=tmp_path, cloud_ui=cloud_ui, endpoint=endpoint, app=app,
-                                  execution_connections=execution_connections, cert=cert)
+                                  execution_connections=execution_connections, cert=cert, channel=channel, cloud=cloud)
     finally:
+        await local.shutdown()
         server.should_exit = True
         await channel.stop()
         await asyncio.wait_for(task, 5)
@@ -234,3 +235,134 @@ async def test_local_ui_unknown_publish_recovers_original_receipt_and_own_revoca
     assert view["status"]["state"] == "revoked" and view["items"] == []
     assert (await client.post("/api/v1/data-sync/publish", json=body)).json()["code"] == "SOURCE_UNAUTHORIZED"
     assert (host.root / "source-files/keep.txt").read_text() == "original content"
+
+
+@pytest.mark.asyncio
+async def test_local_workspace_bridge_reuses_account_and_original_directory_adapter(ui_hosts, monkeypatch):
+    from jiuwenswarm.server.runtime.gateway_adapter import project_workspace as workspace
+    from jiuwenswarm.server.runtime.gateway_adapter.workspace_file_io import WorkspaceFileError
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    root = host.root / "cloud-workspace"
+    monkeypatch.setattr(workspace, "get_agent_workspace_dir", lambda: root)
+    calls = []
+    for operation in ("list", "mkdir", "open"):
+        def register(op):
+            async def handler(ws, req_id, params, session_id):
+                calls.append(op)
+                try:
+                    result = workspace.execute({**params, "workspace_operation": op}, "web")
+                    await host.channel.send_response(ws, req_id, ok=True, payload=result)
+                except WorkspaceFileError as exc:
+                    await host.channel.send_response(ws, req_id, ok=False, code=exc.code)
+            host.channel.register_method("project.workspace." + op, handler)
+        register(operation)
+    async def request(operation, **params):
+        return await host.client.post("/api/v1/data-sync/workspace", json={"operation": operation, **params})
+    assert (await request("list")).status_code == 401
+    assert calls == [] and not root.exists()
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    # Status is a control-plane read: no instance lifecycle or filesystem access.
+    identity = host.accounts.session(host.client.cookies.get(COOKIE))
+    store = host.cloud.environments.store
+    store.bind_registration(store.registration("ui-user", "isolated-ui-password"), identity)
+    response = await request("environment")
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "NEW"
+    assert host.execution_connections == [] and not root.exists()
+    response = await request("list", path="", offset=0)
+    assert response.status_code == 200 and response.json()["items"] == []
+    response = await request("mkdir", path="", name="cloud-only")
+    assert response.status_code == 200, response.text
+    assert (root / "code/cloud-only").is_dir()
+    response = await request("open", path="cloud-only")
+    assert response.status_code == 200, response.text
+    assert response.json()["project"]["project_dir"] == str(root / "code/cloud-only")
+    assert not (host.root / "source-files/cloud-only").exists()
+    assert (await request("mkdir", path="", name="cloud-only")).json()["code"] == "CONFLICT"
+    for body in ({"operation": "chat.send"}, {"operation": "list", "root": "/tmp"},
+                 {"operation": "environment", "path": "x"}, {"operation": "open", "user_id": "other"}):
+        response = await host.client.post("/api/v1/data-sync/workspace", json=body)
+        assert response.status_code == 400
+    assert (await request("mkdir", path="..", name="escape")).status_code == 409
+    assert not (root / "escape").exists()
+    (root / "code/linked").symlink_to(host.root / "source-files", target_is_directory=True)
+    forbidden = await request("list", path="linked")
+    assert forbidden.status_code == 409 and forbidden.json()["code"] == "FORBIDDEN"
+    await host.client.post("/api/v1/data-sync/logout", json={})
+    assert (await request("list")).status_code == 401
+
+
+def test_workspace_and_sync_transports_keep_separate_method_boundaries():
+    from gateway.services.cloud_workspace_client import WorkspaceRPC
+    from jiuwenswarm.data_sync.transport import DirectoryRPC
+    async def denied():
+        for client, method in ((WorkspaceRPC("wss://example.test/ws", "a" * 64), "chat.send"),
+                               (DirectoryRPC("wss://example.test/ws", "a" * 64), "project.workspace.list")):
+            with pytest.raises(ValueError):
+                await client.request(method, {})
+    asyncio.run(denied())
+
+
+@pytest.mark.asyncio
+async def test_workspace_reuses_live_connection_but_revocation_closes_it(ui_hosts):
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    sockets = []
+    async def listing(ws, req_id, params, session_id):
+        sockets.append(ws)
+        # An idle persistent connection must drain unrelated events with one reader.
+        for i in range(12):
+            await host.channel.send_event(ws, "project.updated", {"index": i})
+        await host.channel.send_response(ws, req_id, ok=True, payload={"items": []})
+    host.channel.register_method("project.workspace.list", listing)
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    token = host.client.cookies.get(COOKIE)
+    async def listing_request():
+        return await host.client.post("/api/v1/data-sync/workspace", json={"operation": "list"})
+    assert (await listing_request()).status_code == 200
+    entry = next(iter(host.local.local.workspaces.entries.values()))
+    assert (await listing_request()).status_code == 200
+    assert sockets[0] is sockets[1] and not entry.rpc.closed
+    host.accounts.logout(token)
+    assert (await listing_request()).status_code == 401
+    assert len(sockets) == 2 and entry.rpc.closed and not host.local.local.workspaces.entries
+
+
+@pytest.mark.asyncio
+async def test_workspace_unknown_mutation_is_not_replayed_and_idle_connection_expires(ui_hosts):
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    mutations = []
+    async def lose_response(ws, req_id, params, session_id):
+        mutations.append(params)
+        await ws.close()
+    host.channel.register_method("project.workspace.mkdir", lose_response)
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    response = await host.client.post("/api/v1/data-sync/workspace", json={"operation": "mkdir", "name": "once"})
+    assert response.status_code == 503 and len(mutations) == 1
+    assert not host.local.local.workspaces.entries
+    async def listing(ws, req_id, params, session_id):
+        await host.channel.send_response(ws, req_id, ok=True, payload={"items": []})
+    host.channel.register_method("project.workspace.list", listing)
+    host.local.local.workspaces.idle_seconds = .05
+    assert (await host.client.post("/api/v1/data-sync/workspace", json={"operation": "list"})).status_code == 200
+    async with asyncio.timeout(2):
+        while host.local.local.workspaces.entries:
+            await asyncio.sleep(.02)
+
+
+@pytest.mark.asyncio
+async def test_http_pool_reuses_transport_and_fetches_fresh_identity(ui_hosts, monkeypatch):
+    host = ui_hosts
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    token = host.client.cookies.get(COOKIE)
+    pool = host.local.local.accounts.connection_pool()
+    socket = next(c for c in list(pool.idle.queue) if c is not None).sock
+    assert (await host.client.get("/api/v1/data-sync/status")).json()["authenticated"]
+    assert next(c for c in list(pool.idle.queue) if c is not None).sock is socket
+    host.accounts.logout(token)
+    assert not (await host.client.get("/api/v1/data-sync/status")).json()["authenticated"]
+    # Removing the trusted CA must not continue using the previously trusted socket.
+    host.cert.unlink()
+    assert (await host.client.get("/api/v1/data-sync/status")).status_code == 503

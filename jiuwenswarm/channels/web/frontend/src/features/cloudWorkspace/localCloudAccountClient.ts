@@ -18,16 +18,43 @@ export async function localCloudAccountRequest(action: 'status' | 'login' | 'log
   } finally { window.clearTimeout(timer); }
 }
 
+// Window events notify this document; BroadcastChannel only notifies other documents.
+const localAccountSender = Math.random().toString(36).slice(2);
+
 export function notifyLocalCloudAccountChange() {
   window.dispatchEvent(new Event('jiuwenswarm-cloud-account'));
   if (typeof BroadcastChannel !== 'undefined') {
-    const channel = new BroadcastChannel('jiuwenswarm-cloud-account'); channel.postMessage('changed'); channel.close();
+    const channel = new BroadcastChannel('jiuwenswarm-cloud-account'); channel.postMessage({ type: 'changed', sender: localAccountSender }); channel.close();
   }
 }
 
 export function onLocalCloudAccountChange(callback: () => void) {
   window.addEventListener('jiuwenswarm-cloud-account', callback);
   const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('jiuwenswarm-cloud-account');
-  if (channel) channel.onmessage = callback;
+  if (channel) channel.onmessage = event => {
+    if (event.data?.sender !== localAccountSender) callback();
+  };
   return () => { window.removeEventListener('jiuwenswarm-cloud-account', callback); channel?.close(); };
+}
+
+/** Open the existing account dialog in this page; credentials stay on the same-origin bridge. */
+export function requestLocalCloudLogin(complete: (authenticated: boolean) => void) {
+  window.dispatchEvent(new CustomEvent('jiuwenswarm-cloud-login-request', { detail: complete }));
+}
+
+export async function localCloudWorkspaceRequest<T>(operation: 'environment' | 'ensure' | 'list' | 'mkdir' | 'open', params: Record<string, unknown> = {}): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 155000);
+  try {
+    const response = await fetch(`${getApiBase()}/api/v1/data-sync/workspace`, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Jiuwen-Sync': '1' },
+      body: JSON.stringify({ ...params, operation }), signal: controller.signal,
+    });
+    const value = await response.json();
+    if (!response.ok) throw Object.assign(new Error('Cloud workspace request failed'), {
+      code: response.status === 401 ? 'UNAUTHORIZED' : value.code || 'WORKSPACE_UNAVAILABLE',
+    });
+    return value;
+  } finally { window.clearTimeout(timer); }
 }

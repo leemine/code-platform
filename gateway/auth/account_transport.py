@@ -28,7 +28,7 @@ _LOCK = threading.Lock()
 _LOGGER = logging.getLogger(__name__)
 
 
-class _Pool:
+class AccountHTTPPool:
     def __init__(self, url, ca):
         self.url = urlsplit(url)
         self.context = (ssl.create_default_context(cafile=ca)
@@ -49,15 +49,20 @@ class _Pool:
                 connection.close()
 
     def post(self, method, body, headers):
+        status, value, _ = self.request("POST", self.url.path.rstrip("/") + "/accounts/" + method,
+                                        body, headers, operation=method, retry_read=method == "session")
+        return status, value
+
+    def request(self, verb, path, body, headers, *, operation, retry_read=False, timeout=TIMEOUT):
         started = time.monotonic()
         try:
-            connection = self.idle.get(timeout=TIMEOUT)
+            connection = self.idle.get(timeout=timeout)
         except queue.Empty as exc:
             raise OSError("account connection capacity exceeded") from exc
         slot_acquired = time.monotonic()
         try:
-            for attempt in range(2 if method == "session" else 1):
-                remaining = TIMEOUT - (time.monotonic() - started)
+            for attempt in range(2 if retry_read else 1):
+                remaining = timeout - (time.monotonic() - started)
                 if self.closed:
                     raise OSError("account transport configuration changed")
                 if remaining <= 0:
@@ -76,23 +81,18 @@ class _Pool:
                 if connection.sock is not None:
                     connection.sock.settimeout(remaining)
                 try:
-                    connection.request(
-                        "POST",
-                        self.url.path.rstrip("/") + "/accounts/" + method,
-                        body,
-                        headers,
-                    )
+                    connection.request(verb, path, body, headers)
                     response = connection.getresponse()
                     value = response.read(MAX_RESPONSE + 1)
                     if len(value) > MAX_RESPONSE:
                         raise ValueError("account response budget exceeded")
-                    return response.status, value
+                    return response.status, value, response.getheaders()
                 except ssl.SSLError:
                     raise  # Trust/hostname failures never retry with weaker verification.
                 except (http.client.HTTPException, OSError):
                     connection.close()
                     connection = None
-                    if attempt != 0 or method != "session":
+                    if attempt != 0 or not retry_read:
                         raise
             raise OSError("account request unavailable")
         except BaseException:
@@ -106,7 +106,7 @@ class _Pool:
                 # Only bounded operation names and timings; no URL, principal,
                 # token, response, or raw exception enters diagnostics.
                 _LOGGER.info("Account authority timing operation=%s queue_ms=%.1f total_ms=%.1f",
-                             method, (slot_acquired - started) * 1000, elapsed * 1000)
+                             operation, (slot_acquired - started) * 1000, elapsed * 1000)
             if self.closed:
                 if connection is not None:
                     connection.close()
@@ -155,7 +155,7 @@ def authority_post(config_path, config, method, values, token):
     with _LOCK:
         pool = _POOLS.get(key)
         if pool is None:
-            pool = _Pool(url, config.get("ca"))
+            pool = AccountHTTPPool(url, config.get("ca"))
             for previous in list(_POOLS):
                 if previous[0] == key[0] or len(_POOLS) >= MAX_POOLS:
                     _POOLS.pop(previous).close()
