@@ -160,6 +160,17 @@ async def test_upgrade_does_not_wait_for_authority_but_cloud_requests_do(ui_host
     token = host.accounts.login('ui-user', 'isolated-ui-password')['token']
     original_identity = host.local.local.identity
     gate = asyncio.Event()
+    connected = asyncio.Event()
+    import gateway.services.cloud_execution_bridge as bridge
+    original_connect = bridge._FixedEndpointConnect
+
+    @asynccontextmanager
+    async def observed_connect(*args, **kwargs):
+        async with original_connect(*args, **kwargs) as cloud:
+            connected.set()
+            yield cloud
+
+    monkeypatch.setattr(bridge, '_FixedEndpointConnect', observed_connect)
     calls = []
 
     async def delayed_identity(credential):
@@ -178,7 +189,8 @@ async def test_upgrade_does_not_wait_for_authority_but_cloud_requests_do(ui_host
                 await ws.send(json.dumps({'type': 'req', 'id': 'models', 'method': 'models.list', 'params': {}}))
                 with pytest.raises(TimeoutError):
                     await asyncio.wait_for(ws.recv(), .05)
-                assert calls == []
+                await asyncio.wait_for(connected.wait(), 3)
+                assert calls == [], 'cloud handshake may overlap, business requests may not'
                 gate.set()
                 ready = await receive(ws, 'event')
                 assert ready['event'] == 'connection.ack' and ready['payload']['transport'] == 'cloud-bridge'
@@ -211,3 +223,46 @@ async def test_open_bridge_rechecks_revocation_before_each_request(ui_hosts):
                 while True:
                     await ws.recv()
     assert calls == ['before']
+
+
+@pytest.mark.asyncio
+async def test_parallel_handshake_denial_closes_upstream_without_exposing_data(ui_hosts, monkeypatch):
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    token = host.accounts.login('ui-user', 'isolated-ui-password')['token']
+    connected, closed = asyncio.Event(), asyncio.Event()
+    import gateway.services.cloud_execution_bridge as bridge
+    original_connect = bridge._FixedEndpointConnect
+
+    @asynccontextmanager
+    async def observed_connect(*args, **kwargs):
+        async with original_connect(*args, **kwargs) as cloud:
+            connected.set()
+            try:
+                yield cloud
+            finally:
+                await cloud.close()
+                closed.set()
+
+    async def denied_identity(credential):
+        await connected.wait()
+        raise PermissionError()
+
+    monkeypatch.setattr(bridge, '_FixedEndpointConnect', observed_connect)
+    monkeypatch.setattr(host.local.local, 'identity', denied_identity)
+    async with local_ws(host) as (url, origin):
+        async with connect(url, origin=origin, extra_headers={'Cookie': COOKIE + '=' + token}) as ws:
+            await ws.send(json.dumps({'type': 'req', 'id': 'blocked', 'method': 'models.list', 'params': {}}))
+            with pytest.raises(ConnectionClosed) as error:
+                await ws.recv()
+            assert error.value.code == 1008
+            await asyncio.wait_for(closed.wait(), 3)
+
+
+@pytest.mark.asyncio
+async def test_missing_cookie_is_rejected_with_login_recoverable_close(ui_hosts):
+    async with local_ws(ui_hosts) as (url, origin):
+        async with connect(url, origin=origin) as ws:
+            with pytest.raises(ConnectionClosed) as error:
+                await ws.recv()
+            assert error.value.code == 1008

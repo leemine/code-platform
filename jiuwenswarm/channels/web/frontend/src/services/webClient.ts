@@ -84,7 +84,6 @@ function logDevWsTraffic(entry: DevWsLogEntry): void {
 
 class WebClient {
   constructor(private readonly cloud = false) {}
-  private preparing: Promise<void> | null = null;
   private accountGeneration = 0;
   private cloudReady?: () => void;
   resetCloudAccount(): void {
@@ -150,19 +149,9 @@ class WebClient {
     if (this.connectPromise) {
       return this.connectPromise;
     }
-    if (!this.cloud) return this.connectTransport(options);
-    if (this.preparing) return this.preparing;
-    const generation = this.accountGeneration;
-    this.preparing = (async () => {
-      const identity = await localCloudAccountRequest('status');
-      if (generation !== this.accountGeneration) throw this.createWebError('Cloud account changed', 'UNAUTHORIZED');
-      if (!identity.authenticated) {
-        requestLocalCloudLogin(() => {});
-        throw this.createWebError(i18n.t('localCloudAccount.loginRequired'), 'UNAUTHORIZED');
-      }
-      return this.connectTransport(options);
-    })().finally(() => { this.preparing = null; });
-    return this.preparing;
+    // The bridge admits the original cookie and emits readiness only after fresh
+    // authorization. A separate HTTP identity preflight adds no authority here.
+    return this.connectTransport(options);
   }
 
   private connectTransport(options: WebConnectOptions): Promise<void> {
@@ -264,6 +253,16 @@ class WebClient {
             true,
           ),
         );
+        if (this.cloud && closeEvent.code === 1008 && !this.manualClose) {
+          const generation = this.accountGeneration;
+          // Only a rejected connection needs the HTTP login UX check. It does
+          // not grant transport access or resend the rejected request.
+          void localCloudAccountRequest('status').then(identity => {
+            if (generation === this.accountGeneration && this.state === 'closed' && !this.manualClose && !identity.authenticated) {
+              requestLocalCloudLogin(() => {});
+            }
+          }).catch(() => {});
+        }
         if (this.manualClose || closeEvent.code === 1000 || this.cloud && closeEvent.code === 1008) {
           this.updateState('closed');
           return;

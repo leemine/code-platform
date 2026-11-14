@@ -36,7 +36,7 @@ class AccountHTTPPool:
                         if self.url.scheme == "https" else None)
         self.idle = queue.LifoQueue(CONNECTIONS)
         self.closed = False
-        self.idle_seconds = 4.0
+        self.idle_seconds = 30.0
         for _ in range(CONNECTIONS):
             self.idle.put(None)
 
@@ -62,6 +62,10 @@ class AccountHTTPPool:
         except queue.Empty as exc:
             raise OSError("account connection capacity exceeded") from exc
         slot_acquired = time.monotonic()
+        connect_ms = 0.0
+        response_ms = 0.0
+        reused = False
+        retired = "none"
         try:
             if connection is not None and connection.sock is not None:
                 expired = slot_acquired - getattr(connection, "_account_idle_since", started) >= self.idle_seconds
@@ -73,6 +77,7 @@ class AccountHTTPPool:
                 except (OSError, ValueError):
                     readable = True
                 if expired or readable:
+                    retired = "expired" if expired else "readable"
                     connection.close()
                     connection = None
             for attempt in range(2 if retry_read else 1):
@@ -95,9 +100,20 @@ class AccountHTTPPool:
                 if connection.sock is not None:
                     connection.sock.settimeout(remaining)
                 try:
-                    connection.request(verb, path, body, headers)
-                    response = connection.getresponse()
-                    value = response.read(MAX_RESPONSE + 1)
+                    reused = connection.sock is not None
+                    if not reused:
+                        connecting = time.monotonic()
+                        try:
+                            connection.connect()
+                        finally:
+                            connect_ms += (time.monotonic() - connecting) * 1000
+                    responding = time.monotonic()
+                    try:
+                        connection.request(verb, path, body, headers)
+                        response = connection.getresponse()
+                        value = response.read(MAX_RESPONSE + 1)
+                    finally:
+                        response_ms += (time.monotonic() - responding) * 1000
                     if len(value) > MAX_RESPONSE:
                         raise ValueError("account response budget exceeded")
                     return response.status, value, response.getheaders()
@@ -122,8 +138,8 @@ class AccountHTTPPool:
             if elapsed >= 0.5:
                 # Only bounded operation names and timings; no URL, principal,
                 # token, response, or raw exception enters diagnostics.
-                _LOGGER.info("Account authority timing operation=%s queue_ms=%.1f total_ms=%.1f",
-                             operation, (slot_acquired - started) * 1000, elapsed * 1000)
+                _LOGGER.info("Account authority timing operation=%s queue_ms=%.1f connect_ms=%.1f response_ms=%.1f reused=%s retired=%s total_ms=%.1f",
+                             operation, (slot_acquired - started) * 1000, connect_ms, response_ms, reused, retired, elapsed * 1000)
             if self.closed:
                 if connection is not None:
                     connection.close()
