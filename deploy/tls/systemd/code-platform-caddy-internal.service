@@ -1,0 +1,28 @@
+[Unit]
+Description=Code Platform internal account TLS (automatic certificate renewal)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Create this dedicated OS account before installation. Do not share its CA key.
+User=code-platform-tls
+Group=code-platform-tls
+StateDirectory=code-platform-tls
+StateDirectoryMode=0700
+RuntimeDirectory=code-platform-tls
+RuntimeDirectoryMode=0700
+Environment=XDG_DATA_HOME=/var/lib/code-platform-tls
+Environment=XDG_CONFIG_HOME=/var/lib/code-platform-tls
+ExecStart=/usr/bin/caddy run --config /etc/code-platform/tls/Caddyfile.internal --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/code-platform/tls/Caddyfile.internal --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/code-platform-tls /run/code-platform-tls
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

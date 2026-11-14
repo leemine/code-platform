@@ -101,3 +101,18 @@ Cloud history restoration starts before auxiliary initialization and independent
 
 
 Cloud session connections wait directly for fresh server authorization, avoiding a redundant serial status preflight. Identity lookup and the independently authenticated handshake overlap. Only healthy HTTP transports are reused; permissions are checked again for each operation. A rejected connection can open the existing sign-in form. Reopen or refresh the original session to restore history after signing in; messages are never resent automatically.
+
+## Certificate renewal, loading and alerts
+
+See [certificate lifecycle deployment](../../deploy/tls/README.md). Caddy handles
+issuance, renewal and loading for direct public/internal TLS termination. Existing
+nginx consumers can validate and atomically publish certificate pairs, reload,
+verify the served fingerprint and roll back on failure. Five-minute systemd checks
+and expiry/failure/stale-monitor metrics are provided; notification routing belongs
+to the deployment's alert receiver. Persist internal CA storage and distribute only
+its root certificate to Gateway.
+
+Only a loopback account upstream in the same network namespace may use HTTP.
+Cross-host connections retain verified HTTPS. Rotation does not alter account
+sessions or per-request/delivery authorization. Templates do not install host
+services automatically or imply completed multi-node production qualification.

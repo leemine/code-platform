@@ -1,0 +1,13 @@
+[Unit]
+Description=Code Platform certificate load and expiry check (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/code-platform/deploy/tls/certificate_lifecycle.py /etc/code-platform/tls/%i.json
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=code-platform-tls-%i

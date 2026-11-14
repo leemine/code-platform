@@ -1,0 +1,23 @@
+groups:
+  - name: code-platform-tls
+    rules:
+      - alert: CodePlatformCertificateFailure
+        expr: code_platform_tls_healthy == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'TLS renewal/load/expiry failure: {{ $labels.certificate }}'
+      - alert: CodePlatformCertificateCheckStale
+        expr: time() - code_platform_tls_last_check_seconds > 900
+        labels:
+          severity: critical
+        annotations:
+          summary: 'TLS check stopped: {{ $labels.certificate }}'
+      - alert: CodePlatformCertificateMetricsMissing
+        expr: absent(code_platform_tls_last_check_seconds)
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'No TLS certificate monitoring metrics'
