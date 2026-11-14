@@ -1,0 +1,11 @@
+# Use a stable public DNS name, or an IP supported by the chosen ACME issuer.
+# Issuance challenges must reach this instance. Persist storage across upgrades.
+{
+    admin unix//run/code-platform-public/caddy-admin.sock
+    storage file_system {
+        root /var/lib/code-platform-public/caddy
+    }
+}
+{$CODE_PLATFORM_PUBLIC_HOST} {
+    reverse_proxy 127.0.0.1:28954
+}

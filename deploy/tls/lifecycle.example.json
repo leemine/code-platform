@@ -1,0 +1,27 @@
+{
+  "state_dir": "/var/lib/code-platform-certificate-check",
+  "certificates": [
+    {
+      "id": "public",
+      "mode": "publish",
+      "source_cert": "/var/lib/issuer/site.crt",
+      "source_key": "/var/lib/issuer/site.key",
+      "destination": "/srv/code-platform/tls",
+      "uid": 101,
+      "gid": 101,
+      "minimum_valid_seconds": 600,
+      "warn_before_seconds": 86400,
+      "preflight": ["docker", "exec", "YOUR_OWNED_EDGE", "nginx", "-t"],
+      "reload": ["docker", "exec", "YOUR_OWNED_EDGE", "nginx", "-s", "reload"],
+      "endpoint": {"host": "127.0.0.1", "port": 443, "server_name": "cloud.example.com"}
+    },
+    {
+      "id": "account",
+      "mode": "monitor",
+      "warn_before_seconds": 3600,
+      "watch_ca_files": ["/etc/code-platform/tls/account-root.pem"],
+      "ca_warn_before_seconds": 2592000,
+      "endpoint": {"host": "127.0.0.1", "port": 28950, "server_name": "127.0.0.1", "ca_file": "/etc/code-platform/tls/account-root.pem"}
+    }
+  ]
+}

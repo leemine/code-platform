@@ -28,6 +28,8 @@ Images must already exist locally. Files and mounts must resolve inside `root`; 
 4. A successful result prints retained container IDs/names. Reapplying an identical healthy profile returns `already_active` without replacement. Old containers remain stopped; no volumes are removed. Retention consumes disk until the operator reviews and explicitly retires owned backups.
 5. If compensation itself fails, the error says `restoration needs intervention`; inspect retained original IDs and name ownership before restoring. Never delete another container to reclaim a name. Automatic compensation is bounded and cannot survive every host/power/process failure; do not promise zero downtime or atomic deployment.
 
+For certificate renewal/loading and expiry alerts, use the separate [TLS lifecycle deployment](../tls/README.md). This switch utility itself does not manage renewal.
+
 One operator must own the switch at a time. There is no distributed lock, background reconciler, automatic certificate renewal or business-level readiness check. HTTP `enabled` proves the account endpoint is reachable, not that a real account or Provider turn works; verify the UI separately. Direct TLS is a recovery profile and may have poorer connection reuse. After a direct-mode drill, restore the tested proxy profile and recheck UI recovery.
 
 ## Replacement / exit
