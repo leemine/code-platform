@@ -98,3 +98,6 @@ Directory operations have a 150-second total processing budget, a 155-second bro
 
 
 Cloud history restoration starts before auxiliary initialization and independently of Local connection readiness. Connection setup and history responses have separate timeout budgets; transport failures are not treated as deleted sessions. Reconnection rereads session state and unfinished history without resending user messages. Only concurrent unfinished account status requests are coalesced; authorization remains live.
+
+
+Cloud session connections wait directly for fresh server authorization, avoiding a redundant serial status preflight. Identity lookup and the independently authenticated handshake overlap. Only healthy HTTP transports are reused; permissions are checked again for each operation. A rejected connection can open the existing sign-in form. Reopen or refresh the original session to restore history after signing in; messages are never resent automatically.

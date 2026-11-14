@@ -873,7 +873,7 @@ test('cloud calls share one separate connection and route streams, approval and 
     const cloud = FakeWebSocket.instance;
     assert.notEqual(cloud, local);
     assert.match(cloud.url, /\/api\/v1\/data-sync\/ws$/);
-    assert.equal(statuses, 1);
+    assert.equal(statuses, 0, 'Cloud admission does not wait for an HTTP preflight');
     assert.equal(cloud.sentRequests.length, 0, 'transport open must wait for fresh Cloud authorization');
     cloud.receive({ type: 'event', event: 'connection.ack', payload: { transport: 'cloud-bridge' } });
     await new Promise(r => setTimeout(r, 0));
@@ -948,4 +948,46 @@ test('cloud history starts without Local readiness and exposes only authorized C
     await read;
     assert.equal(client.getState(), 'idle');
   } finally { off(); await client.disconnect(); globalThis.fetch = previousFetch; }
+});
+
+
+test('cloud rejection opens login only after fresh unauthenticated status, without replay', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousDispatch = window.dispatchEvent;
+  let logins = 0;
+  globalThis.fetch = async () => new Response(JSON.stringify({authenticated:false}));
+  window.dispatchEvent = event => { if(event.type === 'jiuwenswarm-cloud-login-request') logins++; return true; };
+  const client = new webClient.constructor();
+  try {
+    const read = client.request('history.get', {session_id:'clouds_0123456789abcdef01234567_c2Vzc18x'});
+    const rejected = assert.rejects(read);
+    await new Promise(r => setTimeout(r, 0));
+    const socket = FakeWebSocket.instance;
+    socket.close(1008, 'cloud connection ended');
+    await rejected;
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(logins, 1);
+    assert.equal(socket.sentRequests.length, 0);
+  } finally { await client.disconnect(); globalThis.fetch=previousFetch; window.dispatchEvent=previousDispatch; }
+});
+
+
+test('a late login check cannot reopen login after an explicit disconnect', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousDispatch = window.dispatchEvent;
+  let finishStatus, logins = 0;
+  globalThis.fetch = () => new Promise(resolve => { finishStatus=resolve; });
+  window.dispatchEvent = event => { if(event.type === 'jiuwenswarm-cloud-login-request') logins++; return true; };
+  const client = new webClient.constructor();
+  try {
+    const read = client.request('history.get', {session_id:'clouds_0123456789abcdef01234567_c2Vzc18x'});
+    const rejected = assert.rejects(read);
+    await new Promise(r => setTimeout(r, 0));
+    FakeWebSocket.instance.close(1008, 'cloud connection ended');
+    await rejected;
+    await client.disconnect();
+    finishStatus(new Response(JSON.stringify({authenticated:false})));
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(logins, 0);
+  } finally { await client.disconnect(); globalThis.fetch=previousFetch; window.dispatchEvent=previousDispatch; }
 });

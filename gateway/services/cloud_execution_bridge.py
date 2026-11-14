@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 import hashlib
 import json
 import logging
 import re
+import secrets
 import ssl
 import time
 
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
-from websockets.exceptions import WebSocketException
+from websockets.exceptions import InvalidStatusCode, WebSocketException
 
 from jiuwenswarm.data_sync.contract import MAX_BYTES, SyncError
 from gateway.auth.remote_accounts import AccountAuthorityUnavailable
@@ -45,7 +47,7 @@ class CloudExecutionBridge:
         token = ws.cookies.get(COOKIE)
         try:
             if (ws.query_params or origin(ws.headers.get("origin", ""), local=True) != expected
-                    or origin(expected[0] + "://" + ws.headers.get("host", ""), local=True) != expected or not token):
+                    or origin(expected[0] + "://" + ws.headers.get("host", ""), local=True) != expected):
                 raise PermissionError()
             if len(self.connections) >= 16:
                 await ws.close(code=1013, reason="cloud connection capacity")
@@ -53,30 +55,60 @@ class CloudExecutionBridge:
         except (PermissionError, ValueError, OSError, SyncError, AccountAuthorityUnavailable):
             await ws.close(code=1008, reason="cloud authentication required")
             return
-        self.connections[ws] = hashlib.sha256(token.encode()).hexdigest()
+        self.connections[ws] = hashlib.sha256((token or "").encode()).hexdigest()
         tasks = []
         stage = "identity"
         close_code = 1011
         started = time.monotonic()
         pending_timings = {}
+        trace = secrets.token_hex(4)
+
+        def timing(phase, since):
+            logger.info("Cloud bridge timing trace=%s phase=%s elapsed_ms=%.1f total_ms=%.1f",
+                        trace, phase, (time.monotonic() - since) * 1000, (time.monotonic() - started) * 1000)
         try:
             # Upgrade is transport admission only. Cloud data and requests stay
             # blocked until fresh authorization and the upstream connection finish.
             # Waiting here before accept would exceed the server's 10s handshake.
             await ws.accept()
-            identity = await self.local.identity(token)
-            addresses = CloudAddresses(self.local.endpoint, identity)
-            stage = "connect"
+            if not token:
+                raise PermissionError()
             ca = self.local.config.get("ca_file")
-            async with _FixedEndpointConnect(self.local.endpoint,
-                    extra_headers={"Authorization": "Bearer " + token},
-                    ssl=ssl.create_default_context(cafile=ca), max_size=MAX_BYTES + 65536,
-                    max_queue=4, open_timeout=150, close_timeout=5) as cloud:
+
+            async def read_identity():
+                value = await self.local.identity(token)
+                timing("identity_before", started)
+                return value
+
+            async with AsyncExitStack() as scope:
+                async def open_cloud():
+                    connecting = time.monotonic()
+                    cloud = await scope.enter_async_context(_FixedEndpointConnect(self.local.endpoint,
+                        extra_headers={"Authorization": "Bearer " + token},
+                        ssl=ssl.create_default_context(cafile=ca), max_size=MAX_BYTES + 65536,
+                        max_queue=4, open_timeout=150, close_timeout=5))
+                    timing("connect", connecting)
+                    return cloud
+
+                # The original cloud endpoint independently authenticates this cookie.
+                # Overlap transport admission with the local identity lookup, but expose
+                # no data or business request before both and the final check succeed.
+                opening = [asyncio.create_task(read_identity()), asyncio.create_task(open_cloud())]
+                try:
+                    identity, cloud = await asyncio.gather(*opening)
+                finally:
+                    for task in opening:
+                        task.cancel()
+                    await asyncio.gather(*opening, return_exceptions=True)
+                addresses = CloudAddresses(self.local.endpoint, identity)
+                stage = "identity_after"
+                checking_ready = time.monotonic()
                 if await self.local.identity(token) != identity:
                     raise PermissionError()
+                timing("identity_after", checking_ready)
                 await ws.send_json({"type": "event", "event": "connection.ack",
                                     "payload": {"transport": "cloud-bridge"}})
-                logger.info("Cloud bridge timing phase=ready total_ms=%.1f", (time.monotonic() - started) * 1000)
+                timing("ready", started)
 
                 async def upstream():
                     nonlocal stage
@@ -110,8 +142,8 @@ class CloudExecutionBridge:
                         if len(pending_timings) >= 64:
                             pending_timings.pop(next(iter(pending_timings)))
                         pending_timings[data["id"]] = (method, time.monotonic())
-                        logger.info("Cloud bridge timing phase=authorize method=%s total_ms=%.1f",
-                                    method, (time.monotonic() - checking) * 1000)
+                        logger.info("Cloud bridge timing trace=%s phase=authorize method=%s total_ms=%.1f",
+                                    trace, method, (time.monotonic() - checking) * 1000)
                         await cloud.send(json.dumps({**data, "params": params}, ensure_ascii=False))
 
                 async def downstream():
@@ -123,8 +155,8 @@ class CloudExecutionBridge:
                             raise ValueError("invalid cloud response")
                         timing = pending_timings.pop(data.get("id"), None) if data.get("type") == "res" else None
                         if timing:
-                            logger.info("Cloud bridge timing phase=response method=%s total_ms=%.1f",
-                                        timing[0], (time.monotonic() - timing[1]) * 1000)
+                            logger.info("Cloud bridge timing trace=%s phase=response method=%s total_ms=%.1f",
+                                        trace, timing[0], (time.monotonic() - timing[1]) * 1000)
                         await ws.send_json(addresses.frame(data))
 
                 stage = "relay"
@@ -133,7 +165,8 @@ class CloudExecutionBridge:
                 for task in done:
                     task.result()
         except (PermissionError, ValueError, OSError, SyncError, AccountAuthorityUnavailable, WebSocketException, WebSocketDisconnect) as exc:
-            if isinstance(exc, (PermissionError, ValueError, SyncError)):
+            if (isinstance(exc, (PermissionError, ValueError, SyncError))
+                    or isinstance(exc, InvalidStatusCode) and exc.status_code in {401, 403}):
                 close_code = 1008
             logger.warning("Cloud execution bridge failed stage=%s kind=%s", stage, type(exc).__name__)
         finally:

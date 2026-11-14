@@ -84,3 +84,25 @@ design_note: 用户明确授权定位旧目录失败并沿用三段式UI接通�
 最终前端生产构建通过，安装包255/255资源精确一致；六组前端回归通过、历史恢复9通过、实时撤权云桥7通过，Native1157通过/3Windows条件跳过（后端不再变动，后增撤权测试单列）。Core e089198835426cd7681761b0cc278670cd83031f、protocol 2a0457e5e01152e9ca5f8afdffd84716227046ca保持锁定，非editable真实导入来源核验通过。没有运行无关每日full-python；远端stable和合入后验证为后续交付关口。
 
 检视范围：基线4a9ceec到本候选41文件，重点核对原WebChannel/Runtime委托、地址映射与用户正文不变、account generation、错误/恢复不重放输入、Local模型与Cloud目录隔离、计时器销毁/续页、同源Host/Cookie/TLS及逐请求权限。未引入执行器、依赖升级或外部Provider修改。新增行为有定向和真实UI证据，无已确认阻断问题。真实External Provider及审批交互未扩大，相关既有stable边界仍运行。提交/CI/合入状态以对应远端SHA记录为准。
+
+
+# 云连接与授权性能续优化（2026-11-14）
+
+沿同一特性续写，基线为已合入9438b99；候选独立worktree codex/platform-history-latency-20261114。本轮参考codeswarm24f2914的webClient直接连接、organization_auth.connection_principal每请求调用identity、account_transport仅复用连接的边界；不复制权限结果缓存、不移植第二套执行或队列。旧首屏20秒结果保留为前一天实测，不当成本轮同网络基线。
+
+分段诊断实际样本：status总2.550秒=建连1.961秒+响应0.589秒；云桥首次身份2.474秒、WSS握手2.509秒、二次身份0.643秒，桥就绪5.629秒；复用时单次身份约0.55～0.64秒。另有浏览器/本地初始化间隙，不能全归为权限服务。HTTP初始4秒回收会在准备间隙关闭健康连接，改有界30秒，死连接探测、CA/config代次及只读有限重试不变。
+
+前端去掉连接前重复HTTP status门控，直接等待同源桥权限ACK；拒绝1008后才查新鲜状态决定是否显示原登录框，账号generation隔离迟到结果。后端身份检查与原云端独立鉴权握手并行，后置身份、逐请求身份、原云端请求/投递权限全部保留。任一准备失败取消其他准备并关闭上游，全部通过前不转发业务帧或云数据；无凭据也只升级本地传输后1008拒绝，不能进入云连接。没有改云端部署或锁定Core/protocol。
+
+定向24项通过（真实回环TLS/撤权、并行屏障、失败关闭、无cookie、HTTP健康/死连接和写不重放）；原WebClient runtime、local-cloud-account、cloud-workspace、history-restore-pagination套件通过，生产构建通过，非editable安装1595源码文件与255前端资源逐字节一致，锁定来源验证通过。右侧同账号同会话完整刷新：基线7.685/13.578/9.796秒，候选9.809/6.144/6.104秒；平均10.353→7.352秒（约29%），中位9.796→6.144秒。云桥平均4.471→2.944秒。各3个样本，未达稳定P95承诺；首次基线工具wait超时的无效采样和诊断版15.456秒单列保留，未混入比较。
+
+真实退出后历史清空；未登录进入原云会话时零历史正文并弹统一登录框；同一测试账号单次登录后刷新恢复原历史，地址仍为本地29011。未发送新模型任务，也没有自动重放。浏览器截图接口返回Unable to capture screenshot，DOM/操作及后端证据保留，不借用旧截图充当本轮结果。用户要求右侧展示，使用既有标签并保留验收页面。
+
+本轮证据目录为管理仓artifacts/platform-history-latency-20261114/evidence：browser-samples.json、phase-samples.json、performance-summary.json、instrumented-before-gateway.log、after-gateway.log、targeted-tests.log、frontend-*.log、installed-sources.log、package-assets.json、ui-restored-dom.txt。管理记录仅本地。本轮独立候选尚未提交/推送/CI/合入；与上一批9438b99交付分开。
+
+
+最终复查与安装包（2026-11-14）：补充主动断连/已开始新连接后迟到status不得再弹登录框；失败的HTTP建连/响应耗时也由finally完整计入。后端定向24项复验通过（36.01秒），WebClient runtime含迟到登录回归通过，最终生产构建通过。verified/venv为新建非editable按锁安装，1595源码文件和255前端资源精确匹配，Core/protocol实际来源核验通过；右侧已切换该安装，不覆盖正在运行的旧包。
+
+最终安装包独立三次完整刷新9.942/5.397/6.446秒，均值7.262秒、中位6.446秒；对比本轮基线均值10.353秒约改善29.9%。对应桥就绪2.985/3.104/3.015秒，均值3.035秒（基线4.471秒）。初轮优化包的7.352秒均值保留为阶段记录，不冒充最终包。所有原始样本、无效工具等待、诊断样本分列。起点为调用reload之前、终点为历史证明正文p进入DOM，包含工具轮询开销，不是像素级首绘或P95；网络与缓存波动仍限制推论。最后只读恢复成功，未重发模型输入。证据final-gateway.log、verified-installed-sources.log、verified-assets.json、ui-final-dom.txt和performance-summary.json。
+
+检视覆盖本批11个跟踪文件相对9438b99的差异：连接/身份并行失败清理、ACK前零数据/业务、每请求及原投递守卫、1008登录恢复与账号代次/主动断连隔离、TLS/CA与有界HTTP复用、只读重试和写不重放、Local路径与历史预算保留。未发现本批阻断问题；未执行新的模型任务、真实审批或跨端文件同步，不沿用旧SHA的全量结论。产品代码、spec/中英文文档/feature与管理台账完成，保持本地未提交候选；本轮未运行远端CI或合入主线。

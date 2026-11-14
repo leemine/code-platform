@@ -53,6 +53,7 @@ def test_tls_eof_retries_only_reads_without_relaxing_certificate_checks(monkeypa
             sock = None
             def __init__(self, *args, context, timeout):
                 contexts.append(context)
+            def connect(self): pass
             def request(self, verb, path, body, headers):
                 requests.append((verb, path, body))
             def getresponse(self):
@@ -77,3 +78,31 @@ def test_tls_eof_retries_only_reads_without_relaxing_certificate_checks(monkeypa
             assert pool.context.check_hostname is True
         finally:
             pool.close()
+
+
+def test_healthy_idle_transport_survives_handshake_gap_but_rechecks_permission():
+    authorized = True
+    peers = []
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = 'HTTP/1.1'
+        def do_GET(self):
+            peers.append(self.client_address)
+            self.send_response(200 if authorized else 401)
+            self.send_header('Content-Length', '2'); self.end_headers()
+            self.wfile.write(b'{}'); self.wfile.flush()
+        def log_message(self, *args): pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    pool = AccountHTTPPool(f'http://127.0.0.1:{server.server_port}', None)
+    try:
+        assert pool.request('GET', '/status', None, {}, operation='status', retry_read=True)[0] == 200
+        connection = next(c for c in pool.idle.queue if c is not None)
+        connection._account_idle_since -= 6
+        authorized = False
+        assert pool.request('GET', '/status', None, {}, operation='status', retry_read=True)[0] == 401
+        assert len(peers) == 2 and peers[0] == peers[1]
+        connection._account_idle_since -= 31
+        assert pool.request('GET', '/status', None, {}, operation='status', retry_read=True)[0] == 401
+        assert peers[2] != peers[1], 'idle sockets still have a finite lifetime'
+    finally:
+        pool.close(); server.shutdown(); server.server_close(); thread.join(3)
