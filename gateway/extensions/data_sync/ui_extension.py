@@ -28,6 +28,13 @@ FIELDS = {"status": set(), "login": {"username", "password"}, "logout": set(),
           "workspace": {"operation", "path", "name", "offset", "address_version"}}
 
 
+def _stage(request, name):
+    now = time.monotonic()
+    request.state.cloud_timings[request.state.cloud_stage] = (now - request.state.cloud_stage_started) * 1000
+    request.state.cloud_stage = name
+    request.state.cloud_stage_started = now
+
+
 class DirectoryUIPlugin(ApplicationPluginExtension):
     plugin_id = "data_sync_ui"
 
@@ -61,6 +68,8 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
     async def http(self, request: Request):
         started = time.monotonic()
         request.state.cloud_stage = "admission"
+        request.state.cloud_stage_started = started
+        request.state.cloud_timings = {}
         try:
             async with asyncio.timeout(150), self.slots:
                 response = await self._http(request)
@@ -75,10 +84,14 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
             response = JSONResponse({"code": "SYNC_UNAVAILABLE"}, status_code=503)
         except (ValueError, KeyError, TypeError):
             response = JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
+        _stage(request, request.state.cloud_stage)
         if self.local and request.url.path.endswith('/workspace'):
-            logger.info("Cloud workspace response stage=%s status=%s elapsed_ms=%.1f",
-                        request.state.cloud_stage, response.status_code, (time.monotonic() - started) * 1000)
+            logger.info("Cloud workspace response stage=%s status=%s elapsed_ms=%.1f phases_ms=%s",
+                        request.state.cloud_stage, response.status_code, (time.monotonic() - started) * 1000,
+                        {key: round(value, 1) for key, value in request.state.cloud_timings.items()})
         response.headers["Server-Timing"] = f'cloud;dur={(time.monotonic() - started) * 1000:.1f}'
+        response.headers["Server-Timing"] += "".join(
+            f", {name};dur={duration:.1f}" for name, duration in request.state.cloud_timings.items())
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -133,7 +146,7 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 response.delete_cookie(COOKIE, path=PREFIX, secure=expected[0] == "https", httponly=True, samesite="strict")
                 return response
             try:
-                request.state.cloud_stage = "identity_before"
+                _stage(request, "identity_before")
                 identity = await self.local.identity(token)
             except PermissionError:
                 if action == "status":
@@ -150,14 +163,14 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 address_version = params.pop("address_version", None)
                 if address_version is not None and (type(address_version) is not int or address_version != 1 or params.get("operation") != "open"):
                     raise ValueError("unsupported cloud address version")
-                request.state.cloud_stage = "workspace_" + str(params.get("operation") if params.get("operation") in {"environment", "ensure", "list", "mkdir", "open"} else "invalid")
+                _stage(request, "workspace_" + str(params.get("operation") if params.get("operation") in {"environment", "ensure", "list", "mkdir", "open"} else "invalid"))
                 value = await workspace_request(self.local, token, params)
                 if address_version == 1:
                     from gateway.services.cloud_resource_address import CloudAddresses
                     value = CloudAddresses(self.local.endpoint, identity).result(value)
             else:
                 value = await self.local.run(identity, token, action, params)
-            request.state.cloud_stage = "identity_after"
+            _stage(request, "identity_after")
             latest = await self.local.identity(token)
             if (latest["authority"], latest["actor_id"]) != (identity["authority"], identity["actor_id"]):
                 await self.local.workspaces.discard(token)

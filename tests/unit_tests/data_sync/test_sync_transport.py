@@ -129,3 +129,28 @@ async def test_redirect_cannot_forward_the_account_token():
         destination.close()
         await origin.wait_closed()
         await destination.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_unresponsive_close_handshake_does_not_hold_directory_cleanup():
+    from websockets.legacy.server import WebSocketServerProtocol, serve
+
+    release = asyncio.Event()
+    close_received = asyncio.Event()
+    class SlowClose(WebSocketServerProtocol):
+        async def write_close_frame(self, *args, **kwargs):
+            close_received.set()
+            await release.wait()
+            await super().write_close_frame(*args, **kwargs)
+    async def handler(ws):
+        await ws.wait_closed()
+    server = await serve(handler, "127.0.0.1", 0, create_protocol=SlowClose)
+    rpc = DirectoryRPC(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", "a" * 64)
+    try:
+        await rpc.__aenter__()
+        await asyncio.wait_for(rpc.__aexit__(), 4)
+        assert close_received.is_set() and rpc.closed and rpc._reader.done()
+    finally:
+        release.set()
+        server.close()
+        await asyncio.wait_for(server.wait_closed(), 5)
