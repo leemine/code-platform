@@ -97,6 +97,25 @@ async def renderer(browser, child):
         await asyncio.sleep(0.2)
 
 
+async def dismiss_model_setup(page):
+    skip_model_setup = page.get_by_test_id("model-setup-guide-skip")
+    if not await skip_model_setup.is_visible():
+        return False
+    await skip_model_setup.click()
+    await expect(page.get_by_test_id("model-setup-guide")).to_be_hidden()
+    print("Skipped first-run model setup using the desktop UI", flush=True)
+    return True
+
+
+async def click_account_trigger(page, trigger):
+    try:
+        await trigger.click(timeout=6000)
+    except PlaywrightTimeoutError:
+        if not await dismiss_model_setup(page):
+            raise
+        await trigger.click()
+
+
 async def assert_account(page, username, password, screenshot):
     page.set_default_timeout(12_000)
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
@@ -104,16 +123,7 @@ async def assert_account(page, username, password, screenshot):
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
-    try:
-        await trigger.click(timeout=6000)
-    except PlaywrightTimeoutError:
-        skip_model_setup = page.get_by_test_id("model-setup-guide-skip")
-        if not await skip_model_setup.is_visible():
-            raise
-        await skip_model_setup.click()
-        await expect(page.get_by_test_id("model-setup-guide")).to_be_hidden()
-        print("Skipped first-run model setup using the desktop UI", flush=True)
-        await trigger.click()
+    await click_account_trigger(page, trigger)
     await expect(page.get_by_test_id("cloud-workspace-local-account-dialog")).to_be_visible()
     print("Local cloud account form is visible", flush=True)
     await page.get_by_test_id("cloud-workspace-local-account-username").fill(username)
@@ -126,11 +136,19 @@ async def assert_account(page, username, password, screenshot):
     await expect(trigger).to_have_text(username[:2].upper())
     await expect(trigger).to_have_attribute("aria-label", username)
     print("The sidebar avatar displays the account", flush=True)
-    await trigger.click()
+    await click_account_trigger(page, trigger)
     await expect(page.get_by_test_id("cloud-workspace-local-account-name")).to_have_text(username)
     await page.screenshot(path=str(screenshot))
+    logout_item = page.get_by_test_id("cloud-workspace-local-account-menu-logout")
     async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/logout")) as logout:
-        await page.get_by_test_id("cloud-workspace-local-account-menu-logout").click()
+        try:
+            await logout_item.click(timeout=6000)
+        except PlaywrightTimeoutError:
+            if not await dismiss_model_setup(page):
+                raise
+            if not await logout_item.is_visible():
+                await trigger.click()
+            await logout_item.click()
     assert (await logout.value).status == 200
     await expect(trigger.locator("svg")).to_be_visible()
     print("Logout returned 200 and restored the signed-out account button", flush=True)
