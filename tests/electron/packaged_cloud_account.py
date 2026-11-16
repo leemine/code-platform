@@ -65,6 +65,7 @@ def write_local_config(path, origin, certificate):
         path.chmod(0o600)
         return
 
+    import ntsecuritycon
     import win32api
     import win32con
     import win32security
@@ -75,7 +76,7 @@ def write_local_config(path, origin, certificate):
     finally:
         token.Close()
     acl = win32security.ACL()
-    acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.FILE_ALL_ACCESS, sid)
+    acl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, sid)
     win32security.SetNamedSecurityInfo(
         str(path), win32security.SE_FILE_OBJECT,
         win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION
@@ -96,20 +97,25 @@ async def renderer(browser, child):
 
 
 async def assert_account(page, username, password, screenshot):
+    page.set_default_timeout(12_000)
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
     await expect(trigger.locator("svg")).to_be_visible(timeout=90_000)
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
     await trigger.click()
+    await expect(page.get_by_test_id("cloud-workspace-local-account-dialog")).to_be_visible()
+    print("Local cloud account form is visible", flush=True)
     await page.get_by_test_id("cloud-workspace-local-account-username").fill(username)
     await page.get_by_test_id("cloud-workspace-local-account-password").fill(password)
     async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/login")) as login:
         await page.get_by_test_id("cloud-workspace-local-account-login").click()
-    assert (await login.value).status == 200
+    login_response = await login.value
+    assert login_response.status == 200, f"Login returned {login_response.status}"
+    print("Login returned 200", flush=True)
     await expect(trigger).to_have_text(username[:2].upper())
     await expect(trigger).to_have_attribute("aria-label", username)
-    print("Login returned 200 and the sidebar avatar displays the account", flush=True)
+    print("The sidebar avatar displays the account", flush=True)
     await trigger.click()
     await expect(page.get_by_test_id("cloud-workspace-local-account-name")).to_have_text(username)
     await page.screenshot(path=str(screenshot))
@@ -191,12 +197,19 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
                 page = await renderer(browser, child)
                 try:
                     await assert_account(page, username, password, screenshot)
-                finally:
-                    session = await browser.new_browser_cdp_session()
+                except Exception:
                     try:
-                        await session.send("Browser.close")
+                        await page.screenshot(path=str(screenshot.with_stem(screenshot.stem + "-error")), timeout=3000)
                     except PlaywrightError:
-                        pass  # Closing the browser can also close this CDP transport.
+                        pass
+                    raise
+                finally:
+                    try:
+                        async with asyncio.timeout(4):
+                            session = await browser.new_browser_cdp_session()
+                            await session.send("Browser.close")
+                    except (PlaywrightError, TimeoutError):
+                        pass  # The process cleanup below also covers a stalled CDP close.
         finally:
             try:
                 child.wait(timeout=20)
