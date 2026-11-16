@@ -147,7 +147,7 @@ jobs:
 
   macos:
     if: ${{ inputs.platform == 'macos' || inputs.platform == 'both' || inputs.platform == 'all' }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     defaults:
       run:
