@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from fastapi import FastAPI
 from playwright.async_api import Error as PlaywrightError, async_playwright, expect
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 import psutil
 import uvicorn
 
@@ -103,7 +104,16 @@ async def assert_account(page, username, password, screenshot):
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
-    await trigger.click()
+    try:
+        await trigger.click(timeout=6000)
+    except PlaywrightTimeoutError:
+        skip_model_setup = page.get_by_test_id("model-setup-guide-skip")
+        if not await skip_model_setup.is_visible():
+            raise
+        await skip_model_setup.click()
+        await expect(page.get_by_test_id("model-setup-guide")).to_be_hidden()
+        print("Skipped first-run model setup using the desktop UI", flush=True)
+        await trigger.click()
     await expect(page.get_by_test_id("cloud-workspace-local-account-dialog")).to_be_visible()
     print("Local cloud account form is visible", flush=True)
     await page.get_by_test_id("cloud-workspace-local-account-username").fill(username)
@@ -174,6 +184,8 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
         "CODE_PLATFORM_LOCAL_SYNC_CONFIG": str(config),
         "JIUWENSWARM_ELECTRON_CDP_PORT": str(cdp),
     }
+    gateway_log = Path.home() / ".jiuwenswarm" / "logs" / "electron-gateway.log"
+    gateway_offset = gateway_log.stat().st_size if gateway_log.exists() else 0
     with (root / "desktop.log").open("wb") as log:
         child = subprocess.Popen(
             [str(executable), f"--user-data-dir={root / 'profile'}"], cwd=root, env=environment,
@@ -210,6 +222,14 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
                             await session.send("Browser.close")
                     except (PlaywrightError, TimeoutError):
                         pass  # The process cleanup below also covers a stalled CDP close.
+        except Exception:
+            if gateway_log.exists():
+                with gateway_log.open("rb") as service_log:
+                    service_log.seek(gateway_offset)
+                    for line in service_log:
+                        if b"[ExtensionManager]" in line and b"data_sync" in line:
+                            print(line.decode(errors="replace").rstrip(), flush=True)
+            raise
         finally:
             try:
                 child.wait(timeout=20)
