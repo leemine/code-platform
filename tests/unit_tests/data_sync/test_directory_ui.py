@@ -366,3 +366,58 @@ async def test_http_pool_reuses_transport_and_fetches_fresh_identity(ui_hosts, m
     # Removing the trusted CA must not continue using the previously trusted socket.
     host.cert.unlink()
     assert (await host.client.get("/api/v1/data-sync/status")).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_workspace_connection_age_is_measured_from_open_and_reauthenticates(ui_hosts, monkeypatch):
+    import gateway.services.cloud_workspace_client as workspace
+    clock = [299.0]
+    monkeypatch.setattr(workspace, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    sockets = []
+    async def listing(ws, req_id, params, session_id):
+        sockets.append(ws)
+        await host.channel.send_response(ws, req_id, ok=True, payload={"items": []})
+    host.channel.register_method("project.workspace.list", listing)
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    async def request():
+        return await host.client.post("/api/v1/data-sync/workspace", json={"operation": "list"})
+    first = await request()
+    assert first.status_code == 200
+    assert all(name in first.headers["server-timing"] for name in ("identity_before", "workspace_list", "identity_after"))
+    pool = host.local.local.workspaces
+    entry = next(iter(pool.entries.values()))
+    clock[0] = 301.0  # Cross the old absolute five-minute bucket after two seconds.
+    assert (await request()).status_code == 200
+    assert sockets[0] is sockets[1]
+    clock[0] = entry.opened_at + pool.max_age_seconds + 1
+    assert (await request()).status_code == 200
+    assert sockets[2] is not sockets[1] and len(pool.entries) == 1
+    # A reused transport still enforces the cloud delivery permission check.
+    async def revoke_during_listing(ws, req_id, params, session_id):
+        host.accounts.logout(host.client.cookies.get(COOKIE))
+        await host.channel.send_response(ws, req_id, ok=True, payload={"items": [{"name": "must-not-deliver"}]})
+    host.channel.register_method("project.workspace.list", revoke_during_listing)
+    denied = await request()
+    assert denied.status_code == 401 and "must-not-deliver" not in denied.text
+    assert not pool.entries
+
+
+@pytest.mark.asyncio
+async def test_workspace_closed_connection_reopens_before_next_request(ui_hosts):
+    host = ui_hosts
+    host.channel.on_message(lambda message: False)
+    sockets = []
+    async def listing(ws, req_id, params, session_id):
+        sockets.append(ws)
+        await host.channel.send_response(ws, req_id, ok=True, payload={"items": []})
+    host.channel.register_method("project.workspace.list", listing)
+    await host.client.post("/api/v1/data-sync/login", json={"username": "ui-user", "password": "isolated-ui-password"})
+    async def request():
+        return await host.client.post("/api/v1/data-sync/workspace", json={"operation": "list"})
+    assert (await request()).status_code == 200
+    entry = next(iter(host.local.local.workspaces.entries.values()))
+    await entry.rpc._ws.close()
+    assert (await request()).status_code == 200
+    assert len(sockets) == 2 and sockets[0] is not sockets[1]

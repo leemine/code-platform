@@ -54,6 +54,9 @@ class CloudAccountClient:
                 if self._pool is not None:
                     self._pool.close()
                 self._pool = AccountHTTPPool(self.config["cloud_origin"], self.config.get("ca_file"))
+                # Keep the authority socket through directory browsing pauses.
+                # The pool still checks EOF and sends a fresh request each time.
+                self._pool.idle_seconds = 60
                 self._pool_key = key
             return self._pool
 

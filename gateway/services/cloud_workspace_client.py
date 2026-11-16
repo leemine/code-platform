@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from dataclasses import dataclass, field
+
+from websockets.exceptions import ConnectionClosed
 
 from gateway.auth.account_transport import _trust_stamp
 
@@ -12,8 +15,14 @@ from jiuwenswarm.data_sync.contract import SyncError
 from jiuwenswarm.data_sync.transport import DirectoryRPC
 
 
+logger = logging.getLogger(__name__)
+
+
 class WorkspaceRPC(DirectoryRPC):
     """Reuse bounded WebChannel framing; execution methods remain inaccessible."""
+
+    # Match the original WebChannel heartbeat tolerance on a lossy WAN.
+    ping_timeout = 60
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -31,6 +40,7 @@ class WorkspaceRPC(DirectoryRPC):
 class _Connection:
     rpc: WorkspaceRPC
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    opened_at: float = 0
     users: int = 0
     timer: object = None
 
@@ -43,7 +53,8 @@ class WorkspaceConnections:
         self.entries = {}
         self.lock = asyncio.Lock()
         self.closed = False
-        self.idle_seconds = 60
+        self.idle_seconds = 180
+        self.max_age_seconds = 300
         self._cleanup = set()
 
     async def _remove(self, key, entry, *, idle_only=False):
@@ -74,8 +85,12 @@ class WorkspaceConnections:
             await asyncio.gather(*self._cleanup)
 
     async def request(self, token, method, params):
+        started = time.monotonic()
+        queued = started
+        connect_ms = rpc_ms = 0.0
+        reused = False
         ca = self.local.config.get("ca_file")
-        key = (hashlib.sha256(token.encode()).hexdigest(), self.local.endpoint, _trust_stamp(ca), int(time.monotonic() // 300))
+        key = (hashlib.sha256(token.encode()).hexdigest(), self.local.endpoint, _trust_stamp(ca))
         async with self.lock:
             if self.closed:
                 raise ConnectionError("workspace transport closed")
@@ -90,20 +105,36 @@ class WorkspaceConnections:
                 entry.timer.cancel()
         try:
             async with asyncio.timeout(150), entry.lock:
+                queued = time.monotonic()
                 if self.entries.get(key) is not entry:
                     raise ConnectionError("workspace connection invalidated")
-                if entry.rpc.closed:
-                    await entry.rpc.__aexit__()
-                    await entry.rpc.__aenter__()
+                reused = not entry.rpc.closed and queued - entry.opened_at < self.max_age_seconds
+                if not reused:
+                    connecting = time.monotonic()
+                    try:
+                        await entry.rpc.__aexit__()
+                        await entry.rpc.__aenter__()
+                        entry.opened_at = time.monotonic()
+                    finally:
+                        connect_ms = (time.monotonic() - connecting) * 1000
                     if self.entries.get(key) is not entry:
                         await entry.rpc.__aexit__()
                         raise ConnectionError("workspace connection invalidated")
-                return await entry.rpc.request(method, params)
+                responding = time.monotonic()
+                try:
+                    return await entry.rpc.request(method, params)
+                finally:
+                    rpc_ms = (time.monotonic() - responding) * 1000
         except BaseException:
             # Includes cancellation, timeout and unknown mutation outcomes. Never resend.
             await self._remove(key, entry)
             raise
         finally:
+            finished = time.monotonic()
+            logger.info("Cloud workspace transport operation=%s reused=%s queue_ms=%.1f connect_ms=%.1f rpc_ms=%.1f total_ms=%.1f",
+                        method.rsplit(".", 1)[-1], reused, (queued - started) * 1000,
+                        connect_ms, rpc_ms,
+                        (finished - started) * 1000)
             async with self.lock:
                 entry.users -= 1
                 if not entry.users and self.entries.get(key) is entry:
@@ -122,6 +153,10 @@ async def workspace_request(local, token, params):
     try:
         return await local.workspaces.request(token, "project.workspace." + operation,
             {key: value for key, value in {**params, "work_mode": "code"}.items() if key != "operation"})
+    except ConnectionClosed as exc:
+        if exc.rcvd is not None and exc.rcvd.code == 1008:
+            raise PermissionError() from None
+        raise
     except SyncError as exc:
         if exc.code == "UNAUTHORIZED":
             raise PermissionError() from None

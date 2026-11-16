@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 import ssl
 from urllib.parse import urlsplit
@@ -18,8 +19,13 @@ class _FixedEndpointConnect(connect):
         raise SyncError("SYNC_REDIRECT_DENIED")
 
 
+logger = logging.getLogger(__name__)
+
+
 class DirectoryRPC:
     """One authenticated connection, with no execution or routing lifecycle."""
+
+    ping_timeout = 20
 
     def __init__(self, url, token, *, ca_file=None, timeout=30):
         target = urlsplit(url)
@@ -40,7 +46,7 @@ class DirectoryRPC:
     async def __aenter__(self):
         self._ws = await _FixedEndpointConnect(self.url, extra_headers=self._headers, ssl=self._ssl,
                                  max_size=MAX_BYTES + 65536, open_timeout=self.timeout,
-                                 close_timeout=5, max_queue=4)
+                                 close_timeout=1, max_queue=4, ping_timeout=self.ping_timeout)
         self._reader = asyncio.create_task(self._receive())
         return self
 
@@ -53,7 +59,7 @@ class DirectoryRPC:
 
     @property
     def closed(self):
-        return self._ws is None or self._ws.closed or self._reader.done()
+        return self._ws is None or not self._ws.open or self._reader.done()
 
     async def _receive(self):
         # Exactly one consumer drains responses and unrelated events, including while idle.
@@ -65,6 +71,11 @@ class DirectoryRPC:
                 if future is not None and not future.done():
                     future.set_result(frame)
         except Exception as exc:
+            # Never log peer reason text, payloads or credentials. Close codes
+            # distinguish policy rejection from heartbeat/transport failure.
+            logger.info("Directory transport ended kind=%s received_code=%s sent_code=%s",
+                        type(exc).__name__, getattr(getattr(exc, "rcvd", None), "code", None),
+                        getattr(getattr(exc, "sent", None), "code", None))
             error = exc
         finally:
             for future in self._pending.values():
