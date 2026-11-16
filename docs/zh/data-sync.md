@@ -32,17 +32,17 @@ python -m jiuwenswarm.data_sync --url wss://cloud.example/ws \
 
 Code 输入区保留三段式入口：左侧本地目录，中间 Local/Cloud，选择云端后显示右侧环境菜单，可选云端目录、新建文件夹和创建／准备云环境。这里不展示项目清单同步入口，不要求用户手动发布清单。选择项目后在对应位置工作；切换入口不搬运文件或会话。
 
-本地 Gateway 可配置 `CODE_PLATFORM_LOCAL_SYNC_CONFIG`，指向当前服务用户拥有的0600普通JSON文件，以启用本地云账号登录：
+本地 Gateway 通过 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 读取当前运行用户拥有的私有 JSON 文件，启用云账号登录。Linux 文件权限设为 `0600`。Windows 文件须由运行用户所有，访问控制列表只允许该用户、SYSTEM 和本机 Administrators 获得访问权限。配置使用 UTF-8。
 
 ```json
 {
-  "public_origin": "http://127.0.0.1:8080",
+  "public_origin": "http://127.0.0.1:5173",
   "cloud_origin": "https://cloud.example",
   "installation_id": "laptop-a"
 }
 ```
 
-`public_origin` 必须是本机回环入口；`cloud_origin` 固定为可信HTTPS云端，私有CA可增加 `ca_file`。云端与本地接入配置互斥。若配置显式扩展白名单，须包含 `Project Directory Sync`。本地需原共享目录 AgentClient，不接到远端路由模式。配置名保留既有协议兼容，不表示登录会自动同步目录。
+`public_origin` 必须与实际使用的本机回环页面地址和端口一致。例子使用桌面端默认端口。若端口被占用，使用启动日志中显示的端口。`cloud_origin` 固定为可信 HTTPS 云端，私有 CA 可增加 `ca_file`。云端与本地接入配置互斥。若配置显式扩展白名单，须包含 `Project Directory Sync`。本地需原共享目录 AgentClient，不接到远端路由模式。配置名保留既有协议兼容，不表示登录会自动同步目录。
 
 本地左下角“登录云账号”仅管理此本地入口的云账号会话，成功后显示账号及退出入口，不读取或发布项目清单。密码不持久化，令牌使用同源HttpOnly会话Cookie；账号改变时丢弃旧响应。云端入口继续使用原账号登录流程。
 
