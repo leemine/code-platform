@@ -133,6 +133,7 @@ async def test_redirect_cannot_forward_the_account_token():
 
 @pytest.mark.asyncio
 async def test_unresponsive_close_handshake_does_not_hold_directory_cleanup():
+    import time
     from websockets.legacy.server import WebSocketServerProtocol, serve
 
     release = asyncio.Event()
@@ -148,7 +149,11 @@ async def test_unresponsive_close_handshake_does_not_hold_directory_cleanup():
     rpc = DirectoryRPC(f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", "a" * 64)
     try:
         await rpc.__aenter__()
+        started = time.monotonic()
         await asyncio.wait_for(rpc.__aexit__(), 4)
+        # wait_for cancellation can itself wait on the library close handshake.
+        # Assert actual elapsed time, rather than treating its budget as proof.
+        assert time.monotonic() - started < 4
         assert close_received.is_set() and rpc.closed and rpc._reader.done()
     finally:
         release.set()
