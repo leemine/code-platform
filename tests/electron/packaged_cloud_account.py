@@ -12,6 +12,7 @@ import socket
 import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from urllib.parse import urljoin
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -97,7 +98,7 @@ async def renderer(browser, child):
 async def assert_account(page, username, password, screenshot):
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
     await expect(trigger.locator("svg")).to_be_visible(timeout=90_000)
-    status = await page.request.get("/api/v1/data-sync/status")
+    status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
     await trigger.click()
