@@ -13,6 +13,7 @@ on:
           - macos
           - both
           - linux
+          - windows-linux
           - all
           - release-assets
       product_base_sha:
@@ -40,7 +41,7 @@ concurrency:
 
 jobs:
   build:
-    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == 'all' || inputs.platform == '' }}
+    if: ${{ inputs.platform == 'windows' || inputs.platform == 'both' || inputs.platform == 'windows-linux' || inputs.platform == 'all' || inputs.platform == '' }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -100,6 +101,25 @@ jobs:
       - name: Record installer file manifests
         run: |
           .venv/Scripts/python.exe -I -c "import hashlib,json; from pathlib import Path; p=Path('ci-evidence/source.json'); s=json.loads(p.read_text(encoding='utf-8-sig')); s['assets']=[{'file':f.name,'bytes':f.stat().st_size,'sha256':hashlib.file_digest(f.open('rb'),'sha256').hexdigest()} for f in sorted(Path('dist').glob('*.exe'))]; p.write_text(json.dumps(s,indent=2)+'\n'); print(json.dumps(s))"
+      - name: Verify installed Windows cloud account
+        run: |
+          $installers = @(Get-ChildItem dist -File -Filter *.exe)
+          if ($installers.Count -ne 1) { throw 'Expected one Windows installer' }
+          $target = Join-Path $env:RUNNER_TEMP 'workswarm-account'
+          $setup = Start-Process -FilePath $installers[0].FullName -ArgumentList @(
+            '/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/MERGETASKS=!desktopicon', "/DIR=`"$target`""
+          ) -PassThru
+          if (!$setup.WaitForExit(120000)) { $setup.Kill(); throw 'Installer timed out' }
+          if ($setup.ExitCode -ne 0) { throw "Installer exited with $($setup.ExitCode)" }
+          # Silent Inno installs may auto-launch from Explorer without the test environment.
+          for ($attempt = 0; $attempt -lt 5; $attempt++) {
+            Get-CimInstance Win32_Process | Where-Object {
+              $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$target\", [StringComparison]::OrdinalIgnoreCase)
+            } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 1
+          }
+          .venv/Scripts/python.exe -I tests/electron/packaged_cloud_account.py (Join-Path $target 'WorkSwarm.exe') ci-evidence/windows-account.png
+          if ($LASTEXITCODE -ne 0) { throw 'Windows desktop account verification failed' }
       - name: Upload installer
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -247,7 +267,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ inputs.platform == 'linux' || inputs.platform == 'all' }}
+    if: ${{ inputs.platform == 'linux' || inputs.platform == 'windows-linux' || inputs.platform == 'all' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     defaults:
@@ -320,6 +340,15 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Verify installed Linux cloud account
+        run: |
+          set -euo pipefail
+          tar -xzf dist/workswarm-external-linux-amd64.tar.gz -C "$RUNNER_TEMP"
+          xvfb-run -a .venv/bin/python -I tests/electron/packaged_cloud_account.py \
+            "$RUNNER_TEMP/workswarm-external-linux-amd64/workswarm-external" ci-evidence/linux-tar-account.png
+          sudo dpkg -i dist/workswarm-external_*_amd64.deb
+          xvfb-run -a .venv/bin/python -I tests/electron/packaged_cloud_account.py \
+            /opt/workswarm-external/workswarm-external ci-evidence/linux-deb-account.png
       - name: Upload Linux build diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

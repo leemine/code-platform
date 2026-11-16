@@ -32,17 +32,17 @@ A rebuild of the same logical environment and workspace retains the source ID an
 
 The Code composer retains three controls: the local directory, Local/Cloud selection, and a cloud environment menu for choosing a cloud directory, creating a folder, or preparing the account environment. There is no inventory-sync menu or manual publication requirement. Switching entries changes where the user works; it does not transfer files or sessions.
 
-To enable cloud sign-in in the local footer, set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` to a private (0600), service-owned regular JSON file:
+To enable cloud sign-in in the local footer, set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` to a private, UTF-8 JSON file owned by the runtime user. On Linux, set mode `0600`. On Windows, the file's access control list may grant access to the runtime user, SYSTEM, and the local Administrators group.
 
 ```json
 {
-  "public_origin": "http://127.0.0.1:8080",
+  "public_origin": "http://127.0.0.1:5173",
   "cloud_origin": "https://cloud.example",
   "installation_id": "laptop-a"
 }
 ```
 
-The public origin must be loopback. The cloud destination is fixed HTTPS; an optional `ca_file` supplies a trusted private CA bundle. Local and cloud role configuration is exclusive. Explicit extension allowlists must include `Project Directory Sync`. The local adapter requires the original shared-directory AgentClient. Existing configuration names remain compatible; signing in does not register a source or publish inventories.
+The public origin must match the loopback address and port of the app. The example uses the desktop default. If the app selects another port, use the port in the startup log. Set a fixed HTTPS cloud destination and add `ca_file` if it uses a private CA. Local and cloud role configuration is exclusive. Explicit extension allowlists must include `Project Directory Sync`. The local adapter requires the original shared-directory AgentClient. Existing configuration names remain compatible; signing in does not register a source or publish inventories.
 
 The footer manages only this local entry's cloud account session. It displays the signed-in account and sign-out action. Passwords are not persisted; the session uses a same-origin HttpOnly cookie, and account changes invalidate late responses. The cloud entry retains its original account login flow.
 

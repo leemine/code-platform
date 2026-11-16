@@ -234,6 +234,12 @@ datas += collect_data_files(
     include_py_files=True,
     includes=EXTENSION_DATA_FILE_PATTERNS,
 )
+# The Gateway loader discovers these files on disk and loads the entry by path.
+data_sync_dir = Path(project_root, "gateway", "extensions", "data_sync")
+datas += [
+    (str(data_sync_dir / filename), "gateway/extensions/data_sync")
+    for filename in ("extension.yaml", "extension.py")
+]
 datas += collect_data_files(
     "jiuwenswarm.symphony",
     include_py_files=False,

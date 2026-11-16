@@ -6,12 +6,15 @@ import importlib.metadata
 import importlib.util
 import json
 import logging
+from pathlib import Path
 import sys
 
 
 def main():
     assert importlib.util.find_spec('openjiuwen') is None, 'Core must not be installed in the external profile'
     from jiuwenswarm.common import native_integration
+    from gateway import extensions
+    from gateway.extensions.loader import ExtensionLoader
     from gateway.extensions.registry import ExtensionRegistry
     from jiuwenswarm.server.worker.runtime_backend import preload_shared_execution_code
     from jiuwenswarm.server.runtime.agent_adapter.agent_adapters import create_adapter
@@ -33,6 +36,13 @@ def main():
     assert is_interrupt_resume_payload({'request_id': 'test', 'source': 'permission_interrupt', 'answers': [{}]})
     assert not is_interrupt_resume_payload({'query': 'hello'})
     registry = ExtensionRegistry(None, {}, logging.getLogger(__name__))
+    loader = ExtensionLoader(registry)
+    extension_root = Path(extensions.__file__).parent
+    loader.add_search_path(extension_root)
+    data_sync = extension_root / "data_sync"
+    assert data_sync in loader.discover_extension_roots(), f"Missing packaged extension: {data_sync}"
+    assert loader.load_manifest(data_sync)["id"] == "data_sync"
+    assert callable(loader._import_module(data_sync).register_extensions)
     context = {}
     async def hook(ctx):
         ctx['called'] = True

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import socket
 import subprocess
 from types import SimpleNamespace
@@ -20,8 +21,30 @@ from gateway.extensions.data_sync.extension import DataSyncPlugin
 from gateway.extensions.data_sync.ui_extension import DirectoryUIPlugin
 from gateway.services.cloud_environments import EnvironmentStore
 from gateway.services.data_sync.store import DirectoryStore
-from gateway.services.data_sync.ui import COOKIE
+from gateway.services.data_sync.ui import COOKIE, LOCAL_CONFIG, load_local_config
 from jiuwenswarm.data_sync.contract import CAPABILITIES, SyncError, digest, inventory
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX configuration permission checks")
+def test_local_cloud_config_requires_private_regular_file(tmp_path, monkeypatch):
+    config = tmp_path / "account.json"
+    data = {"public_origin": "http://127.0.0.1:5173", "cloud_origin": "https://cloud.example",
+            "installation_id": "desktop-test"}
+    config.write_text(json.dumps(data), encoding="utf-8-sig")
+    monkeypatch.setenv(LOCAL_CONFIG, str(config))
+    config.chmod(0o600)
+    assert load_local_config() == data
+
+    config.chmod(0o644)
+    with pytest.raises(ValueError, match="configuration must be private"):
+        load_local_config()
+
+    config.chmod(0o600)
+    link = tmp_path / "account-link.json"
+    link.symlink_to(config)
+    monkeypatch.setenv(LOCAL_CONFIG, str(link))
+    with pytest.raises(ValueError, match="configuration must be private"):
+        load_local_config()
 
 
 def test_ui_catalog_is_account_scoped_paginated_and_rejects_mixed_revisions(tmp_path):

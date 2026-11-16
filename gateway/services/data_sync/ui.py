@@ -93,12 +93,57 @@ class CloudAccountClient:
         return value
 
 
+def _windows_config_is_private(stream):
+    import msvcrt
+
+    import win32api
+    import win32con
+    import win32security
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        owner = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
+    descriptor = win32security.GetSecurityInfo(
+        msvcrt.get_osfhandle(stream.fileno()),
+        win32security.SE_FILE_OBJECT,
+        win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION,
+    )
+    acl = descriptor.GetSecurityDescriptorDacl()
+    if descriptor.GetSecurityDescriptorOwner() != owner or acl is None:
+        return False
+    trusted = (
+        owner,
+        win32security.CreateWellKnownSid(win32security.WinLocalSystemSid, None),
+        win32security.CreateWellKnownSid(win32security.WinBuiltinAdministratorsSid, None),
+    )
+    for index in range(acl.GetAceCount()):
+        ace = acl.GetAce(index)
+        ace_type = ace[0][0]
+        if ace_type == win32security.ACCESS_DENIED_ACE_TYPE:
+            continue
+        if ace_type != win32security.ACCESS_ALLOWED_ACE_TYPE or ace[-1] not in trusted:
+            return False
+    return True
+
+
 def load_local_config():
     path = Path(os.environ[LOCAL_CONFIG])
-    info = path.lstat()
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077):
+    before_open = path.lstat()
+    if not stat.S_ISREG(before_open.st_mode) or (
+        getattr(before_open, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
         raise ValueError("local sync configuration must be private")
-    value = json.loads(path.read_text())
+    with path.open(encoding="utf-8-sig") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or not os.path.samestat(before_open, info):
+            raise ValueError("local sync configuration changed while opening")
+        private = (_windows_config_is_private(stream) if os.name == "nt"
+                   else info.st_uid == os.getuid() and not info.st_mode & 0o077)
+        if not private:
+            raise ValueError("local sync configuration must be private")
+        value = json.load(stream)
     if set(value) - {"public_origin", "cloud_origin", "ca_file", "installation_id"}:
         raise ValueError("unknown local sync configuration")
     if origin(value["public_origin"], local=True)[1] not in {"127.0.0.1", "::1", "localhost"}:
