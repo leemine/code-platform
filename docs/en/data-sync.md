@@ -32,7 +32,11 @@ A rebuild of the same logical environment and workspace retains the source ID an
 
 The Code composer retains three controls: the local directory, Local/Cloud selection, and a cloud environment menu for choosing a cloud directory, creating a folder, or preparing the account environment. There is no inventory-sync menu or manual publication requirement. Switching entries changes where the user works; it does not transfer files or sessions.
 
-To enable cloud sign-in in the local footer, set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` to a private, UTF-8 JSON file owned by the runtime user. On Linux, set mode `0600`. On Windows, the file's access control list may grant access to the runtime user, SYSTEM, and the local Administrators group.
+The Windows installer enables cloud sign-in in the lower-left corner when WorkSwarm starts. The default destination is `https://113.207.105.228:28953`. The app verifies that service with the CA certificate in the installer. The desktop launcher supplies the active loopback port, and the app saves an installation identifier in the user data directory.
+
+To use another cloud, save the private configuration as `%USERPROFILE%\.jiuwenswarm\config\cloud-account.json` and restart WorkSwarm. This file may omit `public_origin` because the launcher supplies it. An explicitly set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` takes precedence.
+
+For other local Gateway deployments, set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` to a private, UTF-8 JSON file owned by the runtime user. On Linux, set mode `0600`. On Windows, the file's access control list may grant access to the runtime user, SYSTEM, and the local Administrators group.
 
 ```json
 {

@@ -68,6 +68,8 @@ CLI的--kind cloud表示请求Gateway发布原云角色项目，--installation-i
 
 本地配置必须是运行用户拥有的私有普通文件。POSIX 核验所有者和组及其他用户权限。Windows 核验打开的文件句柄，要求运行用户所有，且 DACL 仅向该用户、SYSTEM 或本机 Administrators 授权。冻结桌面包保留 `data_sync` 的磁盘清单和入口脚本，供原 Gateway 扩展发现机制加载。
 
+Windows Electron 安装版默认启用本地云账号桥接。显式 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 优先，其次读取用户数据目录下 `config/cloud-account.json`，最后使用包内云端地址与 CA 公钥。后两种方式以桌面启动器的实际回环端口校验 Host 和 Origin。默认配置使用保存在用户数据目录的随机安装标识。
+
 保留的HTTP适配还支持view/choices/publish/refresh/revoke，用于协议集成与验收，不再由产品界面调用。每次检查Host；存在Origin时必须完全匹配配置，POST还须X-Jiuwen-Sync:1和参数字段白名单，拒绝账号/根/实例选择器。云端原AccountPrincipal负责请求与交付前复核。HTTP与RPC共享4槽。目录view使用账号隔离、版本一致性校验的只读catalog分页，不注册接收来源或生成ACK；云choices沿原READY环境及existing-only Router导出；refresh不读云角色。local副本、意图及ACK仍由原连接器持久化。
 
 同步连接以 `X-Jiuwen-Connection-Scope: data-sync` 请求收窄范围。原账号鉴权返回仅data_sync方法前缀的连接能力；原WebChannel在分发前拒绝其他RPC，连接与断连均不进入执行实例计数、预热或延迟回收。普通连接保持原生命周期。握手缓存纳入作用域，不能复用其他范围的鉴权结果。此接缝仅减少权限，不跳过逐请求/交付账号校验。无启动承诺要求配套新版Gateway，不能把旧Gateway接受握手当作支持证明。

@@ -27,6 +27,7 @@ import uvicorn
 from gateway.auth.account_authenticator import AccountAuthenticator
 from gateway.auth.accounts import AccountStore
 from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
+from gateway.services.data_sync.ui import DESKTOP_CONFIG_NAME, WINDOWS_DESKTOP_CLOUD_ORIGIN
 
 
 def loopback_socket():
@@ -56,6 +57,7 @@ def write_test_certificate(root):
 
 
 def write_local_config(path, origin, certificate):
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "public_origin": "http://127.0.0.1:5173",
         "cloud_origin": origin,
@@ -154,6 +156,22 @@ async def assert_account(page, username, password, screenshot):
     print("Logout returned 200 and restored the signed-out account button", flush=True)
 
 
+async def assert_default_windows_account(page):
+    trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
+    await expect(trigger.locator("svg")).to_be_visible(timeout=90_000)
+    status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
+    assert status.status == 200
+    identity = await status.json()
+    assert identity["authenticated"] is False
+    assert identity["cloud_origin"] == WINDOWS_DESKTOP_CLOUD_ORIGIN
+    await click_account_trigger(page, trigger)
+    await expect(page.get_by_test_id("cloud-workspace-local-account-destination")).to_contain_text(
+        WINDOWS_DESKTOP_CLOUD_ORIGIN
+    )
+    await expect(page.get_by_test_id("cloud-workspace-local-account-form")).to_be_visible()
+    print("Clean Windows launch displays the default cloud account login with no local config override", flush=True)
+
+
 async def smoke(executable, screenshot, root):
     username, password = "desktop-smoke", secrets.token_urlsafe(24)
     certificate, key = write_test_certificate(root)
@@ -184,24 +202,32 @@ async def smoke(executable, screenshot, root):
                         await serving
                         raise RuntimeError("HTTPS account authority did not start")
                     await asyncio.sleep(0.05)
+                if os.name == "nt":
+                    await run_desktop(executable, screenshot, root, origin, certificate, username, password,
+                                      use_windows_default=True)
                 await run_desktop(executable, screenshot, root, origin, certificate, username, password)
         finally:
             server.should_exit = True
             await asyncio.wait_for(serving, 10)
 
 
-async def run_desktop(executable, screenshot, root, origin, certificate, username, password):
-    config = root / "local-cloud.json"
-    write_local_config(config, origin, certificate)
+async def run_desktop(executable, screenshot, root, origin, certificate, username, password, *,
+                      use_windows_default=False):
+    data = root / "data"
+    config = data / "config" / DESKTOP_CONFIG_NAME if os.name == "nt" else root / "local-cloud.json"
+    if not use_windows_default:
+        write_local_config(config, origin, certificate)
     with loopback_socket() as reserved:
         cdp = reserved.getsockname()[1]
     environment = {
         **os.environ,
-        "JIUWENSWARM_DATA_DIR": str(root / "data"),
+        "JIUWENSWARM_DATA_DIR": str(data),
         "JIUWENSWARM_CONFIG_URL": "off",
         "CODE_PLATFORM_LOCAL_SYNC_CONFIG": str(config),
         "JIUWENSWARM_ELECTRON_CDP_PORT": str(cdp),
     }
+    if os.name == "nt":
+        environment.pop("CODE_PLATFORM_LOCAL_SYNC_CONFIG")
     gateway_log = Path.home() / ".jiuwenswarm" / "logs" / "electron-gateway.log"
     gateway_offset = gateway_log.stat().st_size if gateway_log.exists() else 0
     with (root / "desktop.log").open("wb") as log:
@@ -226,7 +252,10 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
                 browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp}", timeout=60_000)
                 page = await renderer(browser, child)
                 try:
-                    await assert_account(page, username, password, screenshot)
+                    if use_windows_default:
+                        await assert_default_windows_account(page)
+                    else:
+                        await assert_account(page, username, password, screenshot)
                 except Exception:
                     try:
                         await page.screenshot(path=str(screenshot.with_stem(screenshot.stem + "-error")), timeout=3000)

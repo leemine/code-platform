@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 62 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 63 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -25,7 +25,7 @@ generated: true
 | [deploy/cloud-workspace](#module-8) | 2 |
 | [deploy/tls](#module-9) | 1 |
 | [deploy/web](#module-10) | 1 |
-| [desktop](#module-11) | 3 |
+| [desktop](#module-11) | 4 |
 | [docs](#module-12) | 1 |
 | [gateway](#module-13) | 5 |
 | [gateway/channel_manager/im_platforms/xiaoyi](#module-14) | 1 |
@@ -160,6 +160,7 @@ generated: true
 | [F_20261030_1939_external-desktop-builds](features/F_20261030_1939_external-desktop-builds.md) | F | 可选 Native 与外部 Provider 桌面测试包 | leemine | agent_adapter, desktop, gateway | pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml, .github/scripts/transfer-release-assets.py, .github/workflows/stable.yml, tests/unit_tests/test_release_asset_transfer.py | 无独立 D：用户确认两种安装组合和先 Linux 后 Windows/macOS 的实施范围；管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 第24节及 EXTERNAL_DESKTOP_BUILD_20261030 记录来源与验证。 |
 | [B_20261031_1930_optional-provider-menu](bugfix/desktop/B_20261031_1930_optional-provider-menu.md) | B | 桌面安装 SDK 后执行引擎不可选 | leemine | desktop, config_panel, settings | jiuwenswarm/common/config_panel/execution_provider_settings.py, jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/features/settings/modules/agent/useExternalCliInstallCompletion.ts, jiuwenswarm/channels/web/frontend/src/features/settings/modules/agent/ExternalCliAgentsSettings.tsx, jiuwenswarm/channels/web/frontend/src/components/ExternalCliAgentsSection.tsx | 无独立 D：沿原 Third-party Agents 配置/安装和 Front 执行器目录职责修复；不增加执行流程。 |
 | [B_20261116_1927_desktop-cloud-account-package](bugfix/desktop/B_20261116_1927_desktop-cloud-account-package.md) | B | 桌面安装包云账号扩展与 Windows 配置权限 | leemine | desktop | scripts/jiuwenswarm.spec, scripts/verify_external_bundle.py, gateway/services/data_sync/ui.py, .github/workflows/windows-external.yml, tests/electron/packaged_cloud_account.py | 无独立 D：修复既有桌面安装和云账号接入，不改变账号或运行时架构。 |
+| [B_20261116_2210_windows-cloud-account-autostart](bugfix/desktop/B_20261116_2210_windows-cloud-account-autostart.md) | B | Windows 双击启动时启用云账号 | leemine | desktop | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/ui.py, gateway/extensions/data_sync/windows-cloud-root.crt, scripts/jiuwenswarm.spec, tests/electron/packaged_cloud_account.py | 无独立 D：沿用已有云账号桥接和桌面启动契约。 |
 
 <a id="module-12"></a>
 

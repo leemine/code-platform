@@ -240,6 +240,8 @@ datas += [
     (str(data_sync_dir / filename), "gateway/extensions/data_sync")
     for filename in ("extension.yaml", "extension.py")
 ]
+if sys.platform == "win32":
+    datas.append((str(data_sync_dir / "windows-cloud-root.crt"), "gateway/extensions/data_sync"))
 datas += collect_data_files(
     "jiuwenswarm.symphony",
     include_py_files=False,

@@ -8,15 +8,21 @@ import os
 from pathlib import Path
 import secrets
 import stat
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
+from uuid import uuid4
+
+import portalocker
 
 from jiuwenswarm.data_sync.connector import DirectoryConnector, DirectoryReplica, register_source
 from jiuwenswarm.data_sync.contract import SyncError, digest, encoded, identifier, project_selection
 from jiuwenswarm.data_sync.transport import DirectoryRPC
 
 LOCAL_CONFIG = "CODE_PLATFORM_LOCAL_SYNC_CONFIG"
+DESKTOP_CONFIG_NAME = "cloud-account.json"
+WINDOWS_DESKTOP_CLOUD_ORIGIN = "https://113.207.105.228:28953"
 COOKIE = "jiuwenswarm_sync"
 
 
@@ -128,8 +134,48 @@ def _windows_config_is_private(stream):
     return True
 
 
-def load_local_config():
-    path = Path(os.environ[LOCAL_CONFIG])
+def windows_desktop_origin() -> str | None:
+    if os.name != "nt" or not getattr(sys, "frozen", False) or os.environ.get("JIUWENSWARM_ELECTRON") != "1":
+        return None
+    port = int(os.environ["FRONTEND_PORT"])
+    if not 1 <= port <= 65535:
+        raise ValueError("invalid desktop frontend port")
+    return f"http://127.0.0.1:{port}"
+
+
+def windows_desktop_cloud_ca() -> Path:
+    return Path(__file__).resolve().parents[2] / "extensions" / "data_sync" / "windows-cloud-root.crt"
+
+
+def load_windows_desktop_cloud_config(config_dir: Path, public_origin: str) -> dict:
+    try:
+        return load_local_config(config_dir / DESKTOP_CONFIG_NAME, public_origin=public_origin)
+    except FileNotFoundError:
+        pass
+    ca_file = windows_desktop_cloud_ca()
+    if not ca_file.is_file():
+        raise FileNotFoundError("Windows cloud account CA is missing from the desktop package")
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with portalocker.Lock(config_dir / "cloud-installation-id", mode="a+", encoding="utf-8", timeout=5) as stream:
+        stream.seek(0)
+        installation_id = stream.read().strip()
+        if not installation_id:
+            installation_id = uuid4().hex
+            stream.write(installation_id + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        identifier(installation_id)
+    return {
+        "public_origin": public_origin,
+        "cloud_origin": WINDOWS_DESKTOP_CLOUD_ORIGIN,
+        "ca_file": str(ca_file),
+        "installation_id": installation_id,
+    }
+
+
+def load_local_config(path: Path | None = None, *, public_origin: str | None = None):
+    if path is None:
+        path = Path(os.environ[LOCAL_CONFIG])
     before_open = path.lstat()
     if not stat.S_ISREG(before_open.st_mode) or (
         getattr(before_open, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
@@ -146,6 +192,8 @@ def load_local_config():
         value = json.load(stream)
     if set(value) - {"public_origin", "cloud_origin", "ca_file", "installation_id"}:
         raise ValueError("unknown local sync configuration")
+    if public_origin is not None:
+        value["public_origin"] = public_origin
     if origin(value["public_origin"], local=True)[1] not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("local sync UI must use a loopback entry")
     origin(value["cloud_origin"])

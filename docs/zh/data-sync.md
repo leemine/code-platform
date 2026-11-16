@@ -32,7 +32,11 @@ python -m jiuwenswarm.data_sync --url wss://cloud.example/ws \
 
 Code 输入区保留三段式入口：左侧本地目录，中间 Local/Cloud，选择云端后显示右侧环境菜单，可选云端目录、新建文件夹和创建／准备云环境。这里不展示项目清单同步入口，不要求用户手动发布清单。选择项目后在对应位置工作；切换入口不搬运文件或会话。
 
-本地 Gateway 通过 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 读取当前运行用户拥有的私有 JSON 文件，启用云账号登录。Linux 文件权限设为 `0600`。Windows 文件须由运行用户所有，访问控制列表只允许该用户、SYSTEM 和本机 Administrators 获得访问权限。配置使用 UTF-8。
+Windows 安装版直接启动 WorkSwarm 即可在左下角打开云账号登录。默认连接 `https://113.207.105.228:28953`，使用包内 CA 公钥验证云端证书。本机地址和端口由桌面启动器提供，安装标识保存在用户数据目录。
+
+需要改用其他云端时，可将私有配置保存到 `%USERPROFILE%\.jiuwenswarm\config\cloud-account.json`，然后重启 WorkSwarm。此入口从启动器获取本机地址，JSON 可以省略 `public_origin`。如已设置 `CODE_PLATFORM_LOCAL_SYNC_CONFIG`，以该变量指向的配置为准。
+
+其他本地 Gateway 通过 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 指向当前运行用户拥有的私有 JSON 文件。Linux 文件权限设为 `0600`。Windows 文件须由运行用户所有，访问控制列表只允许该用户、SYSTEM 和本机 Administrators 获得访问权限。配置使用 UTF-8。
 
 ```json
 {
