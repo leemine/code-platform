@@ -1,8 +1,9 @@
 import { getApiBase } from '../../utils/env';
 
-export type LocalCloudIdentity = { enabled: boolean; authenticated?: boolean; kind?: 'local' | 'cloud'; username?: string; cloud_origin?: string };
+export type LocalCloudIdentity = { enabled: boolean; authenticated?: boolean; kind?: 'local' | 'cloud'; username?: string; cloud_origin?: string; registration_enabled?: boolean };
+type AccountAction = 'status' | 'registration' | 'register' | 'login' | 'logout';
 
-async function performAccountRequest(action: 'status' | 'login' | 'logout', body?: Record<string, string>): Promise<LocalCloudIdentity> {
+async function performAccountRequest(action: AccountAction, body?: Record<string, string>): Promise<LocalCloudIdentity> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 30000);
   try {
@@ -13,14 +14,17 @@ async function performAccountRequest(action: 'status' | 'login' | 'logout', body
     });
     if (action === 'status' && response.status === 404) return { enabled: false };
     const value = await response.json();
-    if (!response.ok) throw Object.assign(new Error('Cloud account request failed'), { code: response.status === 401 ? 'UNAUTHORIZED' : 'ACCOUNT_UNAVAILABLE' });
+    if (!response.ok) throw Object.assign(new Error('Cloud account request failed'), {
+      code: response.status === 401 ? 'UNAUTHORIZED' : value?.code ?? 'ACCOUNT_UNAVAILABLE',
+    });
     return value;
   } finally { window.clearTimeout(timer); }
 }
 
 // Share only unfinished reads; completed identities are never cached.
 let pendingStatus: Promise<LocalCloudIdentity> | null = null;
-export function localCloudAccountRequest(action: 'status' | 'login' | 'logout', body?: Record<string, string>): Promise<LocalCloudIdentity> {
+export function localCloudAccountRequest(action: AccountAction, body?: Record<string, string>): Promise<LocalCloudIdentity> {
+  if (action === 'registration') return performAccountRequest(action);
   if (action !== 'status') {
     pendingStatus = null;
     return performAccountRequest(action, body).finally(() => { pendingStatus = null; });

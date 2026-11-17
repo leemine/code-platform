@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import subprocess
@@ -28,6 +29,8 @@ from gateway.auth.account_authenticator import AccountAuthenticator
 from gateway.auth.accounts import AccountStore
 from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
 from gateway.services.data_sync.ui import DESKTOP_CONFIG_NAME, WINDOWS_DESKTOP_CLOUD_ORIGIN
+
+SIGNED_OUT_LABEL = re.compile(r"^(登录|Sign in)$")
 
 
 def loopback_socket():
@@ -121,7 +124,7 @@ async def click_account_trigger(page, trigger):
 async def assert_account(page, username, password, screenshot):
     page.set_default_timeout(12_000)
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
-    await expect(trigger.locator("svg")).to_be_visible(timeout=90_000)
+    await expect(trigger).to_have_text(SIGNED_OUT_LABEL, timeout=90_000)
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
@@ -152,13 +155,13 @@ async def assert_account(page, username, password, screenshot):
                 await trigger.click()
             await logout_item.click()
     assert (await logout.value).status == 200
-    await expect(trigger.locator("svg")).to_be_visible()
+    await expect(trigger).to_have_text(SIGNED_OUT_LABEL)
     print("Logout returned 200 and restored the signed-out account button", flush=True)
 
 
 async def assert_default_windows_account(page):
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
-    await expect(trigger.locator("svg")).to_be_visible(timeout=90_000)
+    await expect(trigger).to_have_text(SIGNED_OUT_LABEL, timeout=90_000)
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200
     identity = await status.json()

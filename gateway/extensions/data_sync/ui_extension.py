@@ -13,6 +13,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from gateway.auth.account_authenticator import current_account
+from gateway.auth.accounts import AccountError
 from gateway.auth.remote_accounts import AccountAuthorityUnavailable
 from gateway.extensions.auth.credential_authenticator import AuthContext
 from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution, WebSocketRouteContribution
@@ -22,7 +23,8 @@ from jiuwenswarm.data_sync.contract import SyncError
 
 PREFIX = "/api/v1/data-sync"
 logger = logging.getLogger(__name__)
-FIELDS = {"status": set(), "login": {"username", "password"}, "logout": set(),
+ACCOUNT_FIELDS = {"username", "password"}
+FIELDS = {"status": set(), "registration": set(), "register": ACCOUNT_FIELDS, "login": ACCOUNT_FIELDS, "logout": set(),
           "view": {"offset", "version"}, "choices": set(), "publish": {"operation_id", "project_ids"},
           "refresh": set(), "revoke": {"source_id"},
           "workspace": {"operation", "path", "name", "offset", "address_version"}}
@@ -59,7 +61,8 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
 
     def http_routes(self):
         return tuple(HTTPRouteContribution(PREFIX + "/" + action, self.http,
-                     ("GET",) if action == "status" else ("POST",)) for action in FIELDS)
+                     ("GET",) if action in {"status", "registration"} else ("POST",)) for action in FIELDS
+                     if self.local or action not in {"registration", "register"})
 
     def websocket_routes(self):
         from gateway.services.cloud_execution_bridge import PATH
@@ -75,6 +78,8 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 response = await self._http(request)
         except PermissionError:
             response = JSONResponse({"code": "UNAUTHORIZED"}, status_code=401)
+        except AccountError as exc:
+            response = JSONResponse({"code": exc.code}, status_code=exc.status)
         except SyncError as exc:
             response = JSONResponse({"code": exc.code}, status_code=409)
         except (EnvironmentUnavailable, AccountAuthorityUnavailable, TimeoutError, ConnectionError,
@@ -125,10 +130,14 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 raise ValueError()
         if self.local:
             token = request.cookies.get(COOKIE)
-            if action == "login":
-                if set(params) != FIELDS["login"] or any(not isinstance(v, str) or len(v) > 512 for v in params.values()):
+            if action == "registration":
+                return JSONResponse(await asyncio.to_thread(self.local.accounts.call, "registration"))
+            if action in {"login", "register"}:
+                if set(params) != ACCOUNT_FIELDS or any(not isinstance(v, str) or len(v) > 512 for v in params.values()):
                     raise ValueError()
-                value = await asyncio.to_thread(self.local.accounts.call, "login", None, params)
+                value = await asyncio.to_thread(self.local.accounts.call, action, None, params)
+                if action == "register":
+                    return JSONResponse({"registered": True}, status_code=201)
                 await self.local.workspaces.discard(token)
                 await self.local.execution.discard(token)
                 response = JSONResponse({"authenticated": True})

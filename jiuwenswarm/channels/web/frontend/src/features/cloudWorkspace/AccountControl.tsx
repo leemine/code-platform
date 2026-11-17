@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { UserRound } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '../../components/ui/DropdownMenu/DropdownMenu';
 import './cloudWorkspace.css';
 
@@ -23,7 +22,7 @@ export function AccountControl({ authenticated, username, loginLabel, logoutLabe
         <p className="cloud-workspace-account-name" data-testid={`${prefix}-name`}>{username}</p>
         <DropdownMenuItem disabled={actionsDisabled} onSelect={onLogout} data-testid={logoutTestId}>{logoutLabel}</DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenu> : <button type="button" className="cloud-workspace-avatar" aria-label={loginLabel}
-      onClick={onLogin} data-testid={triggerTestId}><UserRound size={16} aria-hidden="true" /></button>}
+    </DropdownMenu> : <button type="button" className="cloud-workspace-avatar cloud-workspace-avatar--login"
+      onClick={onLogin} data-testid={triggerTestId}>{loginLabel}</button>}
   </div>;
 }

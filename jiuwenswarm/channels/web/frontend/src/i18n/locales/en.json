@@ -5648,6 +5648,11 @@
     "retry": "Retry",
     "unavailable": "The cloud account service is unavailable. Please retry.",
     "loginRequired": "The session expired or the account details were rejected. Please sign in again.",
+    "registrationDisabled": "This cloud server does not allow self-service registration. Contact your administrator for an account.",
+    "registrationUnavailable": "Registration status is unavailable. Reopen the sign-in dialog to retry.",
+    "registrationFailed": "Registration could not be confirmed. If your account was created, try signing in.",
+    "invalidRegistrationUsername": "Use 3–32 letters, numbers, periods, underscores, or hyphens, starting with a letter or number.",
+    "invalidRegistrationPassword": "Use a password with 8–128 characters.",
     "continue": "Continue cloud action"
   }
 }

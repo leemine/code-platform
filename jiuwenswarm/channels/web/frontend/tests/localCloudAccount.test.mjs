@@ -57,8 +57,9 @@ test('account footer logs out without exposing or calling inventory operations',
   await mount(); assert.equal(query('trigger').textContent, 'TE'); assert.equal(query('trigger').getAttribute('aria-label'),'test-user');
   await click('trigger'); assert.match(query('name').textContent, /test-user/);
   assert.equal(document.body.textContent.includes('同步项目目录'), false);
-  await click('menu-logout'); assert.ok(query('form')); assert.equal(query('identity'), null); assert.equal(query('trigger').getAttribute('aria-label'),'登录');
-  assert.ok(calls.every(row => ['status', 'logout'].includes(row.action)));
+  await click('menu-logout'); assert.ok(query('form')); assert.equal(query('identity'), null);
+  assert.equal(query('trigger').textContent, '登录'); assert.ok(query('trigger').classList.contains('cloud-workspace-avatar'));
+  assert.ok(calls.every(row => ['status', 'logout', 'registration'].includes(row.action)));
 });
 
 test('an account change discards a late previous identity response', async () => {
@@ -67,7 +68,7 @@ test('an account change discards a late previous identity response', async () =>
   await mount(); first = false;
   await act(async () => api.notifyLocalCloudAccountChange()); await tick();
   await act(async () => finish(identity('local'))); await tick();
-  assert.equal(query('trigger').textContent, ''); assert.equal(query('trigger').getAttribute('aria-label'), '登录'); assert.ok(query('trigger').querySelector('svg'));
+  assert.equal(query('trigger').textContent, '登录');
 });
 
 test('unavailable service offers retry while an absent optional service stays hidden', async () => {
@@ -116,6 +117,39 @@ test('a pending action can continue after another tab signs in', async () => {
   await mount(); const result=[];
   await act(async()=>api.requestLocalCloudLogin(value=>result.push(value)));await tick();
   assert.deepEqual(result,[true]);assert.equal(query('dialog').closest('dialog').open,false);assert.equal(calls.some(row=>row.action==='login'),false);
+});
+
+test('registration follows the cloud policy and returns to sign-in without saving the password', async () => {
+  const signedOut = { enabled: true, authenticated: false, kind: 'local' };
+  let registrationEnabled = false;
+  let authenticated = false;
+  handler = async action => {
+    if (action === 'registration') return { registration_enabled: registrationEnabled };
+    if (action === 'register') return { registered: true };
+    if (action === 'login') authenticated = true;
+    return authenticated ? identity('local') : signedOut;
+  };
+  const fill = (id, value) => act(async () => {
+    const input = query(id);
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await mount(); await click('trigger');
+  assert.equal(query('registration-toggle'), null);
+  assert.match(query('registration-status').textContent, /联系管理员/);
+  await click('close');
+  registrationEnabled = true;
+  await click('trigger'); await click('registration-toggle');
+  assert.equal(query('title').textContent, '注册');
+  assert.equal(query('password').autocomplete, 'new-password');
+  await fill('username', 'test-user'); await fill('password', 'test-password');
+  await click('login');
+  assert.deepEqual(calls.find(row => row.action === 'register').body, { username: 'test-user', password: 'test-password' });
+  assert.match(query('registration-notice').textContent, /注册成功/);
+  assert.equal(query('password').value, '');
+  assert.equal(calls.some(row => row.action === 'login'), false);
+  await fill('password', 'test-password'); await click('login');
+  assert.equal(query('trigger').textContent, 'TE');
 });
 
 

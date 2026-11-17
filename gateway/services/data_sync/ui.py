@@ -16,6 +16,8 @@ from uuid import uuid4
 
 import portalocker
 
+from gateway.auth.accounts import AccountError
+from gateway.auth.remote_accounts import AccountAuthorityUnavailable
 from jiuwenswarm.data_sync.connector import DirectoryConnector, DirectoryReplica, register_source
 from jiuwenswarm.data_sync.contract import SyncError, digest, encoded, identifier, project_selection
 from jiuwenswarm.data_sync.transport import DirectoryRPC
@@ -67,20 +69,42 @@ class CloudAccountClient:
             return self._pool
 
     def call(self, action, token=None, body=None):
-        if action not in {"login", "logout", "status", "environment", "environment/ensure"}:
+        if action not in {"login", "logout", "status", "registration", "register", "environment", "environment/ensure"}:
             raise ValueError("account operation required")
         headers = {"Content-Type": "application/json", "X-Jiuwen-Auth": "1"}
         if token:
             headers["Authorization"] = "Bearer " + token
+        upstream = "status" if action == "registration" else action
+        timeout = {"registration": 3, "environment/ensure": 150}.get(action, 10)
         status, raw, response_headers = self.connection_pool().request(
-            "GET" if body is None else "POST", "/api/v1/auth/organization/" + action,
+            "GET" if body is None else "POST", "/api/v1/auth/organization/" + upstream,
             None if body is None else encoded(body), headers, operation=action,
-            retry_read=action in {"status", "environment"}, timeout=150 if action == "environment/ensure" else 10)
+            retry_read=action in {"status", "registration", "environment"}, timeout=timeout)
+        if action == "register":
+            if status == 201:
+                return {}
+            try:
+                error = json.loads(raw) if status in {400, 403, 409} else None
+            except ValueError:
+                error = None
+            code = error.get("code") if isinstance(error, dict) else None
+            if code == "REGISTRATION_MISMATCH":
+                code = "USERNAME_EXISTS"
+            expected = {"INVALID_USERNAME": 400, "INVALID_PASSWORD": 400,
+                        "REGISTRATION_DISABLED": 403, "USERNAME_EXISTS": 409}
+            if isinstance(code, str) and expected.get(code) == status:
+                raise AccountError(code, "cloud registration rejected", status)
+            raise AccountAuthorityUnavailable("cloud registration did not return a known result")
         if status in {401, 403}:
             raise PermissionError()
         if status != 200:
             raise SyncError("SYNC_ACCOUNT_UNAVAILABLE")
         value = json.loads(raw)
+        if action == "registration":
+            if not isinstance(value, dict):
+                raise AccountAuthorityUnavailable("invalid registration policy response")
+            return {"registration_enabled": value.get("enabled") is True and value.get("auth_backend") == "builtin"
+                    and value.get("registration_enabled") is True}
         if action == "login":
             cookies = SimpleCookie()
             for key, val in response_headers:
