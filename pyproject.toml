@@ -211,6 +211,7 @@ gateway = [
     "extensions/**/*.yaml",
     "extensions/**/*.yml",
     "extensions/**/*.md",
+    "extensions/data_sync/windows-cloud-root.crt",
 ]
 jiuwenbox = [
     "configs/**/*",
