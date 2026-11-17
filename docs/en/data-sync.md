@@ -32,11 +32,13 @@ A rebuild of the same logical environment and workspace retains the source ID an
 
 The Code composer retains three controls: the local directory, Local/Cloud selection, and a cloud environment menu for choosing a cloud directory, creating a folder, or preparing the account environment. There is no inventory-sync menu or manual publication requirement. Switching entries changes where the user works; it does not transfer files or sessions.
 
-When WorkSwarm starts on Windows, the round cloud account button in the lower-left corner shows “Sign in” while signed out and the account avatar after sign-in. The default destination is `https://113.207.105.228:28953`. The app verifies that service with the CA certificate in the installer. The desktop launcher supplies the active loopback port, and the app saves an installation identifier in the user data directory.
+When the installed WorkSwarm desktop starts on Windows or Linux, the round cloud account button in the lower-left corner shows “Sign in” while signed out and the account avatar after sign-in. The default destination is `https://113.207.105.228:28953`. The app verifies that service with the CA certificate in the installer. The desktop launcher supplies the active loopback port, and the app saves an installation identifier in the user data directory.
 
-The sign-in dialog offers “Create account” when the selected cloud server enables `registration_enabled`. The cloud server handles registration, and the dialog returns to sign-in afterward. If self-service registration is closed, the dialog directs users to their administrator for an account.
+Windows and Linux installers with a bundled backend open the workbench directly. The account button loads its state once the local service is ready. The cloud website and frontend-only shell follow the connected service's sign-in requirements.
 
-To use another cloud, save the private configuration as `%USERPROFILE%\.jiuwenswarm\config\cloud-account.json` and restart WorkSwarm. This file may omit `public_origin` because the launcher supplies it. An explicitly set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` takes precedence.
+The signed-out dialog shows “Create account” when opened. The selected cloud server checks the registration policy when the user submits the form. On success, the dialog returns to sign-in. If the server has disabled self-service registration, the dialog directs the user to their administrator for an account.
+
+To use another cloud, save the private configuration as `config/cloud-account.json` in the user data directory and restart WorkSwarm. The default data directory is `%USERPROFILE%\.jiuwenswarm` on Windows and `~/.jiuwenswarm` on Linux. This file may omit `public_origin` because the launcher supplies it. An explicitly set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` takes precedence.
 
 For other local Gateway deployments, set `CODE_PLATFORM_LOCAL_SYNC_CONFIG` to a private, UTF-8 JSON file owned by the runtime user. On Linux, set mode `0600`. On Windows, the file's access control list may grant access to the runtime user, SYSTEM, and the local Administrators group.
 

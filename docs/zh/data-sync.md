@@ -32,9 +32,11 @@ python -m jiuwenswarm.data_sync --url wss://cloud.example/ws \
 
 Code 输入区保留三段式入口：左侧本地目录，中间 Local/Cloud，选择云端后显示右侧环境菜单，可选云端目录、新建文件夹和创建／准备云环境。这里不展示项目清单同步入口，不要求用户手动发布清单。选择项目后在对应位置工作；切换入口不搬运文件或会话。
 
-Windows 安装版直接启动 WorkSwarm 后，左下角的圆形云账号按钮在未登录时显示「登录」，登录后显示账号头像。默认连接 `https://113.207.105.228:28953`，使用包内 CA 公钥验证云端证书。本机地址和端口由桌面启动器提供，安装标识保存在用户数据目录。
+Windows 和 Linux 桌面安装版直接启动 WorkSwarm 后，左下角的圆形云账号按钮在未登录时显示「登录」，登录后显示账号头像。默认连接 `https://113.207.105.228:28953`，使用包内 CA 公钥验证云端证书。本机地址和端口由桌面启动器提供，安装标识保存在用户数据目录。
 
-需要改用其他云端时，可将私有配置保存到 `%USERPROFILE%\.jiuwenswarm\config\cloud-account.json`，然后重启 WorkSwarm。此入口从启动器获取本机地址，JSON 可以省略 `public_origin`。如已设置 `CODE_PLATFORM_LOCAL_SYNC_CONFIG`，以该变量指向的配置为准。
+包含本地后端的 Windows 和 Linux 安装版启动后直接打开工作台，左下角账号状态在本地服务就绪后加载。云端网页和仅包含桌面外壳的版本根据其服务的登录要求进入工作台。
+
+需要改用其他云端时，可将私有配置保存到用户数据目录下的 `config/cloud-account.json`，然后重启 WorkSwarm。默认用户数据目录为 Windows 的 `%USERPROFILE%\.jiuwenswarm` 或 Linux 的 `~/.jiuwenswarm`。此入口从启动器获取本机地址，JSON 可以省略 `public_origin`。如已设置 `CODE_PLATFORM_LOCAL_SYNC_CONFIG`，以该变量指向的配置为准。
 
 其他本地 Gateway 通过 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 指向当前运行用户拥有的私有 JSON 文件。Linux 文件权限设为 `0600`。Windows 文件须由运行用户所有，访问控制列表只允许该用户、SYSTEM 和本机 Administrators 获得访问权限。配置使用 UTF-8。
 
@@ -50,6 +52,6 @@ Windows 安装版直接启动 WorkSwarm 后，左下角的圆形云账号按钮�
 
 本地左下角的「登录」按钮仅管理此本地入口的云账号会话，不读取或发布项目清单。点击账号头像可查看账号及退出入口。密码不持久化，令牌使用同源HttpOnly会话Cookie；账号改变时丢弃旧响应。云端入口继续使用原账号登录流程。
 
-登录弹窗按目标云端的 `registration_enabled` 显示「创建账号」。注册由目标云端完成，注册成功后返回登录表单。若云端关闭自助注册，弹窗提示联系管理员开通账号。
+未登录时，登录弹窗直接显示「创建账号」。目标云端在提交时检查是否开放自助注册。注册成功后返回登录表单。若云端拒绝自助注册，弹窗提示联系管理员开通账号。
 
 Local/Cloud导航分别由 `CODE_PLATFORM_CLOUD_ENTRY_URL`、`CODE_PLATFORM_LOCAL_ENTRY_URL` 配置；“云端未连接”表示缺少可导航入口，不是账号密码错误。操作员需配置浏览器可验证的HTTPS证书；不要关闭TLS校验或绕过证书提示。

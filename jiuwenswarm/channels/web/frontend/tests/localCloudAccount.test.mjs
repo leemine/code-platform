@@ -59,7 +59,7 @@ test('account footer logs out without exposing or calling inventory operations',
   assert.equal(document.body.textContent.includes('同步项目目录'), false);
   await click('menu-logout'); assert.ok(query('form')); assert.equal(query('identity'), null);
   assert.equal(query('trigger').textContent, '登录'); assert.ok(query('trigger').classList.contains('cloud-workspace-avatar'));
-  assert.ok(calls.every(row => ['status', 'logout', 'registration'].includes(row.action)));
+  assert.ok(calls.every(row => ['status', 'logout'].includes(row.action)));
 });
 
 test('an account change discards a late previous identity response', async () => {
@@ -71,10 +71,16 @@ test('an account change discards a late previous identity response', async () =>
   assert.equal(query('trigger').textContent, '登录');
 });
 
-test('unavailable service offers retry while an absent optional service stays hidden', async () => {
+test('unavailable service shows an error and opening again checks for recovery', async () => {
   handler = async () => { throw new Error('unavailable'); };
-  await mount(); await click('trigger'); assert.ok(query('error')); assert.ok(query('retry'));
-  handler = async () => ({ enabled: false }); await click('retry'); assert.equal(query('trigger'), null);
+  await mount(); await click('trigger'); assert.ok(query('error')); assert.equal(query('retry'), null);
+  await click('close');
+  handler = async () => ({ enabled: true, authenticated: false, kind: 'local' });
+  await click('trigger'); assert.ok(query('form')); assert.equal(query('error'), null);
+  await click('close');
+  handler = async () => ({ enabled: false });
+  await act(async () => api.notifyLocalCloudAccountChange()); await tick();
+  assert.equal(query('trigger'), null);
   assert.ok(calls.every(row => row.action === 'status'));
 });
 
@@ -119,13 +125,13 @@ test('a pending action can continue after another tab signs in', async () => {
   assert.deepEqual(result,[true]);assert.equal(query('dialog').closest('dialog').open,false);assert.equal(calls.some(row=>row.action==='login'),false);
 });
 
-test('registration follows the cloud policy and returns to sign-in without saving the password', async () => {
+test('create account is immediately available and the cloud decides on submission', async () => {
   const signedOut = { enabled: true, authenticated: false, kind: 'local' };
   let registrationEnabled = false;
   let authenticated = false;
   handler = async action => {
-    if (action === 'registration') return { registration_enabled: registrationEnabled };
-    if (action === 'register') return { registered: true };
+    if (action === 'register') return registrationEnabled ? { registered: true }
+      : { httpStatus: 403, code: 'REGISTRATION_DISABLED' };
     if (action === 'login') authenticated = true;
     return authenticated ? identity('local') : signedOut;
   };
@@ -135,21 +141,27 @@ test('registration follows the cloud policy and returns to sign-in without savin
     input.dispatchEvent(new window.Event('input', { bubbles: true }));
   });
   await mount(); await click('trigger');
-  assert.equal(query('registration-toggle'), null);
-  assert.match(query('registration-status').textContent, /联系管理员/);
-  await click('close');
-  registrationEnabled = true;
-  await click('trigger'); await click('registration-toggle');
+  assert.equal(query('registration-toggle').textContent, '创建账号');
+  assert.deepEqual(calls.map(row => row.action), ['status']);
+  await click('registration-toggle');
   assert.equal(query('title').textContent, '注册');
   assert.equal(query('password').autocomplete, 'new-password');
   await fill('username', 'test-user'); await fill('password', 'test-password');
   await click('login');
+  assert.match(query('registration-notice').textContent, /联系管理员/);
+  assert.equal(query('registration-toggle').textContent, '创建账号');
+  assert.equal(query('password').value, '');
+  registrationEnabled = true;
+  await click('registration-toggle');
+  await fill('password', 'test-password'); await click('login');
+  assert.equal(calls.filter(row => row.action === 'register').length, 2);
   assert.deepEqual(calls.find(row => row.action === 'register').body, { username: 'test-user', password: 'test-password' });
   assert.match(query('registration-notice').textContent, /注册成功/);
   assert.equal(query('password').value, '');
   assert.equal(calls.some(row => row.action === 'login'), false);
   await fill('password', 'test-password'); await click('login');
   assert.equal(query('trigger').textContent, 'TE');
+  assert.equal(calls.some(row => row.action === 'registration'), false);
 });
 
 

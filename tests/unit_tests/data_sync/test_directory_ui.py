@@ -3,6 +3,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import httpx
@@ -22,8 +23,8 @@ from gateway.extensions.data_sync.ui_extension import DirectoryUIPlugin
 from gateway.services.cloud_environments import EnvironmentService, EnvironmentStore
 from gateway.services.data_sync.store import DirectoryStore
 from gateway.services.data_sync.ui import (
-    COOKIE, DESKTOP_CONFIG_NAME, LOCAL_CONFIG, WINDOWS_DESKTOP_CLOUD_ORIGIN,
-    load_local_config, load_windows_desktop_cloud_config,
+    COOKIE, DESKTOP_CLOUD_ORIGIN, DESKTOP_CONFIG_NAME, LOCAL_CONFIG,
+    desktop_origin, load_desktop_cloud_config, load_local_config,
 )
 from jiuwenswarm.data_sync.contract import CAPABILITIES, SyncError, digest, inventory
 
@@ -50,30 +51,45 @@ def test_local_cloud_config_requires_private_regular_file(tmp_path, monkeypatch)
         load_local_config()
 
 
-def test_windows_cloud_default_uses_the_current_port_and_a_persistent_installation_id(tmp_path):
+@pytest.mark.parametrize(("platform", "frozen", "electron", "expected"), [
+    ("linux", True, "1", "http://127.0.0.1:8173"),
+    ("win32", True, "1", "http://127.0.0.1:8173"),
+    ("linux", False, "1", None),
+    ("linux", True, "0", None),
+    ("darwin", True, "1", None),
+])
+def test_desktop_origin_uses_the_current_packaged_launcher_port(monkeypatch, platform, frozen, electron, expected):
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    monkeypatch.setenv("JIUWENSWARM_ELECTRON", electron)
+    monkeypatch.setenv("FRONTEND_PORT", "8173")
+    assert desktop_origin() == expected
+
+
+def test_desktop_cloud_default_uses_the_current_port_and_a_persistent_installation_id(tmp_path):
     config_dir = tmp_path / "config"
-    first = load_windows_desktop_cloud_config(config_dir, "http://127.0.0.1:5173")
-    reopened = load_windows_desktop_cloud_config(config_dir, "http://127.0.0.1:6173")
+    first = load_desktop_cloud_config(config_dir, "http://127.0.0.1:5173")
+    reopened = load_desktop_cloud_config(config_dir, "http://127.0.0.1:6173")
     assert reopened == {**first, "public_origin": "http://127.0.0.1:6173"}
-    assert first["cloud_origin"] == WINDOWS_DESKTOP_CLOUD_ORIGIN
+    assert first["cloud_origin"] == DESKTOP_CLOUD_ORIGIN
     assert first["ca_file"].endswith("windows-cloud-root.crt")
-    assert load_windows_desktop_cloud_config(tmp_path / "other", first["public_origin"])["installation_id"] != first["installation_id"]
+    assert load_desktop_cloud_config(tmp_path / "other", first["public_origin"])["installation_id"] != first["installation_id"]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Use a POSIX private file for the override fixture")
-def test_windows_cloud_default_prefers_private_user_config(tmp_path):
+def test_desktop_cloud_default_prefers_private_user_config(tmp_path):
     config = tmp_path / DESKTOP_CONFIG_NAME
     data = {"cloud_origin": "https://other-cloud.example", "installation_id": "managed-installation"}
     config.write_text(json.dumps(data), encoding="utf-8")
     config.chmod(0o600)
-    assert load_windows_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173") == {
+    assert load_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173") == {
         **data, "public_origin": "http://127.0.0.1:6173",
     }
     assert not (tmp_path / "cloud-installation-id").exists()
 
     config.chmod(0o644)
     with pytest.raises(ValueError, match="configuration must be private"):
-        load_windows_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173")
+        load_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173")
 
 
 def test_ui_catalog_is_account_scoped_paginated_and_rejects_mixed_revisions(tmp_path):

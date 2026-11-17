@@ -14,7 +14,7 @@ PY="$ROOT/.venv/bin/python"
 "$PY" scripts/build_config.py --sync
 FRONTEND="$ROOT/jiuwenswarm/channels/web/frontend"
 DESKTOP="$ROOT/jiuwenswarm/channels/desktop/electron"
-(cd "$FRONTEND" && npm ci --no-audit --no-fund && ELECTRON=true npx --no-install vite build --base=/)
+(cd "$FRONTEND" && npm ci --no-audit --no-fund && ELECTRON=true VITE_WORKSWARM_LOCAL_DESKTOP=true npx --no-install vite build --base=/)
 (cd "$DESKTOP" && npm ci --no-audit --no-fund && node node_modules/electron/install.js)
 export JIUWENSWARM_BUILD_PROFILE="$PROFILE"
 "$PY" -m PyInstaller scripts/jiuwenswarm.spec --noconfirm
