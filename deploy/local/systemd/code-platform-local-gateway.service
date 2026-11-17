@@ -1,0 +1,19 @@
+[Unit]
+Description=Code-platform local gateway
+PartOf=code-platform-local.target
+After=code-platform-local-agentserver.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/code-platform/local/runtime.env
+ExecStart=/usr/bin/env ${LOCAL_PYTHON} -P -m gateway.app_gateway --host 127.0.0.1 --port ${LOCAL_GATEWAY_PORT} --agent-server-url ${LOCAL_AGENT_URL}
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+StandardOutput=journal
+StandardError=journal

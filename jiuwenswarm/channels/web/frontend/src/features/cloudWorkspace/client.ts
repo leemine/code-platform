@@ -1,8 +1,9 @@
 import { getApiBase } from '../../utils/env';
+import { AccountAvailabilityError, accountResponseFailure, accountTransportFailure, type AccountFailureKind } from '../../services/accountAvailability';
 
-export class CloudRequestError extends Error {
-  constructor(readonly status: number) {
-    super('Cloud workspace request failed');
+export class CloudRequestError extends AccountAvailabilityError {
+  constructor(readonly status: number, kind: AccountFailureKind = 'unavailable') {
+    super(kind);
   }
 }
 
@@ -10,6 +11,7 @@ export class CloudRequestError extends Error {
 export async function cloudRequest(path: string, body?: Record<string, unknown>, timeout = 10000): Promise<unknown> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeout);
+  let received = false;
   try {
     const response = await fetch(`${getApiBase()}/api/v1/auth/organization/${path}`, {
       method: body === undefined ? 'GET' : 'POST',
@@ -19,8 +21,12 @@ export async function cloudRequest(path: string, body?: Record<string, unknown>,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
-    if (!response.ok) throw new CloudRequestError(response.status);
+    received = true;
+    if (!response.ok) throw new CloudRequestError(response.status, await accountResponseFailure(response));
     return await response.json();
+  } catch (error) {
+    if (error instanceof AccountAvailabilityError || received) throw error;
+    throw new AccountAvailabilityError(accountTransportFailure());
   } finally {
     window.clearTimeout(timer);
   }

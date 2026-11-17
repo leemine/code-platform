@@ -1,4 +1,5 @@
 import { getApiBase } from '../utils/env';
+import { AccountAvailabilityError, accountResponseFailure, accountTransportFailure } from './accountAvailability';
 /** Cache invalidation only. Messages carry no identity or credential authority. */
 const CHANNEL = 'jiuwen:organization-credentials';
 const EVENT = 'jiuwen:organization-credentials-changed';
@@ -90,7 +91,7 @@ export async function readOrganizationStatus(): Promise<OrganizationStatus> {
     if (!response) throw new Error('Authentication unavailable');
     // Only an explicitly absent old endpoint may use the existing legacy probe.
     if (response.status === 404) return { enabled: false };
-    if (!response.ok) throw new Error('Authentication unavailable');
+    if (!response.ok) throw new AccountAvailabilityError(await accountResponseFailure(response));
     reason = 'invalid_response';
     const value: unknown = await response.json();
     if (!value || typeof value !== 'object') throw new Error('Invalid authentication status');
@@ -117,7 +118,10 @@ export async function readOrganizationStatus(): Promise<OrganizationStatus> {
       reason: controller.signal.aborted ? 'timeout' : reason,
       httpStatus, attempts, elapsedMs: Date.now() - started,
     }));
-    throw error;
+    if (error instanceof AccountAvailabilityError) throw error;
+    const failure = new AccountAvailabilityError(reason === 'network' ? accountTransportFailure() : 'unavailable');
+    if (controller.signal.aborted) failure.name = 'AbortError';
+    throw failure;
   } finally {
     clearTimeout(timer);
   }

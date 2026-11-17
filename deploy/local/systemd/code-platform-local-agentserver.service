@@ -1,0 +1,18 @@
+[Unit]
+Description=Code-platform local agentserver
+PartOf=code-platform-local.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+WorkingDirectory=%h
+EnvironmentFile=%h/.config/code-platform/local/runtime.env
+ExecStart=/usr/bin/env ${LOCAL_PYTHON} -P -m jiuwenswarm.server.app_agentserver --port ${LOCAL_AGENT_PORT}
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+StandardOutput=journal
+StandardError=journal

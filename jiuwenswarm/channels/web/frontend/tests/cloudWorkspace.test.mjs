@@ -179,7 +179,7 @@ test('account cache cleanup preserves appearance preferences', () => {
 });
 test('cloud request timeout aborts transport and does not imply create cancellation', async () => {
   globalThis.fetch = async (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
-  await assert.rejects(api.cloudRequest('environment/ensure', {}, 10), /aborted/);
+  await assert.rejects(api.cloudRequest('environment/ensure', {}, 10), { kind: 'connectionUnavailable' });
 });
 test('malformed identity is rejected before requesting an environment', async () => {
   route = async () => response({ ...identity, session_revision: '' });
@@ -331,4 +331,37 @@ test('a different verified session still clears account caches after an outage',
   await click('cloud-workspace-retry');
   assert.equal(query('original-app'), null);
   assert.equal(localStorage.getItem('jiuwenclaw_selected_model'), null);
+});
+
+for (const [fault, expected] of [
+  ['network', '本地服务'], ['proxy', '本地服务'],
+  ['authority', '云账号服务'], ['generic', '账号状态'],
+]) {
+  test(`account outage identifies ${fault} without granting access`, async () => {
+    dom.reconfigure({ url: 'http://127.0.0.1:29011/chat/new' });
+    try {
+      await mount();
+      route = async () => {
+        if (fault === 'network') throw new TypeError('connection refused');
+        return response({ code: fault === 'authority' ? 'AUTHORITY_UNAVAILABLE'
+          : fault === 'proxy' ? 'LOCAL_SERVICE_UNAVAILABLE' : 'UNKNOWN' }, 503);
+      };
+      await act(async () => window.dispatchEvent(new window.Event('focus')));
+      await waitFor(() => phase() === 'unavailable');
+      assert.ok(query('cloud-workspace-status').textContent.includes(expected));
+      assert.equal(query('original-app'), null);
+      const writes = calls.filter(call => call.options.method === 'POST').length;
+      route = async () => response(identity);
+      await click('cloud-workspace-retry');
+      assert.equal(phase(), 'entry');
+      assert.equal(calls.filter(call => call.options.method === 'POST').length, writes);
+    } finally { dom.reconfigure({ url: 'https://cloud.test' }); }
+  });
+}
+
+test('remote transport failure is not called a local process failure', async () => {
+  route = async () => { throw new TypeError('network'); };
+  await mount(); await waitFor(() => phase() === 'unavailable');
+  assert.ok(query('cloud-workspace-status').textContent.includes('网络连接'));
+  assert.equal(query('original-app'), null);
 });

@@ -5070,6 +5070,10 @@
     }
   },
   "auth": {
+    "localUnavailable": "暂时无法连接本地服务，请稍后重试。",
+    "connectionUnavailable": "暂时无法连接服务，请检查网络连接。",
+    "authorityUnavailable": "云账号服务暂时不可用，请稍后重试。",
+
     "huawei": {
       "title": "登录华为账号",
       "subtitle": "登录后即可使用账号提供的模型，无需配置 API Key。",
@@ -5589,7 +5593,10 @@
     "entry": "登录成功，进入专属云环境后即可使用。",
     "enter": "进入云环境",
     "ready": "云环境已就绪",
-    "unavailable": "暂时无法连接账号服务，请重试。",
+    "localUnavailable": "暂时无法连接本地服务，恢复后将自动重连。",
+    "connectionUnavailable": "暂时无法连接服务，请检查网络连接。",
+    "authorityUnavailable": "云账号服务暂时不可用，恢复后将自动重连。",
+    "unavailable": "暂时无法确认账号状态，请重试。",
     "environmentError": "云环境暂未就绪，请重试。重试会继续核对原绑定。",
     "logoutFailed": "退出未确认成功，已关闭当前连接。请重试。",
     "retry": "重试",
