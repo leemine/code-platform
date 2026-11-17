@@ -31,6 +31,7 @@ from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
 from gateway.services.data_sync.ui import DESKTOP_CONFIG_NAME, WINDOWS_DESKTOP_CLOUD_ORIGIN
 
 SIGNED_OUT_LABEL = re.compile(r"^(登录|Sign in)$")
+REGISTRATION_NOTICE = re.compile(r"注册成功|Account created", re.IGNORECASE)
 
 
 def loopback_socket():
@@ -131,7 +132,23 @@ async def assert_account(page, username, password, screenshot):
     await click_account_trigger(page, trigger)
     await expect(page.get_by_test_id("cloud-workspace-local-account-dialog")).to_be_visible()
     print("Local cloud account form is visible", flush=True)
+    await page.get_by_test_id("cloud-workspace-local-account-registration-toggle").click()
     await page.get_by_test_id("cloud-workspace-local-account-username").fill(username)
+    password_field = page.get_by_test_id("cloud-workspace-local-account-password")
+    submit = page.get_by_test_id("cloud-workspace-local-account-login")
+    await expect(password_field).to_have_attribute("autocomplete", "new-password")
+    await password_field.fill(password)
+    async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/register")) as registration:
+        await submit.click()
+    registration_response = await registration.value
+    assert registration_response.status == 201, f"Registration returned {registration_response.status}"
+    await expect(page.get_by_test_id("cloud-workspace-local-account-registration-notice")).to_contain_text(
+        REGISTRATION_NOTICE
+    )
+    await expect(password_field).to_have_value("")
+    status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
+    assert status.status == 200 and (await status.json())["authenticated"] is False
+    print("Registration returned 201 and restored the sign-in form", flush=True)
     await page.get_by_test_id("cloud-workspace-local-account-password").fill(password)
     async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/login")) as login:
         await page.get_by_test_id("cloud-workspace-local-account-login").click()
@@ -179,17 +196,22 @@ async def smoke(executable, screenshot, root):
     username, password = "desktop-smoke", secrets.token_urlsafe(24)
     certificate, key = write_test_certificate(root)
     accounts = AccountStore(root / "authority" / "accounts.db", "packaged-desktop-smoke")
-    accounts.register(username, password)
+
+    async def register_account(name, secret):
+        account = await asyncio.to_thread(accounts.register, name, secret)
+        environment = {"environment_id": "smoke", "operation_id": "smoke", "state": "NEW", "instance_id": None}
+        return account, environment
+
     with loopback_socket() as authority_socket:
         authority_socket.listen(16)
         origin = f"https://127.0.0.1:{authority_socket.getsockname()[1]}"
         cloud = CloudWorkspacePlugin(SimpleNamespace(
             public_origin=origin, api_prefix="/api/v1/auth/organization", authority=accounts.authority,
-            registration_enabled=False,
+            registration_enabled=True,
         ))
         cloud.accounts = accounts
         cloud.authenticator = AccountAuthenticator(accounts)
-        cloud.environments = SimpleNamespace(store=SimpleNamespace(revoke=lambda *_: None))
+        cloud.environments = SimpleNamespace(register=register_account, store=SimpleNamespace(revoke=lambda *_: None))
         app = FastAPI()
         for route in cloud.http_routes():
             app.add_api_route(route.path, route.endpoint, methods=list(route.methods))
