@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../components/ui/Button/Button';
 import { AccountLoginForm } from './AccountLoginForm';
 import { clearAccountCaches, notifyOrganizationCredentialChange } from '../../services/organizationCredentialEvents';
+import { accountFailureKind } from '../../services/accountAvailability';
 import { cloudRequest, CloudRequestError } from '../cloudWorkspace/client';
 import '../cloudWorkspace/cloudWorkspace.css';
 
@@ -34,7 +35,9 @@ export function LoginPage({ registrationEnabled }: { registrationEnabled: boolea
       }
     } catch (failure) {
       const status = failure instanceof CloudRequestError ? failure.status : 0;
-      setError(t(status === 409 ? 'auth.usernameExists' : status === 401 ? 'auth.invalidCredentials' : status === 503 ? 'auth.accountServiceUnavailable' : 'auth.loginFailed'));
+      const kind = accountFailureKind(failure);
+      setError(t(status === 409 ? 'auth.usernameExists' : status === 401 ? 'auth.invalidCredentials'
+        : kind !== 'unavailable' ? `auth.${kind}` : 'auth.loginFailed'));
     } finally {
       setSubmitting(false);
     }

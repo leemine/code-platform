@@ -7,6 +7,7 @@ import {
   clearAccountCaches, notifyOrganizationCredentialChange, onOrganizationCredentialChange,
   organizationCredentialReloadUrl, readOrganizationStatus, type OrganizationStatus,
 } from '../../services/organizationCredentialEvents';
+import { accountFailureKind, type AccountFailureKind } from '../../services/accountAvailability';
 import { LoginPage } from '../auth/LoginPage';
 import { cloudRequest, environmentState } from './client';
 import { LocalCloudAccount } from './LocalCloudAccount';
@@ -18,6 +19,7 @@ type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 
 export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode, options?: { shareExportDisabledReason: string }) => ReactNode }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('checking');
+  const [failure, setFailure] = useState<AccountFailureKind>('unavailable');
   const [identity, setIdentity] = useState<OrganizationStatus | null>(null);
   const epoch = useRef(0);
   const entering = useRef(false);
@@ -49,10 +51,11 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       try {
         current = await readOrganizationStatus();
         if (!current.enabled) throw new Error('Account endpoint unavailable');
-      } catch {
+      } catch (error) {
         // Account recovery is distinct from retrying a failed allocation.
         if (generation === epoch.current) {
           recoveryPhase.current = 'ready';
+          setFailure(accountFailureKind(error));
           setPhase('unavailable');
         }
         return;
@@ -60,7 +63,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       if (generation !== epoch.current) return;
       if (!sameIdentity(identityRef.current, current)) { discard(current); return; }
       setPhase('ready');
-    } catch {
+    } catch (error) {
       if (generation === epoch.current) setPhase('environmentError');
     } finally {
       entering.current = false;
@@ -85,8 +88,11 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
         // allocation stays behind the explicit cloud entry button.
         if (environmentState(row) === 'ALLOCATED') void enter();
         else setPhase('entry');
-      } catch {
-        if (!disposed && generation === epoch.current) setPhase(identityRef.current?.authenticated ? 'environmentError' : 'unavailable');
+      } catch (error) {
+        if (!disposed && generation === epoch.current) {
+          setFailure(accountFailureKind(error));
+          setPhase(identityRef.current?.authenticated && accountFailureKind(error) === 'unavailable' ? 'environmentError' : 'unavailable');
+        }
       }
     })();
     return () => { disposed = true; epoch.current += 1; };
@@ -104,11 +110,12 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
         const current = await readOrganizationStatus();
         if (!current.enabled) throw new Error('Account endpoint unavailable');
         if (!disposed && ((current.authenticated || identityRef.current?.authenticated) && !sameIdentity(identityRef.current, current))) discard(current);
-      } catch {
+      } catch (error) {
         if (!disposed) {
           recoveryPhase.current = phase;
           epoch.current += 1;
           void webClient.disconnect('account service unavailable');
+          setFailure(accountFailureKind(error));
           setPhase('unavailable');
         }
       } finally { checking = false; }
@@ -145,8 +152,11 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
         setPhase(recoveryPhase.current);
       } else if (current.enabled) discard(current);
       else window.location.reload();
-    } catch {
-      if (generation === epoch.current) setPhase('unavailable');
+    } catch (error) {
+      if (generation === epoch.current) {
+        setFailure(accountFailureKind(error));
+        setPhase('unavailable');
+      }
     } finally {
       retryingIdentity.current = false;
     }
@@ -178,7 +188,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       clearAccountCaches();
       notifyOrganizationCredentialChange();
       window.location.replace(window.location.origin + '/');
-    } catch { setPhase('logoutFailed'); }
+    } catch (error) { setPhase('logoutFailed'); }
   }
   const logoutButton = <Button variant="quiet" onClick={() => void logout()} data-testid="auth-logout-button">
     {t('cloudWorkspace.logout')}
@@ -193,7 +203,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   return <main className="cloud-workspace-page" data-testid="cloud-workspace-gate" data-phase={phase}>
     <section className="cloud-workspace-card">
       <h1>{t('cloudWorkspace.title')}</h1>
-      <p role={retry ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase}`)}</p>
+      <p role={retry ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase === 'unavailable' ? failure : phase}`)}</p>
       {identity?.authenticated && <p data-testid="cloud-workspace-identity">{identity.username}</p>}
       {phase === 'entry' && <Button variant="primary" onClick={() => void enter()} data-testid="cloud-workspace-enter">{t('cloudWorkspace.enter')}</Button>}
       {retry && <Button onClick={() => phase === 'environmentError' ? void enter() : phase === 'logoutFailed' ? void logout() : void retryIdentity()}

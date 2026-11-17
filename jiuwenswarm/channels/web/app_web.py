@@ -598,10 +598,10 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             normalized_host = f"{normalized_host}:{port}"
         return normalized_host
 
-    def _write_proxy_error(self, status: int, error: str) -> None:
+    def _write_proxy_error(self, status: int, error: str, code: str = "BAD_PROXY_REQUEST") -> None:
         """Write a non-cacheable JSON proxy rejection."""
         data = json.dumps(
-            {"error": error, "code": "BAD_PROXY_REQUEST"},
+            {"error": error, "code": code},
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -668,7 +668,8 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(resp_body)
         except Exception as exc:  # noqa: BLE001
             self.log_error("proxy http error: %s", exc)
-            self._write_proxy_error(502, "proxy http error")
+            code = "LOCAL_SERVICE_UNAVAILABLE" if parsed.hostname in {"localhost", "127.0.0.1", "::1"} else "UPSTREAM_UNAVAILABLE"
+            self._write_proxy_error(502, "proxy http error", code)
         finally:
             conn.close()
 

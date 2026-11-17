@@ -5073,6 +5073,10 @@
     }
   },
   "auth": {
+    "localUnavailable": "Cannot connect to the local service. Please retry shortly.",
+    "connectionUnavailable": "Cannot connect to the service. Check your network connection.",
+    "authorityUnavailable": "The cloud account service is unavailable. Please retry shortly.",
+
     "huawei": {
       "title": "Sign in with HUAWEI ID",
       "subtitle": "Sign in to use the models your account provides — no API key needed.",
@@ -5592,7 +5596,10 @@
     "entry": "You are signed in. Enter your own cloud environment to continue.",
     "enter": "Enter cloud environment",
     "ready": "Cloud environment ready",
-    "unavailable": "Account service is unavailable. Please retry.",
+    "localUnavailable": "Cannot connect to the local service. Reconnecting when it recovers.",
+    "connectionUnavailable": "Cannot connect to the service. Check your network connection.",
+    "authorityUnavailable": "The cloud account service is unavailable. Reconnecting when it recovers.",
+    "unavailable": "Unable to verify account status. Please retry.",
     "environmentError": "The environment is not ready. Retry to check the existing binding.",
     "logoutFailed": "Logout was not confirmed. The current connection has been closed. Please retry.",
     "retry": "Retry",

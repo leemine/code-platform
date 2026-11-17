@@ -104,6 +104,7 @@ jobs:
                   tests/unit_tests/data_sync
                   tests/unit_tests/channels/web/test_cloud_proxy_deadline.py
                   tests/unit_tests/channels/web/test_app_web_ws_tunnel.py
+                  tests/unit_tests/channels/web/test_account_proxy_availability.py
                   tests/unit_tests/test_project_store.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then

@@ -1,0 +1,6 @@
+[Unit]
+Description=Code-platform local workspace
+Wants=code-platform-local-agentserver.service code-platform-local-gateway.service code-platform-local-web.service
+
+[Install]
+WantedBy=default.target
