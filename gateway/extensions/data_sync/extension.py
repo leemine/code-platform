@@ -116,18 +116,26 @@ class DataSyncPlugin(ApplicationPluginExtension):
 
 
 async def register_extensions(registry):
-    from gateway.services.data_sync.ui import LOCAL_CONFIG, load_local_config
+    from gateway.services.data_sync.ui import LOCAL_CONFIG, load_local_config, load_windows_desktop_cloud_config, windows_desktop_origin
     from gateway.extensions.data_sync.ui_extension import DirectoryUIPlugin
     root = os.environ.get("CODE_PLATFORM_DATA_SYNC_ROOT")
+    cloud_configured = bool(os.environ.get("CODE_PLATFORM_CLOUD_CONFIG"))
+    local_config = None
     if os.environ.get(LOCAL_CONFIG):
-        if root or os.environ.get("CODE_PLATFORM_CLOUD_CONFIG"):
+        if root or cloud_configured:
             raise ValueError("local and cloud sync roles must not overlap")
-        plugin = DirectoryUIPlugin(local_config=load_local_config())
+        local_config = load_local_config()
+    elif not root and not cloud_configured and (desktop_origin := windows_desktop_origin()):
+        from jiuwenswarm.common.utils import get_user_workspace_dir
+
+        local_config = load_windows_desktop_cloud_config(get_user_workspace_dir() / "config", desktop_origin)
+    if local_config is not None:
+        plugin = DirectoryUIPlugin(local_config=local_config)
         registry.register_application_plugin(plugin)
         return [plugin]
     if not root:
         return []
-    if not os.environ.get("CODE_PLATFORM_CLOUD_CONFIG"):
+    if not cloud_configured:
         raise RuntimeError("data sync requires the original cloud account authority")
 
     def environment_store():

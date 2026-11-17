@@ -19,9 +19,12 @@ from gateway.extensions.auth.credential_authenticator import AuthContext
 from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
 from gateway.extensions.data_sync.extension import DataSyncPlugin
 from gateway.extensions.data_sync.ui_extension import DirectoryUIPlugin
-from gateway.services.cloud_environments import EnvironmentStore
+from gateway.services.cloud_environments import EnvironmentService, EnvironmentStore
 from gateway.services.data_sync.store import DirectoryStore
-from gateway.services.data_sync.ui import COOKIE, LOCAL_CONFIG, load_local_config
+from gateway.services.data_sync.ui import (
+    COOKIE, DESKTOP_CONFIG_NAME, LOCAL_CONFIG, WINDOWS_DESKTOP_CLOUD_ORIGIN,
+    load_local_config, load_windows_desktop_cloud_config,
+)
 from jiuwenswarm.data_sync.contract import CAPABILITIES, SyncError, digest, inventory
 
 
@@ -45,6 +48,32 @@ def test_local_cloud_config_requires_private_regular_file(tmp_path, monkeypatch)
     monkeypatch.setenv(LOCAL_CONFIG, str(link))
     with pytest.raises(ValueError, match="configuration must be private"):
         load_local_config()
+
+
+def test_windows_cloud_default_uses_the_current_port_and_a_persistent_installation_id(tmp_path):
+    config_dir = tmp_path / "config"
+    first = load_windows_desktop_cloud_config(config_dir, "http://127.0.0.1:5173")
+    reopened = load_windows_desktop_cloud_config(config_dir, "http://127.0.0.1:6173")
+    assert reopened == {**first, "public_origin": "http://127.0.0.1:6173"}
+    assert first["cloud_origin"] == WINDOWS_DESKTOP_CLOUD_ORIGIN
+    assert first["ca_file"].endswith("windows-cloud-root.crt")
+    assert load_windows_desktop_cloud_config(tmp_path / "other", first["public_origin"])["installation_id"] != first["installation_id"]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Use a POSIX private file for the override fixture")
+def test_windows_cloud_default_prefers_private_user_config(tmp_path):
+    config = tmp_path / DESKTOP_CONFIG_NAME
+    data = {"cloud_origin": "https://other-cloud.example", "installation_id": "managed-installation"}
+    config.write_text(json.dumps(data), encoding="utf-8")
+    config.chmod(0o600)
+    assert load_windows_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173") == {
+        **data, "public_origin": "http://127.0.0.1:6173",
+    }
+    assert not (tmp_path / "cloud-installation-id").exists()
+
+    config.chmod(0o644)
+    with pytest.raises(ValueError, match="configuration must be private"):
+        load_windows_desktop_cloud_config(tmp_path, "http://127.0.0.1:6173")
 
 
 def test_ui_catalog_is_account_scoped_paginated_and_rejects_mixed_revisions(tmp_path):
@@ -96,8 +125,9 @@ async def ui_hosts(tmp_path, monkeypatch):
     cloud = CloudWorkspacePlugin(SimpleNamespace(public_origin=endpoint, api_prefix="/api/v1/auth/organization",
                                                 registration_enabled=False, authority=accounts.authority))
     cloud.accounts, cloud.authenticator = accounts, auth
-    cloud.environments = SimpleNamespace(store=EnvironmentStore(tmp_path / "control/environments.db", accounts.authority,
-        tmp_path / "workspaces", tmp_path / "role-auth", {}))
+    store = EnvironmentStore(tmp_path / "control/environments.db", accounts.authority,
+                             tmp_path / "workspaces", tmp_path / "role-auth", {})
+    cloud.environments = EnvironmentService(store, accounts, None)
     cloud_ui = DirectoryUIPlugin(directory=directory, cloud=lambda: cloud)
     app = build_web_channel_app(channel)
     for plugin in (cloud, cloud_ui):
@@ -127,6 +157,36 @@ async def ui_hosts(tmp_path, monkeypatch):
         await channel.stop()
         await asyncio.wait_for(task, 5)
         sock.close(); project_store.invalidate_cache()
+
+
+@pytest.mark.asyncio
+async def test_local_registration_obeys_the_authority_and_keeps_login_separate(ui_hosts):
+    host, client = ui_hosts, ui_hosts.client
+    status = "/api/v1/data-sync/status"
+    policy = "/api/v1/data-sync/registration"
+    register = "/api/v1/data-sync/register"
+    credentials = {"username": "new-local-user", "password": "isolated-registration-password"}
+    assert (await client.get(policy)).json() == {"registration_enabled": False}
+    assert (await client.post(register, json=credentials)).status_code == 403
+    host.cloud.config.registration_enabled = True
+    assert (await client.get(policy)).json() == {"registration_enabled": True}
+    assert (await client.post(register, json=credentials, headers={"Origin": "http://elsewhere.test"})).status_code == 401
+    invalid = await client.post(register, json={**credentials, "password": "short"})
+    assert invalid.status_code == 400 and invalid.json() == {"code": "INVALID_PASSWORD"}
+    new = await client.post(register, json=credentials)
+    assert new.status_code == 201 and new.json() == {"registered": True}
+    assert "set-cookie" not in new.headers
+    assert (await client.post(register, json=credentials)).status_code == 201
+    duplicate = await client.post(register, json={**credentials, "password": "other-registration-password"})
+    assert duplicate.status_code == 409 and duplicate.json() == {"code": "USERNAME_EXISTS"}
+    assert (await client.get(status)).json()["authenticated"] is False
+    login = await client.post("/api/v1/data-sync/login", json=credentials)
+    assert login.status_code == 200
+    assert "HttpOnly" in login.headers["set-cookie"]
+    identity = (await client.get(status)).json()
+    assert identity["username"] == credentials["username"]
+    row = host.cloud.environments.store.by_user(identity["scope"][1])
+    assert row["state"] == "NEW" and row["instance_id"] is None
 
 
 @pytest.mark.asyncio

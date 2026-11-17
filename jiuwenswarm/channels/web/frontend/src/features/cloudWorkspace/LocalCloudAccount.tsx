@@ -12,11 +12,17 @@ export function LocalCloudAccount() {
   const title = useId(), generation = useRef(0), working = useRef(false);
   const [status, setStatus] = useState<LocalCloudIdentity | null>(null);
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [registration, setRegistration] = useState<boolean | 'unavailable' | null>(null);
+  const [registering, setRegistering] = useState(false);
+  const [notice, setNotice] = useState('');
   const loginCompletion = useRef<((authenticated: boolean) => void) | null>(null);
   function finishLogin(authenticated: boolean) {
     const callback = loginCompletion.current; loginCompletion.current = null; callback?.(authenticated);
   }
-  function close() { setOpen(false); setPassword(''); finishLogin(false); }
+  function close() {
+    setOpen(false); setPassword(''); setRegistering(false); setRegistration(null); setNotice('');
+    finishLogin(false);
+  }
   const [username, setUsername] = useState(''), [password, setPassword] = useState('');
   const errorText = (reason: unknown) => t((reason as { code?: string })?.code === 'UNAUTHORIZED' ? 'localCloudAccount.loginRequired' : 'localCloudAccount.unavailable');
 
@@ -46,6 +52,41 @@ export function LocalCloudAccount() {
       if (epoch === generation.current) notifyLocalCloudAccountChange();
     }, true);
   }
+  const checkRegistration = open && status?.enabled === true && status.authenticated !== true;
+  useEffect(() => {
+    if (!checkRegistration) return;
+    let active = true;
+    void localCloudAccountRequest('registration').then(value => {
+      if (active) setRegistration(value.registration_enabled === true);
+    }, () => {
+      if (active) setRegistration('unavailable');
+    });
+    return () => { active = false; };
+  }, [checkRegistration]);
+
+  async function register(epoch: number, password: string) {
+    try {
+      await localCloudAccountRequest('register', { username, password });
+      if (epoch === generation.current) {
+        setRegistering(false);
+        setNotice(t('auth.registered'));
+      }
+    } catch (reason) {
+      if (epoch !== generation.current) return;
+      const code = (reason as { code?: string })?.code;
+      if (code === 'REGISTRATION_DISABLED') {
+        setRegistering(false);
+        setRegistration(false);
+        return;
+      }
+      const messages: Record<string, string> = {
+        USERNAME_EXISTS: 'auth.usernameExists',
+        INVALID_USERNAME: 'localCloudAccount.invalidRegistrationUsername',
+        INVALID_PASSWORD: 'localCloudAccount.invalidRegistrationPassword',
+      };
+      setError(t((code && messages[code]) || 'localCloudAccount.registrationFailed'));
+    }
+  }
   useEffect(() => {
     const reload = () => {
       generation.current++; working.current = false; setBusy(false); setPassword('');
@@ -58,8 +99,9 @@ export function LocalCloudAccount() {
     };
     window.addEventListener('jiuwenswarm-cloud-login-request', requestLogin);
     reload(); const off = onLocalCloudAccountChange(reload);
-    window.addEventListener('focus', reload);
-    return () => { generation.current++; finishLogin(false); window.removeEventListener('jiuwenswarm-cloud-login-request', requestLogin); off(); window.removeEventListener('focus', reload); };
+    const focus = () => { if (!working.current) reload(); };
+    window.addEventListener('focus', focus);
+    return () => { generation.current++; finishLogin(false); window.removeEventListener('jiuwenswarm-cloud-login-request', requestLogin); off(); window.removeEventListener('focus', focus); };
   }, []);
   if (status?.enabled === false || status?.kind === 'cloud' || (!status && !error)) return null;
   return <>
@@ -69,19 +111,34 @@ export function LocalCloudAccount() {
       prefix="cloud-workspace-local-account" triggerTestId="cloud-workspace-local-account-trigger" logoutTestId="cloud-workspace-local-account-menu-logout" />
     <Dialog open={open} titleId={title} onCancel={() => { if (!busy) { close(); } }} closeDisabled={busy} className="local-cloud-account-dialog">
       <section data-testid="cloud-workspace-local-account-dialog">
-        <h2 id={title} data-testid="cloud-workspace-local-account-title">{t('auth.title')}</h2>
+        <h2 id={title} data-testid="cloud-workspace-local-account-title">{t(registering ? 'auth.register' : 'auth.title')}</h2>
         {status?.cloud_origin && <p data-testid="cloud-workspace-local-account-destination">{t('localCloudAccount.destination', { origin: status.cloud_origin })}</p>}
         {status?.authenticated ? <>
           <p data-testid="cloud-workspace-local-account-identity">{status.username} · {t('localCloudAccount.signedIn')}</p>
           <Button disabled={busy} onClick={logout} data-testid="cloud-workspace-local-account-logout">{t('localCloudAccount.logout')}</Button>
         </> : status?.enabled && <AccountLoginForm username={username} password={password} onUsername={setUsername} onPassword={setPassword} busy={busy}
+          registering={registering} submitLabel={registering ? t('auth.register') : undefined}
+          footer={registration === true && <Button variant="quiet" disabled={busy} data-testid="cloud-workspace-local-account-registration-toggle"
+            onClick={() => { setRegistering(!registering); setPassword(''); setError(''); setNotice(''); }}>
+            {t(registering ? 'auth.backToLogin' : 'auth.createAccount')}
+          </Button>}
           ids={{ form: 'cloud-workspace-local-account-form', username: 'cloud-workspace-local-account-username', password: 'cloud-workspace-local-account-password', submit: 'cloud-workspace-local-account-login' }} onSubmit={event => { event.preventDefault(); void run(async epoch => {
-          const secret = password; setPassword('');
+          const secret = password; setPassword(''); setNotice('');
+          if (registering) {
+            await register(epoch, secret);
+            return;
+          }
           await localCloudAccountRequest('login', { username, password: secret });
           if (epoch === generation.current) {
-            notifyLocalCloudAccountChange(); setOpen(false); finishLogin(true);
+            setRegistration(null); notifyLocalCloudAccountChange(); setOpen(false); finishLogin(true);
           }
-        }); }} />}
+        }); }}>
+          {registering && <p data-testid="cloud-workspace-local-account-registration-hint">{t('auth.accountHint')}</p>}
+          {notice && <p role="status" data-testid="cloud-workspace-local-account-registration-notice">{notice}</p>}
+        </AccountLoginForm>}
+        {status?.enabled && !status.authenticated && (registration === false || registration === 'unavailable') &&
+          <p data-testid="cloud-workspace-local-account-registration-status">{t(registration === false
+            ? 'localCloudAccount.registrationDisabled' : 'localCloudAccount.registrationUnavailable')}</p>}
         {error && <><p role="alert" data-testid="cloud-workspace-local-account-error">{error}</p><Button disabled={busy} onClick={() => void run(load)} data-testid="cloud-workspace-local-account-retry">{t('localCloudAccount.retry')}</Button></>}
         <Button variant="quiet" disabled={busy} onClick={() => { close(); }} data-testid="cloud-workspace-local-account-close">{t('codeWorkspace.cancel')}</Button>
       </section>

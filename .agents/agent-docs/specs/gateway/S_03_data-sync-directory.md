@@ -62,11 +62,15 @@ CLI的--kind cloud表示请求Gateway发布原云角色项目，--installation-i
 
 ## 产品界面与本地账号适配
 
-根据用户2026-11-12确认的范围调整，产品不提供项目清单同步、手动发布、撤回或来源列表入口。三段式Code控件继续只负责本地目录、Local/Cloud切换，以及云端目录选择/新建文件夹/创建环境。本地左下角LocalCloudAccount只提供云账号登录、状态和退出；云端登录仍由原CloudWorkspaceGate负责。底层目录协议作为可选基础保留，不称为文件或会话同步完成。
+根据用户2026-11-12确认的范围调整，产品不提供项目清单同步、手动发布、撤回或来源列表入口。三段式Code控件继续只负责本地目录、Local/Cloud切换，以及云端目录选择/新建文件夹/创建环境。本地左下角LocalCloudAccount只提供云账号登录、状态和退出，其圆形按钮在未登录时显示「登录」，登录后显示账号头像。云端登录仍由原CloudWorkspaceGate负责。底层目录协议作为可选基础保留，不称为文件或会话同步完成。
 
 本地账号控件只调用同源HTTP前缀 `/api/v1/data-sync` 的GET status和POST login/logout；名称保持既有后端接缝兼容，不注册来源、不读取或发布清单。云端原账号权威负责认证，本地以固定HTTPS桥接，用独立HttpOnly、SameSite=Strict Cookie承载会话，密码不持久化。未配置可选本地接入时不展示控件；服务不可用时可重试。配置与操作步骤见中英文data-sync文档。
 
 本地配置必须是运行用户拥有的私有普通文件。POSIX 核验所有者和组及其他用户权限。Windows 核验打开的文件句柄，要求运行用户所有，且 DACL 仅向该用户、SYSTEM 或本机 Administrators 授权。冻结桌面包保留 `data_sync` 的磁盘清单和入口脚本，供原 Gateway 扩展发现机制加载。
+
+Windows Electron 安装版默认启用本地云账号桥接。显式 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 优先，其次读取用户数据目录下 `config/cloud-account.json`，最后使用包内云端地址与 CA 公钥。后两种方式以桌面启动器的实际回环端口校验 Host 和 Origin。默认配置使用保存在用户数据目录的随机安装标识。
+
+本地登录弹窗打开时通过同源 GET `/api/v1/data-sync/registration` 读取云端自助注册策略。POST `/api/v1/data-sync/register` 使用与登录一致的 Host、Origin 和请求头校验，将用户名和密码交由已配置的 HTTPS 云端现有注册接口验证。云端决定是否允许注册。注册成功不产生桌面登录 Cookie，用户仍通过已有登录流程进入账号会话。
 
 保留的HTTP适配还支持view/choices/publish/refresh/revoke，用于协议集成与验收，不再由产品界面调用。每次检查Host；存在Origin时必须完全匹配配置，POST还须X-Jiuwen-Sync:1和参数字段白名单，拒绝账号/根/实例选择器。云端原AccountPrincipal负责请求与交付前复核。HTTP与RPC共享4槽。目录view使用账号隔离、版本一致性校验的只读catalog分页，不注册接收来源或生成ACK；云choices沿原READY环境及existing-only Router导出；refresh不读云角色。local副本、意图及ACK仍由原连接器持久化。
 
