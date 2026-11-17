@@ -1,15 +1,18 @@
 import './i18n';
 import ReactDOM from 'react-dom/client';
+import type { ReactNode } from 'react';
 import { A2UIProvider } from '@a2ui/react';
 import type { A2UIClientEventMessage } from '@a2ui/react';
 import { injectStyles } from '@a2ui/react/styles';
 import App from './App.tsx'
 import { CloudWorkspaceGate } from './features/cloudWorkspace/CloudWorkspaceGate'
+import { LocalCloudAccount } from './features/cloudWorkspace/LocalCloudAccount'
 import { ShareImageExportRunner } from './features/shareImageExport'
 import { openSourceSettingsPageDefinition } from './features/settings/registry/openSourceDefinition'
 import type { SettingsRequest } from './features/settings/services/settingsContract'
 import { dispatchA2UIAction } from './features/a2ui/actionBridge';
 import { installDesktopLocalFilesBridge } from './features/workspace/localFilePicker';
+import { getApiBase, getWsBase } from './utils/env';
 import './styles/foundation.css'
 import './styles/themes/default/light.css'
 import './index.css'
@@ -54,6 +57,20 @@ const runnerSessionId = window.location.pathname === '/share-export-runner'
 const runnerJobId = window.location.pathname === '/share-export-runner'
   ? runnerQuery.get('job_id')?.trim() || null
   : null
+const localDesktop = import.meta.env.VITE_WORKSWARM_LOCAL_DESKTOP === 'true'
+  && window.jiuwenDesktop?.isElectron === true
+  && window.location.hostname === '127.0.0.1'
+  && !getApiBase()
+  && !getWsBase()
+
+function renderWorkspace(sidebarFooter?: ReactNode, capabilities?: { shareExportDisabledReason: string }) {
+  return <App
+    shareExportDisabledReason={capabilities?.shareExportDisabledReason}
+    sidebarFooter={sidebarFooter}
+    settingsPageDefinition={openSourceSettingsPageDefinition}
+    resolveSettingsRequest={resolveOpenSourceSettingsRequest}
+  />
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <A2UIProvider onAction={handleA2UIAction}>
@@ -64,13 +81,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         locale={runnerQuery.get('locale')}
         client={browserRunner}
       />
+    ) : localDesktop ? (
+      renderWorkspace(<LocalCloudAccount waitForGateway />)
     ) : (
-      <CloudWorkspaceGate>{(sidebarFooter, capabilities) => <App
-        shareExportDisabledReason={capabilities?.shareExportDisabledReason}
-        sidebarFooter={sidebarFooter}
-        settingsPageDefinition={openSourceSettingsPageDefinition}
-        resolveSettingsRequest={resolveOpenSourceSettingsRequest}
-      />}</CloudWorkspaceGate>
+      <CloudWorkspaceGate>{renderWorkspace}</CloudWorkspaceGate>
     )}
   </A2UIProvider>,
 )

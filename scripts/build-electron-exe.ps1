@@ -432,9 +432,11 @@ if (-not $FrontendOnly) {
 # ── 2. Build frontend (vite build with ELECTRON=true) ─────────────────────────
 Write-Host "`n[2/6] Building frontend..." -ForegroundColor Yellow
 Push-Location $FrontendDir
-# 保存并在结束后恢复 ELECTRON，避免污染调用方 shell 会话（失败退出也要恢复）
+# Restore the frontend build flags even when the build fails.
 $PreviousElectronEnv = $env:ELECTRON
+$PreviousLocalDesktopEnv = $env:VITE_WORKSWARM_LOCAL_DESKTOP
 $env:ELECTRON = "true"
+$env:VITE_WORKSWARM_LOCAL_DESKTOP = if ($FrontendOnly) { "false" } else { "true" }
 $FrontendBuildExit = 0
 try {
     if (-not (Test-Path "node_modules")) {
@@ -447,6 +449,11 @@ try {
 } finally {
     Pop-Location
     if ($null -ne $PreviousElectronEnv) { $env:ELECTRON = $PreviousElectronEnv } else { Remove-Item Env:\ELECTRON -ErrorAction SilentlyContinue }
+    if ($null -ne $PreviousLocalDesktopEnv) {
+        $env:VITE_WORKSWARM_LOCAL_DESKTOP = $PreviousLocalDesktopEnv
+    } else {
+        Remove-Item Env:\VITE_WORKSWARM_LOCAL_DESKTOP -ErrorAction SilentlyContinue
+    }
 }
 if ($FrontendBuildExit -ne 0) { exit $FrontendBuildExit }
 
@@ -658,6 +665,11 @@ if (-not $FrontendOnly) {
     $BackendDir = Join-Path $ElectronAppDir "resources\backend"
     New-Item -ItemType Directory -Path $BackendDir -Force | Out-Null
     Copy-Item -Path (Join-Path $BackendDist "*") -Destination $BackendDir -Recurse -Force
+    if ($ReuseBackend) {
+        # The local web server serves the staged backend's embedded frontend.
+        $BackendFrontendDist = Join-Path $BackendDir "_internal\jiuwenswarm\channels\web\frontend\dist"
+        Copy-Item -Path (Join-Path $FrontendDistSrc "*") -Destination $BackendFrontendDist -Recurse -Force
+    }
 
     # Node/uv 运行时绑进后端 exe 目录（resources\backend），与 Python 独立包
     # （dist\<包名>\runtime\...）同一契约：冻结入口统一在 <后端 exe 目录>\runtime\

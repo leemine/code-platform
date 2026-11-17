@@ -43,12 +43,12 @@ def main():
     assert data_sync in loader.discover_extension_roots(), f"Missing packaged extension: {data_sync}"
     assert loader.load_manifest(data_sync)["id"] == "data_sync"
     assert callable(loader._import_module(data_sync).register_extensions)
-    if sys.platform == "win32":
+    if sys.platform in {"linux", "win32"}:
         import ssl
 
-        from gateway.services.data_sync.ui import windows_desktop_cloud_ca
+        from gateway.services.data_sync.ui import desktop_cloud_ca
 
-        context = ssl.create_default_context(cafile=str(windows_desktop_cloud_ca()))
+        context = ssl.create_default_context(cafile=str(desktop_cloud_ca()))
         assert context.cert_store_stats()["x509_ca"] == 1
     context = {}
     async def hook(ctx):

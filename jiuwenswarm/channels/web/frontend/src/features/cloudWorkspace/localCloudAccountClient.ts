@@ -1,7 +1,7 @@
 import { getApiBase } from '../../utils/env';
 
-export type LocalCloudIdentity = { enabled: boolean; authenticated?: boolean; kind?: 'local' | 'cloud'; username?: string; cloud_origin?: string; registration_enabled?: boolean };
-type AccountAction = 'status' | 'registration' | 'register' | 'login' | 'logout';
+export type LocalCloudIdentity = { enabled: boolean; authenticated?: boolean; kind?: 'local' | 'cloud'; username?: string; cloud_origin?: string };
+type AccountAction = 'status' | 'register' | 'login' | 'logout';
 
 async function performAccountRequest(action: AccountAction, body?: Record<string, string>): Promise<LocalCloudIdentity> {
   const controller = new AbortController();
@@ -24,7 +24,6 @@ async function performAccountRequest(action: AccountAction, body?: Record<string
 // Share only unfinished reads; completed identities are never cached.
 let pendingStatus: Promise<LocalCloudIdentity> | null = null;
 export function localCloudAccountRequest(action: AccountAction, body?: Record<string, string>): Promise<LocalCloudIdentity> {
-  if (action === 'registration') return performAccountRequest(action);
   if (action !== 'status') {
     pendingStatus = null;
     return performAccountRequest(action, body).finally(() => { pendingStatus = null; });

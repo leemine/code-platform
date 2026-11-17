@@ -28,7 +28,7 @@ import uvicorn
 from gateway.auth.account_authenticator import AccountAuthenticator
 from gateway.auth.accounts import AccountStore
 from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
-from gateway.services.data_sync.ui import DESKTOP_CONFIG_NAME, WINDOWS_DESKTOP_CLOUD_ORIGIN
+from gateway.services.data_sync.ui import DESKTOP_CLOUD_ORIGIN, DESKTOP_CONFIG_NAME
 
 SIGNED_OUT_LABEL = re.compile(r"^(登录|Sign in)$")
 REGISTRATION_NOTICE = re.compile(r"注册成功|Account created", re.IGNORECASE)
@@ -98,7 +98,7 @@ async def renderer(browser, child):
             raise RuntimeError(f"Installed Electron exited with code {child.returncode}")
         for context in browser.contexts:
             for page in context.pages:
-                if page.url.startswith("http://127.0.0.1:5173/"):
+                if page.url.startswith("http://127.0.0.1:"):
                     return page
         await asyncio.sleep(0.2)
 
@@ -130,9 +130,12 @@ async def assert_account(page, username, password, screenshot):
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Signed-out account button is visible", flush=True)
     await click_account_trigger(page, trigger)
-    await expect(page.get_by_test_id("cloud-workspace-local-account-dialog")).to_be_visible()
-    print("Local cloud account form is visible", flush=True)
-    await page.get_by_test_id("cloud-workspace-local-account-registration-toggle").click()
+    dialog = page.get_by_test_id("cloud-workspace-local-account-dialog")
+    await expect(dialog).to_be_visible()
+    registration_toggle = dialog.get_by_test_id("cloud-workspace-local-account-registration-toggle")
+    assert await registration_toggle.is_visible(), "Create account must be present when the dialog opens"
+    print("Create account is visible when the sign-in dialog opens", flush=True)
+    await registration_toggle.click()
     await page.get_by_test_id("cloud-workspace-local-account-username").fill(username)
     password_field = page.get_by_test_id("cloud-workspace-local-account-password")
     submit = page.get_by_test_id("cloud-workspace-local-account-login")
@@ -149,9 +152,18 @@ async def assert_account(page, username, password, screenshot):
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200 and (await status.json())["authenticated"] is False
     print("Registration returned 201 and restored the sign-in form", flush=True)
-    await page.get_by_test_id("cloud-workspace-local-account-password").fill(password)
+    await password_field.fill("incorrect-" + password)
+    async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/login")) as rejected:
+        await submit.click()
+    assert (await rejected.value).status == 401
+    await expect(dialog.get_by_test_id("cloud-workspace-local-account-error")).to_be_visible()
+    await expect(dialog.get_by_test_id("cloud-workspace-local-account-retry")).to_have_count(0)
+    await expect(registration_toggle).to_be_visible()
+    await expect(password_field).to_have_value("")
+    print("Rejected sign-in shows an error without a retry button", flush=True)
+    await password_field.fill(password)
     async with page.expect_response(lambda response: response.url.endswith("/api/v1/data-sync/login")) as login:
-        await page.get_by_test_id("cloud-workspace-local-account-login").click()
+        await submit.click()
     login_response = await login.value
     assert login_response.status == 200, f"Login returned {login_response.status}"
     print("Login returned 200", flush=True)
@@ -176,20 +188,20 @@ async def assert_account(page, username, password, screenshot):
     print("Logout returned 200 and restored the signed-out account button", flush=True)
 
 
-async def assert_default_windows_account(page):
+async def assert_default_desktop_account(page):
     trigger = page.get_by_test_id("session-sidebar-rail").get_by_test_id("cloud-workspace-local-account-trigger")
     await expect(trigger).to_have_text(SIGNED_OUT_LABEL, timeout=90_000)
     status = await page.request.get(urljoin(page.url, "/api/v1/data-sync/status"))
     assert status.status == 200
     identity = await status.json()
     assert identity["authenticated"] is False
-    assert identity["cloud_origin"] == WINDOWS_DESKTOP_CLOUD_ORIGIN
+    assert identity["cloud_origin"] == DESKTOP_CLOUD_ORIGIN
     await click_account_trigger(page, trigger)
     await expect(page.get_by_test_id("cloud-workspace-local-account-destination")).to_contain_text(
-        WINDOWS_DESKTOP_CLOUD_ORIGIN
+        DESKTOP_CLOUD_ORIGIN
     )
     await expect(page.get_by_test_id("cloud-workspace-local-account-form")).to_be_visible()
-    print("Clean Windows launch displays the default cloud account login with no local config override", flush=True)
+    print("Clean desktop launch displays the default cloud account login with no local config override", flush=True)
 
 
 async def smoke(executable, screenshot, root):
@@ -227,9 +239,8 @@ async def smoke(executable, screenshot, root):
                         await serving
                         raise RuntimeError("HTTPS account authority did not start")
                     await asyncio.sleep(0.05)
-                if os.name == "nt":
-                    await run_desktop(executable, screenshot, root, origin, certificate, username, password,
-                                      use_windows_default=True)
+                await run_desktop(executable, screenshot, root, origin, certificate, username, password,
+                                  use_desktop_default=True)
                 await run_desktop(executable, screenshot, root, origin, certificate, username, password)
         finally:
             server.should_exit = True
@@ -237,10 +248,10 @@ async def smoke(executable, screenshot, root):
 
 
 async def run_desktop(executable, screenshot, root, origin, certificate, username, password, *,
-                      use_windows_default=False):
+                      use_desktop_default=False):
     data = root / "data"
-    config = data / "config" / DESKTOP_CONFIG_NAME if os.name == "nt" else root / "local-cloud.json"
-    if not use_windows_default:
+    config = data / "config" / DESKTOP_CONFIG_NAME
+    if not use_desktop_default:
         write_local_config(config, origin, certificate)
     with loopback_socket() as reserved:
         cdp = reserved.getsockname()[1]
@@ -248,13 +259,14 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
         **os.environ,
         "JIUWENSWARM_DATA_DIR": str(data),
         "JIUWENSWARM_CONFIG_URL": "off",
-        "CODE_PLATFORM_LOCAL_SYNC_CONFIG": str(config),
         "JIUWENSWARM_ELECTRON_CDP_PORT": str(cdp),
     }
-    if os.name == "nt":
-        environment.pop("CODE_PLATFORM_LOCAL_SYNC_CONFIG")
-    gateway_log = Path.home() / ".jiuwenswarm" / "logs" / "electron-gateway.log"
+    environment.pop("CODE_PLATFORM_LOCAL_SYNC_CONFIG", None)
+    log_dir = Path.home() / ".jiuwenswarm" / "logs"
+    gateway_log = log_dir / "electron-gateway.log"
     gateway_offset = gateway_log.stat().st_size if gateway_log.exists() else 0
+    web_log = log_dir / "electron-web.log"
+    web_offset = web_log.stat().st_size if web_log.exists() else 0
     with (root / "desktop.log").open("wb") as log:
         child = subprocess.Popen(
             [str(executable), f"--user-data-dir={root / 'profile'}"], cwd=root, env=environment,
@@ -277,10 +289,21 @@ async def run_desktop(executable, screenshot, root, origin, certificate, usernam
                 browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp}", timeout=60_000)
                 page = await renderer(browser, child)
                 try:
-                    if use_windows_default:
-                        await assert_default_windows_account(page)
+                    if use_desktop_default:
+                        await assert_default_desktop_account(page)
                     else:
                         await assert_account(page, username, password, screenshot)
+                    await expect(page.get_by_test_id("cloud-workspace-gate")).to_have_count(0)
+                    await expect(page.get_by_test_id("auth-login-page")).to_have_count(0)
+                    with web_log.open("rb") as service_log:
+                        service_log.seek(web_offset)
+                        requests = service_log.read()
+                    assert b"GET /api/v1/data-sync/status" in requests
+                    assert b"GET /api/v1/data-sync/registration " not in requests
+                    assert b"GET /api/v1/auth/organization/status" not in requests, (
+                        "The full desktop should not run the cloud web startup check"
+                    )
+                    print("Local workbench started without the cloud web sign-in check", flush=True)
                 except Exception:
                     try:
                         await page.screenshot(path=str(screenshot.with_stem(screenshot.stem + "-error")), timeout=3000)

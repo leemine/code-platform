@@ -24,7 +24,7 @@ from jiuwenswarm.data_sync.transport import DirectoryRPC
 
 LOCAL_CONFIG = "CODE_PLATFORM_LOCAL_SYNC_CONFIG"
 DESKTOP_CONFIG_NAME = "cloud-account.json"
-WINDOWS_DESKTOP_CLOUD_ORIGIN = "https://113.207.105.228:28953"
+DESKTOP_CLOUD_ORIGIN = "https://113.207.105.228:28953"
 COOKIE = "jiuwenswarm_sync"
 
 
@@ -158,8 +158,9 @@ def _windows_config_is_private(stream):
     return True
 
 
-def windows_desktop_origin() -> str | None:
-    if os.name != "nt" or not getattr(sys, "frozen", False) or os.environ.get("JIUWENSWARM_ELECTRON") != "1":
+def desktop_origin() -> str | None:
+    if (sys.platform not in {"linux", "win32"} or not getattr(sys, "frozen", False)
+            or os.environ.get("JIUWENSWARM_ELECTRON") != "1"):
         return None
     port = int(os.environ["FRONTEND_PORT"])
     if not 1 <= port <= 65535:
@@ -167,18 +168,18 @@ def windows_desktop_origin() -> str | None:
     return f"http://127.0.0.1:{port}"
 
 
-def windows_desktop_cloud_ca() -> Path:
+def desktop_cloud_ca() -> Path:
     return Path(__file__).resolve().parents[2] / "extensions" / "data_sync" / "windows-cloud-root.crt"
 
 
-def load_windows_desktop_cloud_config(config_dir: Path, public_origin: str) -> dict:
+def load_desktop_cloud_config(config_dir: Path, public_origin: str) -> dict:
     try:
         return load_local_config(config_dir / DESKTOP_CONFIG_NAME, public_origin=public_origin)
     except FileNotFoundError:
         pass
-    ca_file = windows_desktop_cloud_ca()
+    ca_file = desktop_cloud_ca()
     if not ca_file.is_file():
-        raise FileNotFoundError("Windows cloud account CA is missing from the desktop package")
+        raise FileNotFoundError("Cloud account CA is missing from the desktop package")
     config_dir.mkdir(parents=True, exist_ok=True)
     with portalocker.Lock(config_dir / "cloud-installation-id", mode="a+", encoding="utf-8", timeout=5) as stream:
         stream.seek(0)
@@ -191,7 +192,7 @@ def load_windows_desktop_cloud_config(config_dir: Path, public_origin: str) -> d
         identifier(installation_id)
     return {
         "public_origin": public_origin,
-        "cloud_origin": WINDOWS_DESKTOP_CLOUD_ORIGIN,
+        "cloud_origin": DESKTOP_CLOUD_ORIGIN,
         "ca_file": str(ca_file),
         "installation_id": installation_id,
     }

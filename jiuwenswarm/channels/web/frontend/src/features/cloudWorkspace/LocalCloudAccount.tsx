@@ -3,16 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../components/ui/Button/Button';
 import { Dialog } from '../../components/ui/Dialog/Dialog';
 import { AccountLoginForm } from '../auth/AccountLoginForm';
+import { webClient } from '../../services/webClient';
 import { AccountControl } from './AccountControl';
 import { localCloudAccountRequest, notifyLocalCloudAccountChange, onLocalCloudAccountChange, type LocalCloudIdentity } from './localCloudAccountClient';
 import './LocalCloudAccount.css';
 
-export function LocalCloudAccount() {
+export function LocalCloudAccount({ waitForGateway = false }: { waitForGateway?: boolean }) {
   const { t } = useTranslation();
   const title = useId(), generation = useRef(0), working = useRef(false);
   const [status, setStatus] = useState<LocalCloudIdentity | null>(null);
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const [registration, setRegistration] = useState<boolean | 'unavailable' | null>(null);
   const [registering, setRegistering] = useState(false);
   const [notice, setNotice] = useState('');
   const loginCompletion = useRef<((authenticated: boolean) => void) | null>(null);
@@ -20,7 +20,7 @@ export function LocalCloudAccount() {
     const callback = loginCompletion.current; loginCompletion.current = null; callback?.(authenticated);
   }
   function close() {
-    setOpen(false); setPassword(''); setRegistering(false); setRegistration(null); setNotice('');
+    setOpen(false); setPassword(''); setRegistering(false); setNotice('');
     finishLogin(false);
   }
   const [username, setUsername] = useState(''), [password, setPassword] = useState('');
@@ -52,18 +52,6 @@ export function LocalCloudAccount() {
       if (epoch === generation.current) notifyLocalCloudAccountChange();
     }, true);
   }
-  const checkRegistration = open && status?.enabled === true && status.authenticated !== true;
-  useEffect(() => {
-    if (!checkRegistration) return;
-    let active = true;
-    void localCloudAccountRequest('registration').then(value => {
-      if (active) setRegistration(value.registration_enabled === true);
-    }, () => {
-      if (active) setRegistration('unavailable');
-    });
-    return () => { active = false; };
-  }, [checkRegistration]);
-
   async function register(epoch: number, password: string) {
     try {
       await localCloudAccountRequest('register', { username, password });
@@ -76,7 +64,7 @@ export function LocalCloudAccount() {
       const code = (reason as { code?: string })?.code;
       if (code === 'REGISTRATION_DISABLED') {
         setRegistering(false);
-        setRegistration(false);
+        setNotice(t('localCloudAccount.registrationDisabled'));
         return;
       }
       const messages: Record<string, string> = {
@@ -98,16 +86,27 @@ export function LocalCloudAccount() {
       setOpen(true); reload();
     };
     window.addEventListener('jiuwenswarm-cloud-login-request', requestLogin);
-    reload(); const off = onLocalCloudAccountChange(reload);
+    let offGateway: (() => void) | undefined;
+    if (waitForGateway && webClient.getState() !== 'ready') {
+      offGateway = webClient.onStateChange(state => {
+        if (state === 'ready') {
+          offGateway?.();
+          reload();
+        }
+      });
+    } else {
+      reload();
+    }
+    const off = onLocalCloudAccountChange(reload);
     const focus = () => { if (!working.current) reload(); };
     window.addEventListener('focus', focus);
-    return () => { generation.current++; finishLogin(false); window.removeEventListener('jiuwenswarm-cloud-login-request', requestLogin); off(); window.removeEventListener('focus', focus); };
-  }, []);
-  if (status?.enabled === false || status?.kind === 'cloud' || (!status && !error)) return null;
+    return () => { generation.current++; finishLogin(false); window.removeEventListener('jiuwenswarm-cloud-login-request', requestLogin); off(); offGateway?.(); window.removeEventListener('focus', focus); };
+  }, [waitForGateway]);
+  if (status?.enabled === false || status?.kind === 'cloud' || (!status && !error && !open)) return null;
   return <>
     <AccountControl authenticated={status?.authenticated === true} username={status?.username}
       loginLabel={t('auth.login')} logoutLabel={t('cloudWorkspace.logout')}
-      onLogin={() => setOpen(true)} onLogout={logout} actionsDisabled={busy}
+      onLogin={() => { setOpen(true); if (!status) void run(load); }} onLogout={logout} actionsDisabled={busy}
       prefix="cloud-workspace-local-account" triggerTestId="cloud-workspace-local-account-trigger" logoutTestId="cloud-workspace-local-account-menu-logout" />
     <Dialog open={open} titleId={title} onCancel={() => { if (!busy) { close(); } }} closeDisabled={busy} className="local-cloud-account-dialog">
       <section data-testid="cloud-workspace-local-account-dialog">
@@ -118,7 +117,7 @@ export function LocalCloudAccount() {
           <Button disabled={busy} onClick={logout} data-testid="cloud-workspace-local-account-logout">{t('localCloudAccount.logout')}</Button>
         </> : status?.enabled && <AccountLoginForm username={username} password={password} onUsername={setUsername} onPassword={setPassword} busy={busy}
           registering={registering} submitLabel={registering ? t('auth.register') : undefined}
-          footer={registration === true && <Button variant="quiet" disabled={busy} data-testid="cloud-workspace-local-account-registration-toggle"
+          footer={<Button variant="quiet" disabled={busy} data-testid="cloud-workspace-local-account-registration-toggle"
             onClick={() => { setRegistering(!registering); setPassword(''); setError(''); setNotice(''); }}>
             {t(registering ? 'auth.backToLogin' : 'auth.createAccount')}
           </Button>}
@@ -130,16 +129,13 @@ export function LocalCloudAccount() {
           }
           await localCloudAccountRequest('login', { username, password: secret });
           if (epoch === generation.current) {
-            setRegistration(null); notifyLocalCloudAccountChange(); setOpen(false); finishLogin(true);
+            notifyLocalCloudAccountChange(); setOpen(false); finishLogin(true);
           }
         }); }}>
           {registering && <p data-testid="cloud-workspace-local-account-registration-hint">{t('auth.accountHint')}</p>}
           {notice && <p role="status" data-testid="cloud-workspace-local-account-registration-notice">{notice}</p>}
         </AccountLoginForm>}
-        {status?.enabled && !status.authenticated && (registration === false || registration === 'unavailable') &&
-          <p data-testid="cloud-workspace-local-account-registration-status">{t(registration === false
-            ? 'localCloudAccount.registrationDisabled' : 'localCloudAccount.registrationUnavailable')}</p>}
-        {error && <><p role="alert" data-testid="cloud-workspace-local-account-error">{error}</p><Button disabled={busy} onClick={() => void run(load)} data-testid="cloud-workspace-local-account-retry">{t('localCloudAccount.retry')}</Button></>}
+        {error && <p role="alert" data-testid="cloud-workspace-local-account-error">{error}</p>}
         <Button variant="quiet" disabled={busy} onClick={() => { close(); }} data-testid="cloud-workspace-local-account-close">{t('codeWorkspace.cancel')}</Button>
       </section>
     </Dialog>

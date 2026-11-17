@@ -68,9 +68,11 @@ CLI的--kind cloud表示请求Gateway发布原云角色项目，--installation-i
 
 本地配置必须是运行用户拥有的私有普通文件。POSIX 核验所有者和组及其他用户权限。Windows 核验打开的文件句柄，要求运行用户所有，且 DACL 仅向该用户、SYSTEM 或本机 Administrators 授权。冻结桌面包保留 `data_sync` 的磁盘清单和入口脚本，供原 Gateway 扩展发现机制加载。
 
-Windows Electron 安装版默认启用本地云账号桥接。显式 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 优先，其次读取用户数据目录下 `config/cloud-account.json`，最后使用包内云端地址与 CA 公钥。后两种方式以桌面启动器的实际回环端口校验 Host 和 Origin。默认配置使用保存在用户数据目录的随机安装标识。
+Windows 和 Linux 冻结 Electron 桌面版默认启用本地云账号桥接。显式 `CODE_PLATFORM_LOCAL_SYNC_CONFIG` 优先，其次读取用户数据目录下 `config/cloud-account.json`，最后使用包内云端地址与 CA 公钥。后两种方式以桌面启动器的实际回环端口校验 Host 和 Origin。默认配置使用保存在用户数据目录的随机安装标识。
 
-本地登录弹窗打开时通过同源 GET `/api/v1/data-sync/registration` 读取云端自助注册策略。POST `/api/v1/data-sync/register` 使用与登录一致的 Host、Origin 和请求头校验，将用户名和密码交由已配置的 HTTPS 云端现有注册接口验证。云端决定是否允许注册。注册成功不产生桌面登录 Cookie，用户仍通过已有登录流程进入账号会话。
+包含本地后端的 Windows 和 Linux 安装包在构建时标记前端。标记只在 Electron 的同源本机页面生效。工作台可在 Gateway 就绪前渲染，左下角账号状态在本地连接就绪后读取。云端网页和纯桌面外壳保留组织账号与云环境进入流程。
+
+本地登录弹窗直接显示「创建账号」。POST `/api/v1/data-sync/register` 使用与登录一致的 Host、Origin 和请求头校验，将用户名和密码交由已配置的 HTTPS 云端现有注册接口验证。云端在提交时决定是否允许注册。较旧客户端仍可使用同源 GET `/api/v1/data-sync/registration` 查询注册策略。注册成功不产生桌面登录 Cookie，用户仍通过已有登录流程进入账号会话。登录失败时在弹窗内显示原因，用户可修改凭据后再次点击「登录」。如果首次读取账号状态失败，重新打开弹窗会重新读取状态。
 
 保留的HTTP适配还支持view/choices/publish/refresh/revoke，用于协议集成与验收，不再由产品界面调用。每次检查Host；存在Origin时必须完全匹配配置，POST还须X-Jiuwen-Sync:1和参数字段白名单，拒绝账号/根/实例选择器。云端原AccountPrincipal负责请求与交付前复核。HTTP与RPC共享4槽。目录view使用账号隔离、版本一致性校验的只读catalog分页，不注册接收来源或生成ACK；云choices沿原READY环境及existing-only Router导出；refresh不读云角色。local副本、意图及ACK仍由原连接器持久化。
 
