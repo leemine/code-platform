@@ -27,6 +27,7 @@ ACCOUNT_FIELDS = {"username", "password"}
 FIELDS = {"status": set(), "registration": set(), "register": ACCOUNT_FIELDS, "login": ACCOUNT_FIELDS, "logout": set(),
           "view": {"offset", "version"}, "choices": set(), "publish": {"operation_id", "project_ids"},
           "refresh": set(), "revoke": {"source_id"},
+          "model-sync": {"operation", "scope", "model_id", "enabled"},
           "workspace": {"operation", "path", "name", "offset", "address_version"}}
 
 
@@ -61,8 +62,9 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
 
     def http_routes(self):
         return tuple(HTTPRouteContribution(PREFIX + "/" + action, self.http,
+                     ("GET", "POST") if action == "model-sync" else
                      ("GET",) if action in {"status", "registration"} else ("POST",)) for action in FIELDS
-                     if self.local or action not in {"registration", "register"})
+                     if self.local or action not in {"registration", "register", "model-sync"})
 
     def websocket_routes(self):
         from gateway.services.cloud_execution_bridge import PATH
@@ -161,13 +163,20 @@ class DirectoryUIPlugin(ApplicationPluginExtension):
                 if action == "status":
                     return JSONResponse({"enabled": True, "kind": "local", "authenticated": False,
                                          "cloud_origin": self.local.config["cloud_origin"]})
+                if action == "model-sync" and request.method == "GET":
+                    return JSONResponse({"scope": None, "enabled_ids": []})
                 raise
             if action == "status":
                 return JSONResponse({"enabled": True, "authenticated": True, "kind": "local",
                                      "username": identity.get("username", ""),
                                      "scope": [identity["authority"], identity["actor_id"]],
                                      "cloud_origin": self.local.config["cloud_origin"]})
-            if action == "workspace":
+            if action == "model-sync":
+                if request.method == "POST" and not params:
+                    raise ValueError("model sync operation required")
+                _stage(request, "model_sync")
+                value = await self.local.model_sync.run(identity, token, params)
+            elif action == "workspace":
                 from gateway.services.cloud_workspace_client import workspace_request
                 address_version = params.pop("address_version", None)
                 if address_version is not None and (type(address_version) is not int or address_version != 1 or params.get("operation") != "open"):

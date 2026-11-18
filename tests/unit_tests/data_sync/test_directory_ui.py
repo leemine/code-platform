@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -12,7 +13,7 @@ import pytest_asyncio
 import uvicorn
 
 from gateway.auth.accounts import AccountStore
-from gateway.auth.account_authenticator import AccountAuthenticator
+from gateway.auth.account_authenticator import AccountAuthenticator, current_account
 from gateway.channel_manager.base import RobotMessageRouter
 from gateway.channel_manager.web.web_channel_app import build_web_channel_app
 from gateway.channel_manager.web.web_connect import WebChannel, WebChannelConfig
@@ -173,6 +174,98 @@ async def ui_hosts(tmp_path, monkeypatch):
         await channel.stop()
         await asyncio.wait_for(task, 5)
         sock.close(); project_store.invalidate_cache()
+
+
+@pytest.mark.asyncio
+async def test_model_sync_uses_current_account_and_keeps_cloud_copy_when_disabled(ui_hosts, monkeypatch):
+    from jiuwenswarm.common import config
+    from jiuwenswarm.common.config_panel.model_resource_handlers import model_resource_handler
+
+    host, client = ui_hosts, ui_hosts.client
+    path = "/api/v1/data-sync/model-sync"
+    local_config = host.root / "local-config.yaml"
+    local_config.write_text("models: {defaults: [], groups: []}\n")
+    monkeypatch.setattr(config, "CONFIG_YAML_PATH", local_config)
+    monkeypatch.setattr(config, "get_config_file", lambda: config.CONFIG_YAML_PATH)
+    sent = []
+
+    def model(model_id, alias, key):
+        return {
+            "model_id": model_id,
+            "alias": alias,
+            "model_client_config": {
+                "model_name": "sync-test-model", "client_provider": "OpenAI",
+                "api_base": "https://model.test/v1", "api_key": key,
+            },
+            "model_config_obj": {"temperature": 0.2},
+        }
+
+    config.upsert_model_resource({**model("mdl_selected", "Selected", "local-test-key"), "is_default": True})
+    config.upsert_model_resource(model("mdl_untouched", "Untouched", "another-test-key"))
+
+    async def cloud_upsert(ws, req_id, params, session_id):
+        actor = (await current_account().check())["user_id"]
+        candidate = params["model"]
+        file = host.root / f"cloud-{actor}.yaml"
+        sent.append((actor, candidate["model_id"]))
+        with patch.object(config, "CONFIG_YAML_PATH", file):
+            if not file.exists():
+                file.write_text("models: {defaults: [], groups: []}\n")
+                config.upsert_model_resource({**model("mdl_cloud_manual", "Cloud-only", "cloud-test-key"), "is_default": True})
+            await model_resource_handler(
+                host.channel, ws, req_id, params, session_id, operation="models.upsert",
+                on_config_saved=lambda *_args, **_kwargs: True,
+            )
+
+    host.channel.on_message(lambda _message: False)
+    host.channel.register_method("models.upsert", cloud_upsert)
+
+    async def login(username):
+        result = await client.post("/api/v1/data-sync/login", json={
+            "username": username, "password": "isolated-ui-password",
+        })
+        assert result.status_code == 200
+        return (await client.get(path)).json()["scope"]
+
+    def set_model(scope, enabled):
+        return {"operation": "set", "scope": scope, "model_id": "mdl_selected", "enabled": enabled}
+
+    assert (await client.get(path)).json() == {"scope": None, "enabled_ids": []}
+    assert (await client.post(path, json=set_model("not-authenticated", True))).status_code == 401
+    scope = await login("ui-user")
+    assert (await client.post(path, json=set_model(scope, True), headers={"X-Jiuwen-Sync": "0"})).status_code == 401
+    assert (await client.post(path, json={**set_model(scope, True), "model_id": "mdl_missing"})).status_code == 409
+    assert (await client.get(path)).json()["enabled_ids"] == []
+    response = await client.post(path, json=set_model(scope, True))
+    assert response.json() == {"scope": scope, "enabled_ids": ["mdl_selected"], "applied_without_restart": True}
+    assert "local-test-key" not in response.text
+    assert len(sent) == 1
+    actor, remote_id = sent[0]
+    assert remote_id not in {"mdl_selected", "mdl_cloud_manual"}
+
+    config.upsert_model_resource(model("mdl_selected", "Updated", "rotated-test-key"))
+    refresh = {"operation": "refresh", "scope": scope, "model_id": "mdl_selected"}
+    assert (await client.post(path, json=refresh)).status_code == 200
+    assert sent == [(actor, remote_id), (actor, remote_id)]
+    with patch.object(config, "CONFIG_YAML_PATH", host.root / f"cloud-{actor}.yaml"):
+        entries = config.load_models_config()["defaults"]
+        assert {entry["model_id"] for entry in entries} == {"mdl_cloud_manual", remote_id}
+        assert next(entry for entry in entries if entry["model_id"] == "mdl_cloud_manual")["is_default"]
+        copied = next(entry for entry in entries if entry["model_id"] == remote_id)
+        assert copied["alias"] == "Updated"
+        assert copied["model_client_config"]["api_key"] == "rotated-test-key"
+
+    other_scope = await login("other-user")
+    assert other_scope != scope
+    assert (await client.get(path)).json()["enabled_ids"] == []
+    assert (await client.post(path, json=set_model(scope, True))).status_code == 409
+    assert len(sent) == 2
+    assert await login("ui-user") == scope
+    assert (await client.get(path)).json()["enabled_ids"] == ["mdl_selected"]
+    assert (await client.post(path, json=set_model(scope, False))).json()["enabled_ids"] == []
+    assert (await client.post(path, json=refresh)).status_code == 200
+    assert len(sent) == 2
+    assert (host.root / f"cloud-{actor}.yaml").exists()
 
 
 @pytest.mark.asyncio

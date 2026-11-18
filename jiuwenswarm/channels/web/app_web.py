@@ -348,7 +348,8 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
     }
     _WS_LOG_MAX_CHARS = 2000
     _HTTP_PROXY_TIMEOUT = 30
-    _CLOUD_WORKSPACE_TIMEOUT = 175
+    _CLOUD_BRIDGE_TIMEOUT = 175
+    _CLOUD_BRIDGE_LONG_REQUESTS = {"/api/v1/data-sync/workspace", "/api/v1/data-sync/model-sync"}
     _SHARE_IMAGE_UPLOAD_IDLE_TIMEOUT = 60 * 60
     _WS_CONNECT_TIMEOUT = 10
     _WS_HANDSHAKE_TIMEOUT = 10
@@ -619,8 +620,8 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             self._write_proxy_error(400, "invalid Host header")
             return
         parsed = urlparse(self.api_target)
-        timeout = (self._CLOUD_WORKSPACE_TIMEOUT
-                   if urlparse(self.path).path == "/api/v1/data-sync/workspace" else self._HTTP_PROXY_TIMEOUT)
+        timeout = (self._CLOUD_BRIDGE_TIMEOUT
+                   if urlparse(self.path).path in self._CLOUD_BRIDGE_LONG_REQUESTS else self._HTTP_PROXY_TIMEOUT)
         if parsed.scheme == "https":
             ssl_ctx = None if _get_ssl_verify() else _get_insecure_ssl_context()
             conn: http.client.HTTPConnection = http.client.HTTPSConnection(

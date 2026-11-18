@@ -88,6 +88,8 @@ Choosing Cloud in the local page immediately reveals cloud controls while retain
 
 After selecting and opening a cloud directory, create a cloud session from the local page. Models and execution providers come from the cloud environment. Messages, tool approvals, stopping and history reads use the original cloud session without page navigation. Local project selection remains independent. Signing out closes cloud connections and clears their displayed session state. Reconnection recovers original session state without resending input. This does not copy files or history, or migrate running tasks between hosts.
 
+After signing in to your cloud account from the local app or local web page, open Settings → Models and enable Sync to cloud on the model cards you want to use in the cloud. The local service sends the model endpoint, parameters, and API key over the configured HTTPS connection to the signed-in account's cloud environment. Saving an edit to that model in local settings updates its cloud copy. Turning the switch off stops future updates, and you can manage the existing copy in cloud model settings. Switch preferences are saved per cloud account. For cloud sessions, make sure the model endpoint is reachable from the cloud environment.
+
 
 The local sidebar uses the same circular avatar and account menu as the cloud UI. Before sign-in, a user icon opens the sign-in dialog. After sign-in, the avatar shows the first two uppercase username characters (for example, CH); click it to view the full username or sign out. Signing out restores the user icon.
 

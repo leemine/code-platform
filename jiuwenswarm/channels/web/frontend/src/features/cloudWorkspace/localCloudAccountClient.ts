@@ -77,3 +77,40 @@ export async function localCloudWorkspaceRequest<T>(operation: 'environment' | '
     return value;
   } finally { window.clearTimeout(timer); }
 }
+
+export type LocalCloudModelSyncStatus = {
+  scope: string | null;
+  enabled_ids: string[];
+  applied_without_restart?: boolean;
+};
+
+export type LocalCloudModelSyncOperation =
+  | { operation: 'set'; model_id: string; enabled: boolean }
+  | { operation: 'refresh'; model_id: string };
+
+export async function localCloudModelSyncRequest(
+  command?: LocalCloudModelSyncOperation & { scope: string },
+): Promise<LocalCloudModelSyncStatus | null> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), command ? 155000 : 30000);
+  try {
+    const response = await fetch(`${getApiBase()}/api/v1/data-sync/model-sync`, {
+      method: command ? 'POST' : 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: command ? { 'Content-Type': 'application/json', 'X-Jiuwen-Sync': '1' } : undefined,
+      body: command ? JSON.stringify(command) : undefined,
+      signal: controller.signal,
+    });
+    if (!command && response.status === 404) return null;
+    if (!response.ok) throw new Error('Cloud model sync failed');
+    const status: LocalCloudModelSyncStatus = await response.json();
+    if (!status || (status.scope !== null && typeof status.scope !== 'string') ||
+        !Array.isArray(status.enabled_ids) || status.enabled_ids.some(id => typeof id !== 'string')) {
+      throw new Error('Invalid cloud model sync status');
+    }
+    return status;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}

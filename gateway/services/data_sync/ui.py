@@ -262,6 +262,8 @@ class LocalDirectoryUI:
         self.workspaces = WorkspaceConnections(self)
         from gateway.services.cloud_execution_bridge import CloudExecutionBridge
         self.execution = CloudExecutionBridge(self)
+        from gateway.services.data_sync.model_sync import LocalModelSync
+        self.model_sync = LocalModelSync(self)
 
     async def close(self):
         await self.execution.close()

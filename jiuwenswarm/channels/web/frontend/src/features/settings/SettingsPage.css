@@ -835,6 +835,18 @@
   height: 16px;
 }
 
+.settings-model-card__cloud-sync {
+  --color-settings-switch-checked: var(--color-control-emphasis);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-inline-end: 8px;
+  color: var(--color-settings-text-secondary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
 .settings-models-group-card {
   box-sizing: border-box;
   overflow: hidden;
@@ -1567,6 +1579,7 @@
 
   .settings-model-card__actions {
     grid-column: 1 / -1;
+    flex-wrap: wrap;
   }
 
   .settings-models-group-card__heading {

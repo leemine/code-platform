@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ModelEntry, ModelGroup, VendorPresetMap } from '../../../../types';
-import { Button, Tag } from '../../../../components/ui';
+import { Button, Switch, Tag } from '../../../../components/ui';
 import { settingsActionIcons, settingsEmptyBoxIllustration } from '../../../../assets/settings';
 import { getModelLogoUrl } from '../../../../assets/providers';
 import { buildModelValidationPayload } from '../../services/settingsContract';
@@ -33,6 +33,7 @@ import {
 } from './modelGroupAdapters';
 import { useSessionStore } from '../../../../stores/sessionStore';
 import { getEditableModels, isRuntimeGrantedModel } from './modelListOperations';
+import { useCloudModelSync } from './useCloudModelSync';
 
 const EMPTY_VENDOR_CATALOG: VendorPresetMap = {
   reasoning: null,
@@ -184,10 +185,11 @@ export function ModelsSettings({ tabs, defaultTab, disabled = false }: ModelsSet
   const catalogRequestId = useRef(0);
   const validationRequestIds = useRef<Record<string, number>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudSync = useCloudModelSync();
 
   const editableModels = useMemo(() => getEditableModels(models), [models]);
   const hasModelsError = Boolean(modelsError);
-  const actionsDisabled = !isConnected || modelsLoading || hasModelsError || saving;
+  const actionsDisabled = !isConnected || modelsLoading || hasModelsError || saving || Boolean(cloudSync.busyModel);
 
   const applyCatalog = useCallback(
     (parsed: { models: ModelEntry[]; modelGroups: ModelGroup[]; activeModel?: string }) => {
@@ -332,12 +334,34 @@ export function ModelsSettings({ tabs, defaultTab, disabled = false }: ModelsSet
             : 'settingsPanel.models.savedRestartRequired',
         ),
       });
+      if (model.model_id && cloudSync.status?.enabled_ids.includes(model.model_id)) {
+        void cloudSync.sync({ operation: 'refresh', model_id: model.model_id }).then(
+          status => {
+            if (status?.applied_without_restart === false) {
+              showValidationToast({ success: true, message: t('settingsPanel.models.cloudSyncRestart') });
+            }
+          },
+          () => showValidationToast({ success: false, message: t('settingsPanel.models.savedCloudSyncFailed') }),
+        );
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : t('settingsPanel.feedback.saveFailed');
       if (errorScope === 'page') setSaveError(message);
       throw error;
     } finally {
       setSaving(false);
+    }
+  };
+
+  const setModelSync = async (modelId: string, enabled: boolean) => {
+    try {
+      const status = await cloudSync.sync({ operation: 'set', model_id: modelId, enabled });
+      if (!status) return;
+      const key = !enabled ? 'cloudSyncStopped'
+        : status.applied_without_restart ? 'cloudSyncApplied' : 'cloudSyncRestart';
+      showValidationToast({ success: true, message: t(`settingsPanel.models.${key}`) });
+    } catch {
+      showValidationToast({ success: false, message: t('settingsPanel.models.cloudSyncFailed') });
     }
   };
 
@@ -541,6 +565,27 @@ export function ModelsSettings({ tabs, defaultTab, disabled = false }: ModelsSet
           </p>
         </div>
         <div className="settings-model-card__actions">
+          {!readOnly && model.model_id && cloudSync.status ? (
+            <div
+              className="settings-model-card__cloud-sync"
+              title={t(cloudSync.status.scope
+                ? 'settingsPanel.models.cloudSyncDetails'
+                : 'settingsPanel.models.cloudSyncSignIn')}
+            >
+              <span>{t('settingsPanel.models.cloudSync')}</span>
+              <Switch
+                checked={cloudSync.status.enabled_ids.includes(model.model_id)}
+                disabled={actionsDisabled || !cloudSync.status.scope}
+                aria-busy={cloudSync.busyModel === model.model_id}
+                aria-label={t('settingsPanel.models.cloudSyncLabel', { name: presentation.customName })}
+                data-testid="settings-models-card-cloud-sync-switch"
+                data-variant={model.model_id}
+                onChange={enabled => {
+                  if (model.model_id) void setModelSync(model.model_id, enabled);
+                }}
+              />
+            </div>
+          ) : null}
           <Button
             icon={<settingsActionIcons.test aria-hidden />}
             aria-label={t('settingsPanel.models.testConnection')}
