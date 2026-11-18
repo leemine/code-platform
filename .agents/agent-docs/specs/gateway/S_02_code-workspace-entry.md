@@ -14,7 +14,7 @@ author_email: leewanlong@gmail.com
 2. `project.workspace.list|mkdir|open` 只接受无显式 session_id 参数的 Code 目录操作；WebChannel 自动合成的临时关联ID不作为业务会话绑定；请求允许 `path,name,offset,work_mode`，显式非 code 拒绝。经原 `path.select_directory` 协议的 `workspace_operation` 委托 AgentServer；旧无该参数的原生选择器不变。不得自定义 root、user、instance 或执行目标。
 3. 根固定为 `get_agent_workspace_dir()/code`，path 为相对目录；根允许浏览但不能注册。拒绝点开头分段、空段、反斜线、NUL、超过2048字符的路径与符号链接。列目录每页100项、最多10000目录，排序后返回 `{path,work_mode,items:[{name,path}],next_offset}`。offset 必须为有效非负整数。
 4. mkdir 的 name 是单段合法项目目录名，以目录描述符创建0755并同步父目录；已有名称返回 CONFLICT。返回 `{path,created:true}`，此时尚未注册项目。open 返回 `{project,path}`，复用原 ProjectStore 和 Git 初始化；已有同路径项目复用，隐藏/异模式拒绝，包含或处于另一个项目内拒绝 PROJECT_ROOT_REQUIRED。
-5. 云环境 status/ensure 契约保持原样，无客户端配置选择器；READY 必须有环境ID。单账号单默认环境，ensure 幂等，未返回成功不能显示创建完成。目录失败或结果未知时刷新核对，不自动重放变更。
+5. 运行实例 status/ensure 作为基础设施兼容契约保持原样，不再由“创建云端环境”按钮调用；该按钮走 GitHub 项目准备（S_04）。无客户端配置选择器；READY 必须有环境ID。单账号单默认环境，ensure 幂等，未返回成功不能显示创建完成。目录失败或结果未知时刷新核对，不自动重放变更。
 6. 前端 Work 原控件不变。Code 的本地页面通过既有同源账号桥访问云端；云目录结果独立保留，不写入本地 `workspaceStore.selectedProject`。选择 Cloud 不清草稿、附件或技能，输入仍可编辑；所选位置没有原执行路由时禁止发送，不能回退到当前本地执行。已有会话的位置仍锁定。本地页的云端会话按第15–19条通过独立云WebClient绑定，目录连接本身不承担执行。
 7. 本地 POST `/api/v1/data-sync/workspace` 复用原 HttpOnly、SameSite=Strict 登录会话、Host/Origin 与 `X-Jiuwen-Sync` 校验。允许 `operation=environment|ensure|list|mkdir|open`，后者仅允许各自的 `path/name/offset`，服务端固定 `work_mode=code`。目标仅取操作员私有配置 `CODE_PLATFORM_LOCAL_SYNC_CONFIG`，浏览器不能提交地址、账号、环境、实例或根选择器。云宿主拒绝这个本地桥端点。操作前后验证身份；错误或超时不自动重放变更。
 8. 环境读写委托原账号 HTTP API；目录调用复用原 WebChannel JSON RPC 和 AgentServer 目录适配器。WorkspaceRPC 仅开放三个目录方法，使用正常账号连接；原 DirectoryRPC 保持 `data_sync.*` 白名单和无执行生命周期的连接范围。不能把元数据同步连接升级成执行连接。本地桥不保存云文件副本或新建第二套项目存储。
@@ -33,7 +33,7 @@ author_email: leewanlong@gmail.com
 18. 目录请求总预算150秒，浏览器155秒，本地 Web 代理175秒；普通HTTP代理仍30秒。工作区响应记录阶段、状态码和耗时，不记录凭据/路径/用户输入；`Server-Timing` 暴露总处理耗时。超时或结果不明不重发mkdir/open/ensure。
 19. 同源/容量检查后本地云执行WebSocket先完成传输升级，并行执行云身份检查与上游已鉴权连接，随后执行二次身份校验；升级不代表取得云权限。只有准备完成才发送既有`connection.ack`（transport=cloud-bridge），客户端在175秒内等待此回执，再启动业务请求期限。期间不转发排队帧、不返回云数据，认证失败关闭1008；不将云冷启动放在底层10秒Upgrade握手中。
 
-这里的历史读取访问云端原会话，仍不是项目文件同步或会话历史复制。单账号单默认云环境契约保留；多命名环境、文件双向同步与无损运行迁移另行开发。
+这里的历史读取访问云端原会话，仍不是项目文件同步或会话历史复制。单账号单默认运行实例契约保留；其上的多个 GitHub 项目环境由 S_04_github-project-environments 定义。文件双向同步与无损运行迁移另行开发。
 
 20. 账号服务失败时保持错误视图，恢复探测在上一请求结束后按2/4/8/16/30秒退避，不反复切换整页检查提示；手动与后台恢复共用单个在途请求。后台不提交登录凭据，不能用旧身份绕过权限校验；相同新鲜身份恢复原界面，不同身份仍清理原缓存与连接。
 

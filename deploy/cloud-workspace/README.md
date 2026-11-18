@@ -12,6 +12,8 @@
 
 构建上下文仅包括 `deps/`、`dist/*.whl`、本目录 Dockerfile/verify_dependencies.py、原 `uv.lock` 和生成的 `candidate.json`。将 `context.dockerignore` 复制为上下文 `.dockerignore`。清单包含 `base_sha`、未提交候选说明、`lock_sha256`、`wheel_sha256`、`source_sha256`（wheel 内源码路径到 SHA256 的映射）。不得将账号库、私有配置、TLS 私钥、用户目录或整个源码工作区放入构建上下文。
 
+Gateway 的 GitHub 设备授权还需要官方 `gh_2.104.0_linux_amd64.tar.gz`，从 GitHub CLI 的 `v2.104.0` release 获取并放在上下文根目录。固定 SHA-256 为 `98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e`，Dockerfile 在提取前核对；`context.dockerignore` 允许此归档。只将 gh 放入 Gateway，账号与 AgentServer 不继承该阶段。不携带宿主 gh 配置或凭据。
+
 分别执行 `docker build --network=none --target <角色> -t <专属候选标签> <上下文>`。安装前检查 wheel 摘要，安装后校验源码、所有已安装包版本、VCS 仓库/提交及实际导入路径；再对实际运行的各角色执行 `uv pip check --python /opt/venv/bin/python`。基础镜像、wheel、锁文件和三角色镜像 ID 均需留档，不能仅记录分支名。
 
 ## 运行边界

@@ -12,7 +12,7 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 
 独立账号服务是账号库唯一写者；环境库只保存账号引用、固定镜像、注册意图、实例操作回执和代次。注册operation_id在账号权威与环境意图间闭合，密码不进入环境库。首版单控制面写者，不声称分布式租约。
 
-插件提供原HTTP路径及cloud.environment两项RPC；原装配层注入服务，不覆盖session.execution.options，不另建创建/轮询/执行连接。原Router/AgentManager唯一持有物理生命周期；通用生命周期策略只注入启动快照、回执和认证。Core、协议、Runtime状态机不复制。
+插件保留原HTTP路径及cloud.environment两项兼容RPC，并注册S_04规定的GitHub/GitCode项目操作；原装配层注入服务，不覆盖session.execution.options，不另建创建/轮询/执行连接。原Router/AgentManager唯一持有物理生命周期；通用生命周期策略只注入启动快照、回执和认证。Core、协议、Runtime状态机不复制。
 
 NEW→CREATING→ALLOCATED；未知结果→UNKNOWN，清单零匹配不授权再次创建。READY来自物理running及AgentServer应用ACK，不是持久化权威状态。DELETING只在原实例明确不存在后转DELETED，再增代次/operation_id；固定镜像和工作区保留。删除核验绑定归属/代次，内存清理按预期instance_id比较；迟到回执不能删除新实例。启动清理跳过本控制面旧账号实例；普通网络故障不触发云实例重建。
 

@@ -7,4 +7,5 @@
 !verify_dependencies.py
 !candidate.json
 !uv.lock
+!gh_2.104.0_linux_amd64.tar.gz
 **/__pycache__/

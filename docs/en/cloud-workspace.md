@@ -116,3 +116,29 @@ Only a loopback account upstream in the same network namespace may use HTTP.
 Cross-host connections retain verified HTTPS. Rotation does not alter account
 sessions or per-request/delivery authorization. Templates do not install host
 services automatically or imply completed multi-node production qualification.
+
+## GitHub cloud project environments
+
+The Code composer retains three controls: local directory, Local/Cloud, and cloud actions. Selecting Cloud is immediate; an explicit action uses the existing cloud account login and connection. Create cloud environment opens GitHub connection, account, repository, branch and name selection. Each environment is a separate project directory on the account's existing runtime, not a new container. Use environment selects the original project; only sending a task invokes the original session flow. Existing session bindings remain unchanged.
+
+Gateway runs the unmodified official GitHub CLI: `gh auth login --hostname github.com --git-protocol https --web --skip-ssh-key --insecure-storage`. The user enters the displayed short code on GitHub's device page and personally approves the official CLI grant. No custom App, client ID, private key or public callback is required. The official approval page describes the granted scopes; this feature only reads and checks out repositories. See [gh auth login](https://cli.github.com/manual/gh_auth_login).
+
+For the Linux amd64 image, put the official v2.104.0 `gh_2.104.0_linux_amd64.tar.gz` archive in the explicit build context. The Dockerfile verifies its pinned SHA-256 before installing gh in Gateway. Other deployments may point executable at an administrator-installed official gh.
+
+Install official `gh` on Gateway and allow certificate-verified HTTPS to GitHub. Optional private `JIUWENSWARM_PROJECT_GITHUB_CONFIG` only specifies `root` and `executable`; see `deploy/cloud-workspace/github.example.json`. Use mode 0600 for configuration and 0700 for storage. The default is `project-github-gh` under Gateway's authentication directory. Persist the encrypted connection database and existing encryption key in Gateway-only volumes, never mounted in AgentServer or project directories or baked into images. Use separate storage from the old App candidate and authorize again.
+
+Each login has a private HOME/GH_CONFIG_DIR with ambient GH_TOKEN/GITHUB_TOKEN, proxy and Git configuration removed. `--insecure-storage` allows the official CLI to write temporary private files, which are encrypted for persistence and removed after login. Restart discards unfinished login attempts. Connections are scoped by account authority, subject and execution target. The browser receives only a short user code, never credentials. Cloud login and GitHub authorization are separate grants using the existing account UI. Disconnect deletes this service's saved credentials; revoke the GitHub-side CLI grant separately in GitHub Settings / Applications when required. Network or rate-limit failures preserve the saved connection.
+
+Preparation pins the initial commit, verifies chunked transfer with SHA-256 and resumes the same operation and receipt after interruption. Existing paths and names are never overwritten. Git fetch uses bounded retries and account-scoped object caching. GitHub access is revalidated before publication, and account request/delivery permissions remain live.
+
+Preparation includes Git code, branches and history. It leaves LFS pointers intact, does not expand submodules, execute hooks, install dependencies, create a Session/Turn, or configure/call a model. Ready means the code workspace exists; dependencies remain unknown. Deploy the matching AgentServer with `project.import` support. Unsupported targets allow discovery but disable preparation. Mock or unconfigured UI evidence is not a real GitHub authorization/checkout acceptance result.
+
+### Prepare a cloud project from GitCode
+
+In Code mode, select Cloud in the three-part workspace control, choose Create cloud environment, and select GitCode as the repository provider. Connect GitCode opens its official personal-token page. Create a token with the required repository read access, enter it once in the local dialog, and select your account, repository, branch, and environment name. Tokens are encrypted for the current cloud account and never written into projects; no OAuth application registration is required. The existing official GitHub CLI login remains available.
+
+After preparation, choose Use this environment to select the cloud project. This does not configure a model or start a session. Retries preserve the original commit and receipt; existing directories are never overwritten. Connections, caches, and preparation sources are isolated by provider. A ready workspace does not imply installed dependencies, downloaded LFS content, or restored process state.
+
+Gateway shutdown interrupts and waits for owned Git downloads before releasing private credential storage. A connection change between checkout and publication blocks that preparation. A failed GitCode token replacement preserves the previous connection; an explicit disconnect prevents restoration.
+
+Closing and reopening the creation dialog resumes the existing preparation. If sign-in expires while selecting an existing environment, signing in returns to the environment list.

@@ -20,9 +20,9 @@ before(async()=>{
  for(const [key,value] of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,Node:dom.window.Node,Event:dom.window.Event,CustomEvent:dom.window.CustomEvent,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,BroadcastChannel:undefined,requestAnimationFrame:dom.window.requestAnimationFrame.bind(dom.window),cancelAnimationFrame:dom.window.cancelAnimationFrame.bind(dom.window)}))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
  window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};window.HTMLDialogElement.prototype.close=function(){this.open=false;};
  ({createRoot}=await import('react-dom/client'));
- globalThis.fetch=async(_url, options)=>{const body=JSON.parse(options.body);calls.push({method:'bridge.'+body.operation,params:body});try{return new Response(JSON.stringify(await request('bridge.'+body.operation,body)),{status:200});}catch(error){return new Response(JSON.stringify({code:error.code}),{status:error.code==='UNAUTHORIZED'?401:409});}};
+ globalThis.fetch=async(_url, options)=>{const body=JSON.parse(options?.body || '{}');calls.push({method:'bridge.'+body.operation,params:body});try{return new Response(JSON.stringify(await request('bridge.'+body.operation,body)),{status:200});}catch(error){return new Response(JSON.stringify({code:error.code}),{status:error.code==='UNAUTHORIZED'?401:409});}};
  globalThis.__workspaceRequest=async(method,params)=>{calls.push({method,params});return request(method,params);};
- globalThis.__workspaceConnection=fn=>{connection=fn;return ()=>{};};
+ globalThis.__workspaceConnection=fn=>{const previous=connection; connection=value=>{previous?.(value);fn(value);};return ()=>{};};
  globalThis.__workspaceStore={codeLocation:'local',cloudProject:null,setCloudProject:p=>{globalThis.__workspaceStore.cloudProject=p;},setCodeLocation:l=>{globalThis.__workspaceStore.codeLocation=l;},selectedProject:null,setSelectedProject:p=>{selected=p;},loadProjects:async()=>{}};
  const result=await build({stdin:{contents:"export * from './src/components/ChatPanel/CodeWorkspaceControls';",resolveDir:process.cwd(),loader:'ts'},bundle:true,packages:'external',platform:'node',format:'esm',write:false,loader:{'.css':'empty','.svg':'text'},define:{'import.meta.env':'{}'},plugins:[{name:'boundary',setup(b){
  b.onResolve({filter:/services\/webClient$/},()=>({path:'transport',namespace:'workspace-test'}));
@@ -32,7 +32,7 @@ before(async()=>{
  await mkdir('node_modules/.cache/code-workspace',{recursive:true});await writeFile('node_modules/.cache/code-workspace/test.mjs',result.outputFiles[0].text);api=await import('../node_modules/.cache/code-workspace/test.mjs');
  await i18next.init({lng:'zh',resources:{zh:{translation:JSON.parse(await readFile('src/i18n/locales/zh.json','utf8'))}}});
 });
-beforeEach(()=>{globalThis.__workspaceStore.codeLocation='local';globalThis.__workspaceStore.cloudProject=null;calls=[];blocked=false;selected=null;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1',state:'ALLOCATED'}:page();root=createRoot(document.getElementById('root'));});
+beforeEach(()=>{connection=null;sessionStorage.clear();globalThis.__workspaceStore.codeLocation='local';globalThis.__workspaceStore.cloudProject=null;calls=[];blocked=false;selected=null;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1',state:'ALLOCATED'}:page();root=createRoot(document.getElementById('root'));});
 afterEach(async()=>{await act(async()=>root.unmount());});after(()=>dom.window.close());
 async function mount(enabled=true,navigationBlocked=false){await act(async()=>root.render(h(I18nextProvider,{i18n:i18next},h(api.CodeWorkspaceControls,{enabled,navigationBlocked,disabled:false,onBlockedChange:bindBlocked,localControl:h('button',{'data-testid':'existing-local-picker'},'original local')}))));await tick();}
 test('cloud has three controls and all original cloud actions; no automatic ensure',async()=>{
@@ -52,10 +52,21 @@ test('new folder waits for durable response and then opens through original proj
  request=async(method,params)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1'}:method==='project.workspace.mkdir'?{path:params.name,created:true}:method==='project.workspace.open'?{project:{project_id:'new',project_dir:'/workspace/new-project',work_mode:'code'}}:page();
  await mount();await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-mkdir');await text('chat-panel-code-folder-name','new-project');await click('chat-panel-code-workspace-confirm');assert.equal(query('chat-panel-code-directory-selection').textContent,'new-project');await click('chat-panel-code-workspace-confirm');assert.equal(selected.project_id,'new');
 });
-test('environment ensure uses no selectors and blocks until READY',async()=>{
- let finish;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1'}:new Promise(r=>{finish=r;});
- await mount();await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-create');await click('chat-panel-code-workspace-confirm');assert.equal(blocked,true);assert.deepEqual(calls.at(-1),{method:'cloud.environment.ensure',params:{}});assert.ok(query('chat-panel-code-workspace-confirm').disabled);
- await act(async()=>finish({environment_id:'env-1',state:'READY'}));await tick();assert.equal(blocked,false);
+test('create opens GitHub connection, not physical instance allocation',async()=>{
+ request=async(method)=>method==='workspace.locations'?catalog('cloud'):{execution_target:'cloud',configured:false,state:'unconfigured',can_import:false};
+ await mount();await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-create');
+ assert.ok(query('chat-panel-cloud-environment-dialog'));
+ assert.match(document.body.textContent,/GitHub/);
+ assert.equal(calls.some(c=>c.method==='cloud.environment.ensure'||c.method==='session.create'),false);
+ assert.ok(calls.some(c=>c.method==='project.github.status'));
+});
+test('prepared environment selection uses existing project without a session',async()=>{
+ const project={project_id:'proj_ready',name:'Ready',project_dir:'/workspace/Ready',work_mode:'code',repository_source:{full_name:'owner/repo',branch:'main'}};
+ request=async method=>method==='workspace.locations'?catalog('cloud'):{execution_target:'cloud',projects:[project]};
+ await mount();await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-environment');
+ await click('chat-panel-code-environment-item');await click('chat-panel-code-workspace-confirm');
+ assert.equal(selected.project_id,'proj_ready');
+ assert.equal(calls.some(c=>c.method==='cloud.environment.ensure'||c.method==='session.create'),false);
 });
 test('disconnect invalidates a late directory response',async()=>{
  let finish;request=async(method)=>method==='workspace.locations'?catalog('cloud'):method==='cloud.environment.status'?{environment_id:'env-1'}:new Promise(r=>{finish=r;});
@@ -103,9 +114,36 @@ test('switching back to Local cancels a pending login intention',async()=>{
  let complete;const listener=e=>{complete=e.detail;};window.addEventListener('jiuwenswarm-cloud-login-request',listener);
  try{request=async method=>{if(method==='workspace.locations')return catalog('local');throw {code:'UNAUTHORIZED'};};await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-directory');await choose('local');const before=calls.length;await act(async()=>complete(true));await tick();assert.equal(calls.length,before);assert.equal(blocked,false);}finally{window.removeEventListener('jiuwenswarm-cloud-login-request',listener);}
 });
-test('environment selection reads status on demand and prepares only on explicit confirmation',async()=>{
- request=async method=>method==='workspace.locations'?catalog('local'):{environment_id:'env',state:method==='bridge.ensure'?'READY':'ALLOCATED'};
- await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-environment');assert.equal(calls.at(-1).method,'bridge.environment');assert.equal(calls.some(row=>row.method==='bridge.ensure'),false);await click('chat-panel-code-workspace-confirm');assert.equal(calls.at(-1).method,'bridge.ensure');assert.equal(window.location.pathname,'/');
+test('local environment picker uses cloud project list and never ensures a physical instance',async()=>{
+ request=async method=>method==='workspace.locations'?catalog('local'):{execution_target:'cloud',projects:[]};
+ await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-environment');
+ assert.equal(calls.at(-1).method,'project.environment.list');
+ assert.deepEqual(calls.at(-1).params,{execution_target:'cloud'});
+ assert.ok(query('chat-panel-code-environment-empty'));
+ assert.equal(calls.some(row=>row.method==='bridge.ensure'),false);
+});
+test('expired login while confirming an environment resumes the existing environment picker',async()=>{
+ let reads=0,complete;const listener=e=>{complete=e.detail;};
+ const project={project_id:'cloudp_0123456789abcdef01234567_cHJval8x',project_dir:'/cloud/code/repo',work_mode:'code',name:'repo',repository_source:{full_name:'owner/repo',branch:'main'}};
+ window.addEventListener('jiuwenswarm-cloud-login-request',listener);
+ try{
+  request=async method=>{
+   if(method==='workspace.locations')return catalog('local');
+   if(method==='project.environment.list'){
+    if(++reads===2)throw {code:'UNAUTHORIZED'};
+    return {execution_target:'cloud',projects:[project]};
+   }
+   throw Error('unexpected '+method);
+  };
+  await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-environment');
+  await click('chat-panel-code-environment-item');await click('chat-panel-code-workspace-confirm');
+  assert.equal(typeof complete,'function');
+  await act(async()=>{window.dispatchEvent(new Event('jiuwenswarm-cloud-account'));complete(true);});await tick();
+  assert.equal(query('chat-panel-code-workspace-dialog').dataset.variant,'environments');
+  assert.equal(query('chat-panel-code-workspace-dialog').closest('dialog').open,true);
+  assert.equal(query('chat-panel-cloud-environment-dialog').closest('dialog').open,false);
+  assert.equal(reads,3);
+ }finally{window.removeEventListener('jiuwenswarm-cloud-login-request',listener);}
 });
 test('switching Local invalidates a slow cloud directory response without waiting',async()=>{
  let finish;request=async method=>method==='workspace.locations'?catalog('local'):new Promise(r=>{finish=r;});await mount();await choose('cloud');await click('chat-panel-code-cloud-trigger');await click('chat-panel-code-cloud-directory');await choose('local');assert.equal(blocked,false);await act(async()=>finish(page('',[{name:'late',path:'late'}])));await tick();assert.equal(query('chat-panel-code-directory-item'),null);assert.equal(selected,null);

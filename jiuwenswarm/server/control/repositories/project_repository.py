@@ -2,8 +2,8 @@
 
 """Project disk store used by Front Control.
 
-Phase 1 Control owns lightweight project reads (list/info/sessions).
-Create, rename, pin, and all git operations stay on the execution plane.
+Control owns lightweight project reads and bounded repository import receipts.
+Ordinary create, rename, pin and interactive Git operations use execution.
 """
 
 from __future__ import annotations
@@ -55,6 +55,17 @@ async def handle_project_request(request: AgentRequest) -> AgentResponse:
         )
     params = request.params if isinstance(request.params, dict) else {}
     try:
+        if request.req_method == ReqMethod.PROJECT_IMPORT:
+            from jiuwenswarm.server.control.project_import import execute
+            try:
+                value = await asyncio.to_thread(execute, params, request.user_id)
+                return _ok(request, value)
+            except Exception as exc:
+                import re
+                code = str(exc)
+                if not re.fullmatch(r'(?:GIT|PROJECT_IMPORT)_[A-Z_]+', code):
+                    code = 'PROJECT_IMPORT_FAILED'
+                return build_error_response(request, 'Project preparation unavailable', code=code)
         if request.req_method == ReqMethod.PROJECT_LIST:
             if "sync_export" in params:
                 from jiuwenswarm.data_sync.cloud_export import export_inventory

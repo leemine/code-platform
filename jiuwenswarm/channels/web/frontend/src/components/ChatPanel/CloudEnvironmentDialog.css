@@ -1,0 +1,121 @@
+.chat-cloud-environment section {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.chat-cloud-environment__header,
+.chat-cloud-environment__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.chat-cloud-environment h2,
+.chat-cloud-environment p {
+  margin: 0;
+}
+.chat-cloud-environment p,
+.chat-cloud-environment [role='status'] {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.chat-cloud-environment__name {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-cloud-environment button,
+.chat-cloud-environment input,
+.chat-cloud-environment select {
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+.chat-cloud-environment button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat-cloud-environment .chat-project-github__body {
+  max-height: 300px;
+}
+@media (max-width: 480px) {
+  .chat-cloud-environment section {
+    padding: 16px;
+  }
+  .chat-cloud-environment__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.chat-cloud-environment [hidden] {
+  display: none !important;
+}
+.chat-cloud-environment h2 {
+  font-size: 22px;
+  font-weight: 600;
+}
+.chat-cloud-environment .chat-project-github__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: none;
+  padding: 0;
+  overflow: visible;
+}
+.chat-cloud-environment .chat-project-github__connection {
+  font-size: 13px;
+}
+.chat-cloud-environment .chat-project-github__connection summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+.chat-cloud-environment .chat-project-github__connection[open] summary {
+  margin-bottom: 8px;
+}
+.chat-cloud-environment .chat-project-github__repositories {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.chat-cloud-environment .chat-project-github__repositories button {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  margin: 0;
+}
+.chat-cloud-environment button[aria-pressed='true'] {
+  border-color: var(--color-text-link);
+  color: var(--color-text-link);
+}
+.chat-cloud-environment .chat-project-github__branch-label,
+.chat-cloud-environment [data-testid='chat-panel-project-github-account-label'] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.chat-cloud-environment .chat-project-github__branch-label select,
+.chat-cloud-environment [data-testid='chat-panel-project-github-account-label'] select {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  margin: 0;
+}
+.chat-cloud-environment__footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.chat-cloud-environment__footer p {
+  flex-basis: 100%;
+}
+.chat-cloud-environment__name {
+  font-size: 13px;
+}

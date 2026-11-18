@@ -53,6 +53,9 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
         ))
 
     def bind_web_channel(self, channel, services):
+        from gateway.services.project_environments import ProjectEnvironments
+        self.projects = ProjectEnvironments(channel, services.require_agent_client())
+        self.projects.register()
         for method in ("cloud.environment.ensure", "cloud.environment.status"):
             def make_handler(name):
                 async def handler(ws, req_id, params, session_id):
@@ -173,7 +176,8 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
 
     async def shutdown(self):
         # The host owns Router shutdown and its writer lease.
-        return None
+        if hasattr(self, "projects"):
+            await self.projects.close()
 
 async def register_extensions(registry):
     if not os.environ.get(CONFIG_ENV):

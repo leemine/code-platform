@@ -5642,7 +5642,8 @@
       "NEW": "Not created",
       "ALLOCATED": "Created; connect on demand",
       "READY": "Connected"
-    }
+    },
+    "noEnvironments": "No prepared cloud environments. Create one to begin."
   },
   "localCloudAccount": {
     "title": "Cloud account",
@@ -5659,5 +5660,135 @@
     "invalidRegistrationUsername": "Use 3–32 letters, numbers, periods, underscores, or hyphens, starting with a letter or number.",
     "invalidRegistrationPassword": "Use a password with 8–128 characters.",
     "continue": "Continue cloud action"
+  },
+  "cloudEnvironment": {
+    "create": "Create cloud environment",
+    "close": "Close",
+    "description": "Connect GitHub or GitCode, select a repository and branch, and prepare a cloud workspace.",
+    "name": "Environment name",
+    "retry": "Retry connection",
+    "prepare": "Prepare environment",
+    "prepareUnavailable": "Environment preparation is not yet available on this service. Connecting and selecting a repository will not create an environment or start a task.",
+    "state": {
+      "loading": "Connecting to the cloud service…",
+      "connected": "Cloud",
+      "notConnected": "No cloud service is connected. Sign in or configure an available cloud service first.",
+      "ambiguous": "Multiple cloud targets are available. Select an explicit target in the run location first.",
+      "offline": "The cloud service is offline. Try again later.",
+      "failed": "Unable to read the cloud service. Check your login and connection, then retry."
+    },
+    "choose": "Choose environment",
+    "cancel": "Cancel",
+    "prepareScope": "Check out the repository and verify the workspace. Dependencies and tasks are not started automatically.",
+    "use": "Use environment",
+    "preparation": {
+      "accepted": "Preparation accepted…",
+      "resolving": "Resolving repository and commit…",
+      "fetching": "Fetching repository…",
+      "fetching_assets": "Downloading Git LFS assets…",
+      "transferring_assets": "Transferring large files to the target instance…",
+      "transferring": "Transferring to the selected instance…",
+      "verifying": "Checking out and verifying workspace…",
+      "ready": "Repository and workspace ready. Dependencies are unverified. Send a message to start a task.",
+      "failed": "Preparation failed. Retry to continue.",
+      "interrupted": "Connection interrupted or result unconfirmed. Retry to resume the same operation."
+    },
+    "retryPrepare": "Retry preparation",
+    "reselect": "Choose again",
+    "errorCode": {
+      "GIT_INCOMPLETE_HISTORY": "Repository history is incomplete. Retry preparation; the environment is not ready.",
+      "GIT_LFS_NOT_SUPPORTED": "This repository contains Git LFS files. Fetching these assets is not supported yet, so the environment is not ready. Choose a branch without LFS or wait for LFS support.",
+      "GITHUB_RATE_LIMITED": "GitHub request quota is temporarily exhausted. Retry later; reconnecting is unnecessary. Downloaded data is retained.",
+      "GIT_LFS_UNAVAILABLE": "Git LFS is not installed in the execution environment. Ask the deployer to install it, then retry.",
+      "GIT_LFS_HASH_MISMATCH": "Large-file verification failed. The environment is not ready; retry to verify and complete the files.",
+      "GIT_LFS_OBJECT_INCOMPLETE": "Large files are incomplete. Retry to finish downloading.",
+      "GIT_LFS_SIZE_LIMIT": "Large files exceed the current environment capacity limit. The environment is not ready.",
+      "GIT_LFS_OBJECT_UNAVAILABLE": "Preparation failed. Please retry.",
+      "GIT_LFS_UNSUPPORTED_EMPTY_POINTER": "An empty LFS pointer cannot round-trip to the original Git content. The environment is not ready; a maintainer must correct it to a normal empty file.",
+      "GITCODE_RATE_LIMITED": "GitCode rate limit reached. Try again later.",
+      "GITCODE_REAUTHORIZE": "GitCode authorization expired. Reconnect your account.",
+      "GITCODE_ACCESS_DENIED": "GitCode repository access denied. Check your permissions.",
+      "GITCODE_UPSTREAM_UNAVAILABLE": "GitCode is temporarily unavailable. Try again later."
+    },
+    "provider": "Repository provider"
+  },
+  "projectGitHub": {
+    "devicePending": "Waiting for GitHub authorization; this updates automatically.",
+    "deviceInstructions": "Open the GitHub authorization page and enter this code:",
+    "deviceWaiting": "Waiting for you to authorize on GitHub. This code expires; do not share it.",
+    "deviceReason": {
+      "denied": "GitHub authorization was cancelled. Connect again to retry.",
+      "expired": "The code expired. Please connect again.",
+      "interrupted": "The connection result could not be confirmed. Please connect again.",
+      "disabled": "The service has not enabled GitHub device authorization.",
+      "failed": "GitHub authorization did not complete. Please connect again."
+    },
+    "title": "GitHub repositories",
+    "loading": "Loading…",
+    "failed": "Unable to load. Check your connection or authorization and retry.",
+    "unconfigured": "GitHub sign-in is unavailable. Please contact your administrator.",
+    "refresh": "Refresh",
+    "connect": "Connect GitHub",
+    "authorize": "Continue to GitHub",
+    "configure": "Configure repository access",
+    "disconnect": "Disconnect from Swarm",
+    "account": "GitHub account",
+    "choose": "Choose…",
+    "previous": "Previous page",
+    "next": "Next page",
+    "noAccess": "No GitHub repositories are available. Check account and organization access.",
+    "searchPage": "Filter repositories on this page",
+    "importUnavailable": "Repository import is not yet enabled on this instance. No project or task has been created.",
+    "state": {
+      "disconnected": "Not connected",
+      "pending": "Complete authorization on GitHub, then refresh.",
+      "connected": "Connected",
+      "reauthorize": "Authorization expired or unavailable. Connect again."
+    },
+    "manageConnection": "Manage connection",
+    "branch": "Branch",
+    "chooseBranch": "Choose a branch",
+    "optionalBranch": "Branch: {{branch}} · Change branch (optional)"
+  },
+  "projectGitCode": {
+    "devicePending": "Waiting for GitCode authorization; this updates automatically.",
+    "deviceInstructions": "Open the GitCode authorization page and enter this code:",
+    "deviceWaiting": "Waiting for you to authorize on GitCode. This code expires; do not share it.",
+    "deviceReason": {
+      "denied": "GitCode authorization was cancelled. Connect again to retry.",
+      "expired": "The code expired. Please connect again.",
+      "interrupted": "The connection result could not be confirmed. Please connect again.",
+      "disabled": "The service has not enabled GitCode device authorization.",
+      "failed": "GitCode authorization did not complete. Please connect again."
+    },
+    "title": "GitCode repositories",
+    "loading": "Loading…",
+    "failed": "Unable to load. Check your connection or authorization and retry.",
+    "unconfigured": "GitCode sign-in is unavailable. Please contact your administrator.",
+    "refresh": "Refresh",
+    "connect": "Connect GitCode",
+    "authorize": "Open GitCode token page",
+    "configure": "Configure repository access",
+    "disconnect": "Disconnect from Swarm",
+    "account": "GitCode account",
+    "choose": "Choose…",
+    "previous": "Previous page",
+    "next": "Next page",
+    "noAccess": "No GitCode repositories are available. Check account and organization access.",
+    "searchPage": "Filter repositories on this page",
+    "importUnavailable": "Repository import is not yet enabled on this instance. No project or task has been created.",
+    "state": {
+      "disconnected": "Not connected",
+      "pending": "Complete authorization on GitCode, then refresh.",
+      "connected": "Connected",
+      "reauthorize": "Authorization expired or unavailable. Connect again."
+    },
+    "manageConnection": "Manage connection",
+    "branch": "Branch",
+    "chooseBranch": "Choose a branch",
+    "optionalBranch": "Branch: {{branch}} · Change branch (optional)",
+    "token": "Personal access token",
+    "tokenInstructions": "Create a token with repository read access on GitCode, then enter it here once. It is encrypted for your cloud account and never stored in projects.",
+    "confirmConnection": "Connect account"
   }
 }

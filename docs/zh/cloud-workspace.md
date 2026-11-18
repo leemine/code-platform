@@ -106,3 +106,29 @@ Codex 会话切换权限在下一轮前生效：平台重连自有客户端并�
 部署支持见[证书生命周期](../../deploy/tls/README.md)：新入口使用Caddy自动签发/续期/加载，内部账号代理持久化独立CA并向Gateway分发根公钥。既有nginx证书副本可使用受信部署工具进行证书对校验、原子发布、reload与在线指纹核验、失败回滚。提供每5分钟systemd检查和到期/失败/监控停摆指标规则；实际通知须接入部署自己的告警接收端。
 
 只有同一网络命名空间内的账号回环上游可以使用HTTP；跨主机继续HTTPS验证。证书轮换不改变账号session和逐请求/投递校验。模板不自动安装到宿主或承诺跨节点部署已验收；有效期及信任错误保持拒绝，不关闭TLS验证。
+
+## GitHub 云端项目环境
+
+Code 输入栏保留“本地目录 | Local/Cloud | 云端操作”。切换 Cloud 仅切换选择；点击具体操作才使用现有云账号登录和连接。选择“创建云端环境”会打开 GitHub 连接、账号、仓库、分支及名称表单。代码准备到该账号已有的运行实例中，同一账号可准备多个独立项目目录；不会为每个项目分配新容器。准备就绪后点击“使用此环境”选中项目，发送任务仍走原会话入口。原会话的项目绑定不随新项目选择变化。
+
+Gateway 使用未修改的官方 GitHub CLI：`gh auth login --hostname github.com --git-protocol https --web --skip-ssh-key --insecure-storage`。用户在 GitHub 官方设备授权页输入界面短码并自行确认授权，无需自建 GitHub App、client ID、私钥或公网回调。所获权限由 GitHub CLI 的官方授权页说明；本功能仅用于读取仓库和检出代码，不推送修改。参考 [gh auth login](https://cli.github.com/manual/gh_auth_login)。
+
+Linux amd64 部署镜像构建前，将 GitHub CLI 官方 v2.104.0 release 的 `gh_2.104.0_linux_amd64.tar.gz` 放入显式构建上下文；Dockerfile 校验固定 SHA-256 后安装到 Gateway。其他部署方式可通过 executable 指向管理员安装的官方 gh。
+
+Gateway 必须安装官方 `gh` 并可通过校验证书的 HTTPS 访问 GitHub。可选私有配置 `JIUWENSWARM_PROJECT_GITHUB_CONFIG` 只指定 `root` 和 `executable`，见 `deploy/cloud-workspace/github.example.json`。配置文件权限 0600、根目录 0700；默认使用 Gateway 认证目录下的 `project-github-gh`。连接数据库及现有 Gateway 加密密钥需要持久化到 Gateway 专用卷，不得挂入 AgentServer 或项目目录，也不得包含在镜像中。与旧 App 候选存储分开，部署后重新授权。
+
+每次授权使用独立 `HOME` / `GH_CONFIG_DIR`，清除继承的 GH_TOKEN/GITHUB_TOKEN、代理和 Git 配置，不借用宿主机登录。`--insecure-storage` 仅让官方 CLI 将凭据写入临时私有目录，完成后加密保存并立即清理明文；进程重启清理未完成授权。按云账号权威、主体和执行目标隔离连接，账号不能指定另一用户的路径。浏览器只得到短期用户码，不得到 token 或配置文件。云账号登录和 GitHub 授权是两个不同服务的登录，沿用现有账号界面。断开连接删除本服务保存的凭据；如需撤销 GitHub 侧授权，用户在 GitHub Settings / Applications 中撤销 GitHub CLI。临时网络或限流失败不会清除已保存连接。
+
+准备固定第一次解析的 commit，传输采用分块和 SHA-256 校验，断线后恢复原 operation_id 和目标回执，不生成重复项目或覆盖已有目录。同名/同目录冲突明确失败。Git fetch 使用有界重试和账号私有缓存；发布前重新校验 GitHub 权限，每个账号请求及结果交付仍通过原实时权限校验。
+
+当前准备范围是 Git 代码、分支和历史。LFS 指针保持原样，不自动下载 LFS 内容、不展开子模块、不运行仓库钩子、不安装依赖、不创建 Session/Turn，也不配置或调用模型。“就绪”表示代码工作区已准备；依赖状态仍未知。目标 AgentServer 必须部署支持 `project.import` 的同一候选，旧目标只允许浏览 GitHub 来源，准备按钮禁用。待发布包或 CLI 不可用时的界面验证不能替代真实授权、选仓、检出和故障恢复验收。
+
+### 使用 GitCode 准备云端项目
+
+在 Code 模式的三段式入口选择“云端”，打开右侧“创建云端环境”，将代码托管平台设为 GitCode。点击“连接 GitCode”打开官方令牌创建页，创建具有所需仓库读取权限的个人访问令牌，在本地弹窗填写一次并确认连接，然后选择账户、仓库、分支及环境名称，点击“准备环境”。令牌按当前云账号加密保存，不写入项目；无需注册 OAuth 应用。原 GitHub 官方 CLI 登录入口继续保留。
+
+准备完成后点击“使用此环境”选择云端项目；不会自动配置模型或启动会话。准备过程固定原始提交，失败重试沿用原回执，已有同名目录不会被覆盖。GitCode 与 GitHub 的连接、缓存和准备来源分别隔离。工作区就绪不代表依赖已安装、LFS 内容已下载或运行状态已恢复。
+
+关闭 Gateway 会先中断并等待在途 Git 下载退出，再释放私有凭据存储。检出结束到发布之间连接发生变更时，本次准备不会继续发布；更换 GitCode 令牌失败保留原连接，主动断开则不会恢复。
+
+关闭创建弹窗后可重新打开并恢复原准备操作；登录过期后的已有环境选择继续回到环境列表。
