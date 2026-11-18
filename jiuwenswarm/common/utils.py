@@ -1077,6 +1077,22 @@ def cleanup_stale_openjiuwen_descs() -> None:
                 ) from exc
 
 
+def _initialize_account_instance_config(template: Path, config: Path) -> bool:
+    """Seed the account's initial provider choices in the first atomic config write."""
+    from jiuwenswarm.common.config import config_write_lock, dump_yaml_round_trip, load_yaml_round_trip
+
+    with config_write_lock(config_path=config):
+        if config.exists():
+            return False
+        data = load_yaml_round_trip(template)
+        team = data["modes"]["team"]["jiuwen_team"]
+        agents = team["external_cli_agents"]
+        configured = {agent["cli_agent"] if isinstance(agent, dict) else agent for agent in agents}
+        agents.extend(agent for agent in ("codex", "claude") if agent not in configured)
+        dump_yaml_round_trip(config, data)
+    return True
+
+
 def prepare_workspace(
     overwrite: bool = True,
     preferred_language: Optional[str] = None,
@@ -1107,7 +1123,8 @@ def prepare_workspace(
     config_dest_dir.mkdir(parents=True, exist_ok=True)
     config_yaml_dest = config_dest_dir / "config.yaml"
 
-    config_initialized = overwrite or not config_yaml_dest.exists()
+    config_missing = not config_yaml_dest.exists()
+    config_initialized = overwrite or config_missing
     if config_initialized:
         with TrackCopyDiff(
             dest=config_yaml_dest,
@@ -1115,7 +1132,10 @@ def prepare_workspace(
             cumulative=cumulative_diff,
             overwrite=overwrite,
         ):
-            shutil.copy2(config_yaml_src, config_yaml_dest)
+            if config_missing and os.environ.get("CODE_PLATFORM_ROLE") == "account-instance":
+                config_initialized = _initialize_account_instance_config(config_yaml_src, config_yaml_dest)
+            else:
+                shutil.copy2(config_yaml_src, config_yaml_dest)
 
     resolved_lang = _resolve_preferred_language(config_yaml_dest, preferred_language)
 
