@@ -117,6 +117,9 @@ jobs:
                      tests/unit_tests/test_model_vendor_registry.py
                      tests/unit_tests/test_model_resource_fixes.py
                      tests/unit_tests/cloud_workspace
+                     tests/unit_tests/server/test_project_repository.py
+                     tests/unit_tests/agentserver/test_front_phase1.py
+                     tests/unit_tests/gateway/test_e2a_proxy.py
                      tests/unit_tests/server/test_workspace_file_boundary.py
                      tests/unit_tests/server/test_project_workspace.py
                      tests/unit_tests/gateway/test_workspace_locations.py
@@ -151,6 +154,7 @@ jobs:
       - name: Test original history and approval UI
         run: |
           npm run test:local-cloud-account
+          npm run test:cloud-environment
           npm run test:code-workspace
           npm run test:work-mode-storage
           npm run test:cloud-workspace

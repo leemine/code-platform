@@ -12,6 +12,7 @@ export type ProjectGitSnapshot = {
 };
 
 export type ProjectInfo = {
+  repository_source?: { provider?: 'github' | 'gitcode'; full_name: string; branch: string; commit: string; operation_id: string };
   project_id: string;
   name: string;
   project_dir: string;

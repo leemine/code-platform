@@ -28,9 +28,11 @@ CONTROL_PROJECT_METHODS = frozenset(
         ReqMethod.PROJECT_GET_CRON_SESSIONS.value,
         ReqMethod.PROJECT_CRON_RESOLVE_BINDING.value,
         ReqMethod.PROJECT_LIST.value,
+        ReqMethod.PROJECT_IMPORT.value,
     }
 )
-# Project create/rename/pin and all git operations stay on the execution plane.
+# Ordinary create/rename/pin and interactive Git operations use execution;
+# bounded repository preparation is handled by PROJECT_IMPORT above.
 
 CONTROL_CONFIG_METHODS = frozenset(
     {

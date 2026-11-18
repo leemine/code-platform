@@ -1,3 +1,6 @@
+from gateway.services.project_environments import ENVIRONMENT_METHODS
+from gateway.services.project_github import METHODS
+from gateway.services.project_gitcode import METHODS as GITCODE_METHODS
 import json
 
 import pytest
@@ -83,10 +86,13 @@ async def test_normal_extension_loader_loads_configured_plugin(tmp_path, monkeyp
         def register_method(self, name, handler, **kwargs):
             self.methods[name] = handler
     channel = Channel()
-    loaded[0].bind_web_channel(channel, None)
-    assert set(channel.methods) == {'cloud.environment.ensure', 'cloud.environment.status'}
-    assert loaded[0].accounts is None
-    from gateway.extensions.cloud_workspace.config import CloudConfig
-    loaded[0].config = CloudConfig.load()
-    assert loaded[0].http_routes()[0].path == '/api/v1/auth/organization/register'
-    await loaded[0].shutdown()
+    from types import SimpleNamespace
+    loaded[0].bind_web_channel(channel, SimpleNamespace(require_agent_client=lambda: object()))
+    try:
+        assert set(channel.methods) == {'cloud.environment.ensure', 'cloud.environment.status'} | METHODS | GITCODE_METHODS | ENVIRONMENT_METHODS
+        assert loaded[0].accounts is None
+        from gateway.extensions.cloud_workspace.config import CloudConfig
+        loaded[0].config = CloudConfig.load()
+        assert loaded[0].http_routes()[0].path == '/api/v1/auth/organization/register'
+    finally:
+        await loaded[0].shutdown()

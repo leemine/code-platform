@@ -106,6 +106,7 @@ def project_info_payload(
             "updated_at": 0,
         }
     return {
+        "repository_source": dict(getattr(project, "repository_source", {}) or {}),
         "project_id": project.project_id,
         "name": project.name,
         "project_dir": project.project_dir,

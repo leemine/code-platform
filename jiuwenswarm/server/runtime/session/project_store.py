@@ -143,6 +143,7 @@ class Project:
     # Git 状态快照，由 ProjectGitService 写入，ProjectStore 不主动维护其内容
     # 子字段：enabled/repo_root/initialized_by_jiuwenswarm/detected_at/branch/status/error/is_dirty
     git: dict[str, Any] = field(default_factory=dict)
+    repository_source: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -165,6 +166,7 @@ class Project:
             updated_at=float(d.get("updated_at", 0.0)),
             work_mode=work_mode,
             git=git,
+            repository_source=dict(d.get("repository_source") or {}),
         )
 
 
@@ -941,6 +943,8 @@ def create_project_checked(
     name: str,
     project_dir: str,
     work_mode: str = DEFAULT_WEB_WORK_MODE,
+    *,
+    repository_source: dict[str, Any] | None = None,
 ) -> tuple[Project, bool]:
     """原子创建或恢复项目，同一 work_mode 内检查目录和名称冲突。
 
@@ -1014,6 +1018,7 @@ def create_project_checked(
             created_at=now,
             updated_at=now,
             work_mode=mode,
+            repository_source=dict(repository_source or {}),
         )
         projects.append(proj.to_dict())
         return proj, False

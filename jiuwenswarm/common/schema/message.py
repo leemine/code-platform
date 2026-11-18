@@ -59,6 +59,8 @@ _ensure_req_method("SESSION_ASSETS_REMOVE", "session.assets.remove")
 for _operation in ("READ", "WRITE", "LIST", "MKDIR"):
     _ensure_req_method(f"FILE_WORKSPACE_{_operation}", f"file.workspace.{_operation.lower()}")
 
+_ensure_req_method("PROJECT_IMPORT", "project.import")
+
 __all__ = [
     "PROMPT_SUGGESTION_READY_EVENT",
     "SESSION_REQUEST_COMPLETED_EVENT",

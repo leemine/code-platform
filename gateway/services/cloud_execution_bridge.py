@@ -20,6 +20,10 @@ from jiuwenswarm.data_sync.transport import _FixedEndpointConnect
 from gateway.services.cloud_resource_address import CloudAddresses
 
 logger = logging.getLogger(__name__)
+from gateway.services.project_github import METHODS as GITHUB_METHODS
+from gateway.services.project_gitcode import METHODS as GITCODE_METHODS
+from gateway.services.project_environments import ENVIRONMENT_METHODS
+
 PATH = "/api/v1/data-sync/ws"
 _READ_GLOBAL = {"config.get", "models.list", "commands.list", "skills.list", "project.list", "session.list"}
 
@@ -127,7 +131,7 @@ class CloudExecutionBridge:
                         # its registered extension methods (for example command.goal).
                         stage = "address_" + method
                         params = addresses.params(data["params"])
-                        if method not in _READ_GLOBAL | {"session.create"} and not any(
+                        if method not in _READ_GLOBAL | GITHUB_METHODS | GITCODE_METHODS | ENVIRONMENT_METHODS | {"session.create"} and not any(
                                 params.get(key) for key in ("session_id", "project_id", "session_ids", "project_ids")):
                             raise ValueError("cloud resource selector required")
                         if method == "session.create" and not params.get("project_id"):

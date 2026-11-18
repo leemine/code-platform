@@ -5639,7 +5639,8 @@
       "NEW": "尚未创建",
       "ALLOCATED": "已创建，按需连接",
       "READY": "已连接"
-    }
+    },
+    "noEnvironments": "尚无已准备的云端环境，请先创建。"
   },
   "localCloudAccount": {
     "title": "云账号",
@@ -5656,5 +5657,135 @@
     "invalidRegistrationUsername": "用户名须为 3–32 位，以字母或数字开头，可包含字母、数字、点、下划线和连字符。",
     "invalidRegistrationPassword": "密码须为 8–128 个字符。",
     "continue": "继续云端操作"
+  },
+  "cloudEnvironment": {
+    "create": "创建云端环境",
+    "close": "关闭",
+    "description": "关联 GitHub 或 GitCode，选择仓库与分支，由云端准备工作区。",
+    "name": "环境名称",
+    "retry": "重试连接",
+    "prepare": "准备环境",
+    "prepareUnavailable": "当前云服务尚未开放环境准备。关联和选仓不会创建环境或启动任务。",
+    "state": {
+      "loading": "正在连接云服务…",
+      "connected": "Cloud",
+      "notConnected": "尚未连接云服务，请先登录或配置可用的云服务。",
+      "ambiguous": "有多个云端目标，请先在运行位置中明确选择目标。",
+      "offline": "云服务当前离线，请稍后重试。",
+      "failed": "无法读取云服务，请检查登录和连接后重试。"
+    },
+    "choose": "选择环境",
+    "cancel": "取消",
+    "prepareScope": "检出仓库并检查工作区；不自动安装依赖或启动任务。",
+    "use": "使用此环境",
+    "preparation": {
+      "accepted": "已接受，准备环境中…",
+      "resolving": "正在确认仓库和提交…",
+      "fetching": "正在获取仓库…",
+      "fetching_assets": "正在获取 Git LFS 大文件…",
+      "transferring_assets": "正在传输大文件到目标实例…",
+      "transferring": "正在传输到目标实例…",
+      "verifying": "正在检出并检查工作区…",
+      "ready": "仓库与工作区已就绪。依赖尚未验证；选择后点击发送才会启动任务。",
+      "failed": "准备失败，可重试。",
+      "interrupted": "连接中断或结果未确认，可重试查询并继续原操作。"
+    },
+    "retryPrepare": "重试准备",
+    "reselect": "重新选择",
+    "errorCode": {
+      "GIT_INCOMPLETE_HISTORY": "仓库历史尚未完整获取，请重试；环境未就绪。",
+      "GIT_LFS_NOT_SUPPORTED": "该仓库包含 Git LFS 文件，当前尚不支持完整获取这些资产；环境未就绪，请选择不含 LFS 的分支或等待 LFS 支持。",
+      "GITHUB_RATE_LIMITED": "GitHub 请求额度暂时用尽，请稍后重试；无需重新授权。已下载内容会保留。",
+      "GIT_LFS_UNAVAILABLE": "执行环境尚未安装 Git LFS，请联系部署者安装后重试。",
+      "GIT_LFS_HASH_MISMATCH": "大文件校验失败，环境未就绪；重试将重新校验并补齐文件。",
+      "GIT_LFS_OBJECT_INCOMPLETE": "大文件尚未完整下载，请重试补齐。",
+      "GIT_LFS_SIZE_LIMIT": "大文件总量超过当前环境容量限制，环境未就绪。",
+      "GIT_LFS_OBJECT_UNAVAILABLE": "准备失败，请重试。",
+      "GIT_LFS_UNSUPPORTED_EMPTY_POINTER": "该仓库含无法保持原 Git 内容的空 LFS 指针，环境未就绪；需仓库维护者将其修正为普通空文件。",
+      "GITCODE_RATE_LIMITED": "GitCode 请求额度暂时用尽，请稍后重试。",
+      "GITCODE_REAUTHORIZE": "GitCode 授权已过期，请重新连接。",
+      "GITCODE_ACCESS_DENIED": "GitCode 仓库访问被拒绝，请检查权限。",
+      "GITCODE_UPSTREAM_UNAVAILABLE": "暂时无法连接 GitCode，请稍后重试。"
+    },
+    "provider": "代码托管平台"
+  },
+  "projectGitHub": {
+    "devicePending": "等待 GitHub 授权，完成后自动更新。",
+    "deviceInstructions": "打开 GitHub 授权页面，输入以下验证码：",
+    "deviceWaiting": "正在等待你在 GitHub 完成授权。验证码会过期，请勿分享给他人。",
+    "deviceReason": {
+      "denied": "你已取消 GitHub 授权，可以重新连接。",
+      "expired": "验证码已过期，请重新连接。",
+      "interrupted": "连接结果未确认，请重新连接。",
+      "disabled": "服务方尚未启用 GitHub 设备授权。",
+      "failed": "GitHub 授权未完成，请重新连接。"
+    },
+    "title": "GitHub 仓库",
+    "loading": "正在加载…",
+    "failed": "加载失败，请检查连接或授权后重试。",
+    "unconfigured": "GitHub 登录组件暂不可用，请联系管理员。",
+    "refresh": "刷新",
+    "connect": "连接 GitHub",
+    "authorize": "前往 GitHub 授权",
+    "configure": "配置仓库访问权限",
+    "disconnect": "从 Swarm 断开连接",
+    "account": "GitHub 账户",
+    "choose": "请选择…",
+    "previous": "上一页",
+    "next": "下一页",
+    "noAccess": "暂无可访问的 GitHub 仓库，请检查账号和组织授权。",
+    "searchPage": "筛选本页仓库",
+    "importUnavailable": "此实例尚未启用仓库导入，未创建项目或任务。",
+    "state": {
+      "disconnected": "未连接",
+      "pending": "请在 GitHub 完成授权后刷新。",
+      "connected": "已连接",
+      "reauthorize": "授权已过期或不可用，请重新连接。"
+    },
+    "manageConnection": "管理连接",
+    "branch": "分支",
+    "chooseBranch": "选择分支",
+    "optionalBranch": "分支：{{branch}} · 更改分支（可选）"
+  },
+  "projectGitCode": {
+    "devicePending": "等待 GitCode 授权，完成后自动更新。",
+    "deviceInstructions": "打开 GitCode 授权页面，输入以下验证码：",
+    "deviceWaiting": "正在等待你在 GitCode 完成授权。验证码会过期，请勿分享给他人。",
+    "deviceReason": {
+      "denied": "你已取消 GitCode 授权，可以重新连接。",
+      "expired": "验证码已过期，请重新连接。",
+      "interrupted": "连接结果未确认，请重新连接。",
+      "disabled": "服务方尚未启用 GitCode 设备授权。",
+      "failed": "GitCode 授权未完成，请重新连接。"
+    },
+    "title": "GitCode 仓库",
+    "loading": "正在加载…",
+    "failed": "加载失败，请检查连接或授权后重试。",
+    "unconfigured": "GitCode 登录组件暂不可用，请联系管理员。",
+    "refresh": "刷新",
+    "connect": "连接 GitCode",
+    "authorize": "打开 GitCode 令牌页面",
+    "configure": "配置仓库访问权限",
+    "disconnect": "从 Swarm 断开连接",
+    "account": "GitCode 账户",
+    "choose": "请选择…",
+    "previous": "上一页",
+    "next": "下一页",
+    "noAccess": "暂无可访问的 GitCode 仓库，请检查账号和组织授权。",
+    "searchPage": "筛选本页仓库",
+    "importUnavailable": "此实例尚未启用仓库导入，未创建项目或任务。",
+    "state": {
+      "disconnected": "未连接",
+      "pending": "请在 GitCode 完成授权后刷新。",
+      "connected": "已连接",
+      "reauthorize": "授权已过期或不可用，请重新连接。"
+    },
+    "manageConnection": "管理连接",
+    "branch": "分支",
+    "chooseBranch": "选择分支",
+    "optionalBranch": "分支：{{branch}} · 更改分支（可选）",
+    "token": "个人访问令牌",
+    "tokenInstructions": "在 GitCode 官方页面创建可读取仓库的令牌，在此填写一次。令牌按当前云账号加密保存，不写入项目。",
+    "confirmConnection": "确认连接"
   }
 }

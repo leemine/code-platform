@@ -24,7 +24,17 @@ LABEL io.code-platform.role="account-authority"
 ENTRYPOINT ["python", "-m", "gateway.auth.account_http"]
 CMD ["--help"]
 
+# Place the official release archive in the explicit build context (no credentials).
+FROM runtime AS github_cli
+USER root
+COPY gh_2.104.0_linux_amd64.tar.gz /tmp/gh.tar.gz
+RUN echo "98cb101ad87dbbd3f6b2f2bfcbd43197ccd07643140121d8a9cfaa91eadbc24e  /tmp/gh.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/gh.tar.gz -C /tmp gh_2.104.0_linux_amd64/bin/gh \
+    && install -m 0755 /tmp/gh_2.104.0_linux_amd64/bin/gh /usr/local/bin/gh \
+    && rm -rf /tmp/gh.tar.gz /tmp/gh_2.104.0_linux_amd64
+
 FROM runtime AS gateway
+COPY --from=github_cli /usr/local/bin/gh /usr/local/bin/gh
 LABEL io.code-platform.role="gateway"
 ENTRYPOINT ["jiuwenswarm-gateway"]
 CMD ["--host", "0.0.0.0", "--port", "19000"]

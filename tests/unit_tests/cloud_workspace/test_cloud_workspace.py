@@ -1,3 +1,6 @@
+from gateway.services.project_environments import ENVIRONMENT_METHODS
+from gateway.services.project_github import METHODS
+from gateway.services.project_gitcode import METHODS as GITCODE_METHODS
 import asyncio
 import hashlib
 import hmac
@@ -267,32 +270,35 @@ async def test_plugin_uses_original_http_contributions_and_leaves_session_option
     registry = ExtensionRegistry(None, {}, None); registry.register_application_plugin(plugin)
     app = FastAPI(); mount_application_plugin_http_routes(app, registry)
     methods = {"session.execution.options": object()}; original = methods["session.execution.options"]
-    plugin.bind_web_channel(SimpleNamespace(register_method=lambda name, handler, **kw: methods.update({name: handler})), None)
-    assert methods["session.execution.options"] is original and len(methods) == 3
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://127.0.0.1") as client:
-        base = config.api_prefix; headers = {"Origin": "https://127.0.0.1"}
-        body = {"username": "http-user", "password": "long-test-password"}
-        assert (await client.post(base + "/register", json=body, headers={"Origin": "https://attacker.invalid"})).status_code == 401
-        assert (await client.post(base + "/register", json=body, headers=headers)).status_code == 201
-        response = await client.post(base + "/login", json=body, headers=headers)
-        assert response.status_code == 200
-        cookie = response.headers["set-cookie"].lower()
-        assert all(value in cookie for value in ("secure", "httponly", "samesite=strict"))
-        status = await client.get(base + "/status")
-        first = status.json()
-        assert status.headers["cache-control"] == "no-store"
-        assert first["actor_id"] == first["subject_id"]
-        assert len(first["session_revision"]) == 24
-        assert "token" not in first
-        assert (await client.get(base + "/status")).json()["session_revision"] == first["session_revision"]
-        assert (await client.post(base + "/login", json=body, headers=headers)).status_code == 200
-        second = (await client.get(base + "/status")).json()
-        assert second["actor_id"] == first["actor_id"]
-        assert second["session_revision"] != first["session_revision"]
-        assert (await client.post(base + "/environment/ensure", json={"user_id": "forged"}, headers=headers)).status_code == 400
-        assert (await client.get(base + "/environment")).status_code == 200
-        assert (await client.post(base + "/logout", json={}, headers=headers)).status_code == 200
-        assert (await client.get(base + "/status")).json()["authenticated"] is False
+    plugin.bind_web_channel(SimpleNamespace(register_method=lambda name, handler, **kw: methods.update({name: handler})), SimpleNamespace(require_agent_client=lambda: object()))
+    try:
+        assert methods["session.execution.options"] is original and set(methods) == {"session.execution.options", "cloud.environment.ensure", "cloud.environment.status"} | METHODS | GITCODE_METHODS | ENVIRONMENT_METHODS
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://127.0.0.1") as client:
+            base = config.api_prefix; headers = {"Origin": "https://127.0.0.1"}
+            body = {"username": "http-user", "password": "long-test-password"}
+            assert (await client.post(base + "/register", json=body, headers={"Origin": "https://attacker.invalid"})).status_code == 401
+            assert (await client.post(base + "/register", json=body, headers=headers)).status_code == 201
+            response = await client.post(base + "/login", json=body, headers=headers)
+            assert response.status_code == 200
+            cookie = response.headers["set-cookie"].lower()
+            assert all(value in cookie for value in ("secure", "httponly", "samesite=strict"))
+            status = await client.get(base + "/status")
+            first = status.json()
+            assert status.headers["cache-control"] == "no-store"
+            assert first["actor_id"] == first["subject_id"]
+            assert len(first["session_revision"]) == 24
+            assert "token" not in first
+            assert (await client.get(base + "/status")).json()["session_revision"] == first["session_revision"]
+            assert (await client.post(base + "/login", json=body, headers=headers)).status_code == 200
+            second = (await client.get(base + "/status")).json()
+            assert second["actor_id"] == first["actor_id"]
+            assert second["session_revision"] != first["session_revision"]
+            assert (await client.post(base + "/environment/ensure", json={"user_id": "forged"}, headers=headers)).status_code == 400
+            assert (await client.get(base + "/environment")).status_code == 200
+            assert (await client.post(base + "/logout", json={}, headers=headers)).status_code == 200
+            assert (await client.get(base + "/status")).json()["authenticated"] is False
+    finally:
+        await plugin.shutdown()
 
 @pytest.mark.asyncio
 async def test_writer_and_symlink_boundaries(config, tmp_path):

@@ -1,3 +1,6 @@
+import { CloudEnvironmentDialog } from './CloudEnvironmentDialog';
+import { cloudProjectRequest } from '../../features/cloudWorkspace/projectEnvironmentClient';
+import { localCloudAccountRequest } from '../../features/cloudWorkspace/localCloudAccountClient';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Cloud, Monitor, Folder, FolderPlus, Plus, Server, ChevronDown, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +19,7 @@ type Location = 'local' | 'cloud';
 type CloudAction = 'directory' | 'folder' | 'environment' | 'environments';
 type Catalog = { kind: Location; switch_mode: 'entry_navigation'; entries: { kind: Location; current: boolean; url: string | null }[] };
 type Page = { path: string; work_mode: 'code'; items: { name: string; path: string }[]; next_offset: number | null };
-type Environment = { environment_id: string; state: string };
+
 
 export function parseWorkspaceCatalog(value: Catalog): Catalog {
   if (!value || !['local', 'cloud'].includes(value.kind) || value.switch_mode !== 'entry_navigation' ||
@@ -51,7 +54,8 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [location, setLocation] = useState<Location | null>(null);
   const chosen = useRef(false);
-  const [environment, setEnvironment] = useState<Environment | null>(null);
+  const [environments, setEnvironments] = useState<ProjectInfo[]>([]);
+  const [selectedEnvironment, setSelectedEnvironment] = useState<ProjectInfo | null>(null);
   const [menu, setMenu] = useState<'location' | 'cloud' | null>(null);
   const [dialog, setDialog] = useState<CloudAction | null>(null);
   const remoteProject = useWorkspaceStore(s => s.cloudProject);
@@ -89,11 +93,11 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
   useEffect(() => {
     const invalidate = () => {
       generation.current++; working.current = false;
-      setCatalog(null); setEnvironment(null); setMenu(null); setDialog(null); setPage(null); setBusy(false); setMutating(false);
+      setCatalog(null); setEnvironments([]); setSelectedEnvironment(null); setMenu(null); setDialog(null); setPage(null); setBusy(false); setMutating(false);
     };
     const localAuth = onLocalCloudAccountChange(() => {
       generation.current++; working.current = false; setBusy(false); setMutating(false);
-      setEnvironment(null); setRemoteProject(null); setDialog(null); setPage(null); setError('');
+      setEnvironments([]); setSelectedEnvironment(null); setRemoteProject(null); setDialog(null); setPage(null); setError('');
     });
     const auth = onOrganizationCredentialChange(() => { chosen.current = false; setLocation(null); invalidate(); setReload(n => n + 1); });
     const connection = webClient.onStateChange(state => {
@@ -112,10 +116,9 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     }).catch(reason => { if (epoch === generation.current) setError(failure(reason)); });
     return () => { generation.current++; };
   }, [reload, enabled]);
-  async function workspaceRequest<T>(operation: 'environment' | 'ensure' | 'list' | 'mkdir' | 'open', params: Record<string, unknown> = {}): Promise<T> {
+  async function workspaceRequest<T>(operation: 'list' | 'mkdir' | 'open', params: Record<string, unknown> = {}): Promise<T> {
     if (remote) return localCloudWorkspaceRequest<T>(operation, params);
     if (catalog?.kind !== 'cloud') throw new Error('CLOUD_REQUIRED');
-    if (operation === 'environment' || operation === 'ensure') return webRequest<T>(`cloud.environment.${operation === 'environment' ? 'status' : 'ensure'}`, {}, { timeoutMs: 150000 });
     return webRequest<T>(`project.workspace.${operation}`, { ...params, work_mode: 'code' });
   }
   function requestLogin(reason: unknown, retry: () => void): boolean {
@@ -148,9 +151,11 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     const epoch = generation.current;
     try {
       if (operation === 'environment') {
-        const row = await workspaceRequest<Environment>('ensure');
-        if (!row?.environment_id || row.state !== 'READY') throw new Error('NOT_READY');
-        if (epoch === generation.current) { setEnvironment(row); setDialog(null); }
+        if (!selectedEnvironment) return;
+        const value = await cloudProjectRequest<{ projects: ProjectInfo[] }>('project.environment.list', {}, remote);
+        const project = value.projects.find(row => row.project_id === selectedEnvironment.project_id);
+        if (!project) throw new Error('INVALID_PROJECT');
+        if (epoch === generation.current) chooseProject(project);
       } else if (operation === 'mkdir') {
         const result = await workspaceRequest<{ path: string; created: boolean }>('mkdir', { path, name: folder.trim() });
         const expected = [path, folder.trim()].filter(Boolean).join('/');
@@ -168,7 +173,7 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
           setDialog(null);
         }
       }
-    } catch (reason) { if (epoch === generation.current) { if (!requestLogin(reason, () => void perform(operation === 'environment' ? 'environment' : 'directory'))) setError(failure(reason, true)); setPage(null); } }
+    } catch (reason) { if (epoch === generation.current) { if (!requestLogin(reason, () => void perform(operation === 'environment' ? 'environments' : 'directory'))) setError(failure(reason, true)); setPage(null); } }
     finally { if (epoch === generation.current) { working.current = false; setBusy(false); setMutating(false); } }
   }
   function switchLocation(kind: Location) {
@@ -184,17 +189,37 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     currentAction.current = action;
     setMenu(null); setError('');
     if (!catalog) { setError(t('codeWorkspace.entryUnavailable')); setReload(n => n + 1); return; }
-    if (action === 'environment') { setDialog('environment'); return; }
+    if (action === 'environment') {
+      const expectedIntent = intent.current;
+      const expectedGeneration = generation.current;
+      if (remote) {
+        try {
+          const identity = await localCloudAccountRequest('status');
+          if (expectedIntent !== intent.current || expectedGeneration !== generation.current) return;
+          if (!identity.authenticated) {
+            requestLogin({ code: 'UNAUTHORIZED' }, () => void perform(action));
+            return;
+          }
+        } catch (reason) { setError(failure(reason)); return; }
+      }
+      setDialog('environment'); return;
+    }
     if (action !== 'environments') { showDirectory(action, preserveDraft); return; }
     working.current = true; setBusy(true); setDialog('environments');
     const epoch = generation.current;
     try {
-      const value = await workspaceRequest<Environment>('environment');
-      if (!value?.environment_id || !['NEW', 'ALLOCATED', 'READY'].includes(value.state)) throw new Error('INVALID_ENVIRONMENT');
-      if (epoch === generation.current) setEnvironment(value);
+      const value = await cloudProjectRequest<{ projects: ProjectInfo[] }>('project.environment.list', {}, remote);
+      if (!Array.isArray(value.projects)) throw new Error('INVALID_ENVIRONMENT');
+      if (epoch === generation.current) { setEnvironments(value.projects); setSelectedEnvironment(null); }
     } catch (reason) {
       if (epoch === generation.current && !requestLogin(reason, () => void perform(action))) setError(failure(reason));
     } finally { if (epoch === generation.current) { working.current = false; setBusy(false); setMutating(false); } }
+  }
+  function chooseProject(project: ProjectInfo) {
+    if (!project.project_id || project.work_mode !== 'code' || !project.project_dir || remote && !isCloudResource(project.project_id)) throw new Error('INVALID_PROJECT');
+    if (remote) setRemoteProject(project);
+    else { useWorkspaceStore.getState().setSelectedProject(project); void useWorkspaceStore.getState().loadProjects(); }
+    setDialog(null);
   }
   function cancelDialog() {
     if (mutating) return;
@@ -218,7 +243,7 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     </DropdownMenu>
     {selectedLocation === 'cloud' && <DropdownMenu open={menu === 'cloud'} onOpenChange={open => setMenu(open ? 'cloud' : null)}>
       <DropdownMenuTrigger className="chat-work-select__trigger" disabled={disabled || busy} data-testid="chat-panel-code-cloud-trigger" data-tooltip={cloudProject?.project_dir}>
-        <Server size={14} /><span>{environment ? t('codeWorkspace.defaultEnvironment') : t('codeWorkspace.chooseCloudContext')}{cloudProject && !cloudProject.is_default ? ` · ${cloudProject.name}` : ''}</span><ChevronDown size={12} />
+        <Server size={14} /><span>{t('codeWorkspace.chooseCloudContext')}{cloudProject && !cloudProject.is_default ? ` · ${cloudProject.name}` : ''}</span><ChevronDown size={12} />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" data-testid="chat-panel-code-cloud-menu">
         <DropdownMenuItem onSelect={() => void perform('environments')} data-testid="chat-panel-code-cloud-environment">{t('codeWorkspace.chooseEnvironment')}</DropdownMenuItem>
@@ -229,10 +254,17 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
     </DropdownMenu>}
     {catalog?.kind === 'cloud' && selectedLocation === 'local' && <span className="code-workspace-error" data-testid="chat-panel-code-local-client-required">{t('codeWorkspace.localClientRequired')}</span>}
     {error && !dialog && <span role="alert" className="code-workspace-error" data-testid="chat-panel-code-workspace-error">{error}</span>}
-    <Dialog open={Boolean(dialog)} titleId={titleId} onCancel={cancelDialog} closeDisabled={mutating} className="code-workspace-dialog">
+    <CloudEnvironmentDialog open={dialog === 'environment'} mode="agent.code.normal" remote={remote} onClose={cancelDialog} onPrepared={project => chooseProject(project)} />
+    <Dialog open={Boolean(dialog) && dialog !== 'environment'} titleId={titleId} onCancel={cancelDialog} closeDisabled={mutating} className="code-workspace-dialog">
       <section data-testid="chat-panel-code-workspace-dialog" data-variant={dialog || ''}>
         <h2 id={titleId} data-testid="chat-panel-code-workspace-title">{t(dialog === 'environments' ? 'codeWorkspace.chooseEnvironment' : dialog === 'environment' ? 'codeWorkspace.createEnvironment' : dialog === 'folder' ? 'codeWorkspace.newFolder' : 'codeWorkspace.chooseDirectory')}</h2>
-        {dialog === 'environments' ? <div data-testid="chat-panel-code-environment-list">{environment && <p data-testid="chat-panel-code-environment-item">{t('codeWorkspace.defaultEnvironment')} · {t(`codeWorkspace.environmentState.${environment.state}`)}</p>}</div> : dialog === 'environment' ? <p data-testid="chat-panel-code-environment-description">{t('codeWorkspace.environmentDescription')}</p> : <>
+        {dialog === 'environments' ? <div data-testid="chat-panel-code-environment-list">
+          {environments.map(project => <button type="button" key={project.project_id} className="chat-work-select__option" aria-pressed={selectedEnvironment?.project_id === project.project_id}
+            onClick={() => setSelectedEnvironment(project)} data-testid="chat-panel-code-environment-item" data-variant={project.project_id}>
+            {project.name} · {project.repository_source?.full_name} · {project.repository_source?.branch}
+          </button>)}
+          {!busy && environments.length === 0 && <p data-testid="chat-panel-code-environment-empty">{t('codeWorkspace.noEnvironments')}</p>}
+        </div> : <>
           <div className="code-workspace-path" data-testid="chat-panel-code-directory-path">Cloud / Code / {path}</div>
           <div className="code-workspace-actions">
             <Button variant="quiet" disabled={busy} onClick={() => void list(path.split('/').slice(0, -1).join('/'))} data-testid="chat-panel-code-directory-up">{t('codeWorkspace.up')}</Button>
@@ -252,7 +284,7 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
         {error && <p role="alert" className="code-workspace-error" data-testid="chat-panel-code-workspace-dialog-error">{error}</p>}
         <div className="code-workspace-actions">
           <Button variant="quiet" disabled={mutating} onClick={cancelDialog} data-testid="chat-panel-code-workspace-cancel">{t('codeWorkspace.cancel')}</Button>
-          <Button variant="primary" disabled={busy || (dialog === 'folder' ? !page || !folder.trim() : dialog === 'directory' ? (!selected && !path) || Boolean(error) : dialog === 'environments' ? !environment || Boolean(error) : false)}
+          <Button variant="primary" disabled={busy || (dialog === 'folder' ? !page || !folder.trim() : dialog === 'directory' ? (!selected && !path) || Boolean(error) : dialog === 'environments' ? !selectedEnvironment || Boolean(error) : false)}
             onClick={() => void mutate(dialog === 'environment' || dialog === 'environments' ? 'environment' : dialog === 'folder' ? 'mkdir' : 'open')} data-testid="chat-panel-code-workspace-confirm">
             {t(dialog === 'environments' ? 'codeWorkspace.selectEnvironment' : dialog === 'directory' ? 'codeWorkspace.open' : 'codeWorkspace.create')}
           </Button>
