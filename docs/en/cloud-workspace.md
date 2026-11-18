@@ -90,6 +90,8 @@ After selecting and opening a cloud directory, create a cloud session from the l
 
 An account cloud instance enables Codex and Claude Code when it first creates its configuration. New cloud sessions can select the installed providers. Existing cloud and local configurations retain their settings, including when a cloud instance is rebuilt with the same data volume. Running Codex requires an OpenAI Responses-compatible model, and Claude Code requires an Anthropic Messages-compatible model.
 
+Adjust your account switches under Settings → Agents → Third-party agents in the cloud web app. The status comes from your cloud instance. Use the existing switch to enable a disabled provider. The deployed cloud image supplies the SDKs.
+
 
 The local sidebar uses the same circular avatar and account menu as the cloud UI. Before sign-in, a user icon opens the sign-in dialog. After sign-in, the avatar shows the first two uppercase username characters (for example, CH); click it to view the full username or sign out. Signing out restores the user icon.
 

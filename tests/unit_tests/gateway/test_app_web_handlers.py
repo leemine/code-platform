@@ -162,6 +162,45 @@ async def test_a4p_rpc_rejects_websocket_without_session_route(method) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("provider", "status", "reason"),
+    [({"available": True}, "ok", None),
+     ({"available": False, "reason": "disabled"}, "unavailable", "disabled"),
+     ({"available": False, "reason": "sdk_not_installed"}, "missing", "sdk_not_installed"),
+     (None, "unavailable", None)],
+)
+async def test_cloud_external_cli_detection_reads_bound_worker(monkeypatch, provider, status, reason):
+    from gateway.auth import account_authenticator
+
+    class AgentOSRouterClient:
+        server_ready = True
+
+        async def send_request(self, envelope):
+            assert envelope.method == "config.get"
+            assert envelope.user_id == "cloud-account"
+            assert envelope.params == {}
+            assert not envelope.session_id
+            catalog = [{"id": "codex-direct", **provider}] if provider is not None else []
+            return SimpleNamespace(ok=True, payload={"execution_provider_catalog": json.dumps(catalog)})
+
+    monkeypatch.setattr(AgentOSRouterClient, "__module__", "gateway.extensions.agentos.router_test")
+    monkeypatch.setattr(account_authenticator, "current_account", lambda: object())
+    monkeypatch.setattr(app_web_handlers, "_detect_external_cli_agent",
+                        lambda *_: pytest.fail("cloud settings must not inspect the Gateway"))
+    channel = FakeWebChannel()
+    _register_web_handlers(WebHandlersBindParams(channel=channel, agent_client=AgentOSRouterClient()))
+
+    await channel.methods["external_cli.detect"](
+        object(), "detect-cloud", {"cli_agent": "codex", "cli_path": "/untrusted"}, "draft", "cloud-account"
+    )
+
+    result = channel.responses[-1]
+    assert result["ok"] is True
+    assert result["payload"] == {"cli_agent": "codex", "status": status, "runtime_scope": "cloud",
+                                 **({"reason": reason} if reason else {})}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("cli_agent", "package", "relative"),
     [("claude", "claude_agent_sdk", "_bundled/claude"),
      ("codex", "codex_cli_bin", "bin/codex")],

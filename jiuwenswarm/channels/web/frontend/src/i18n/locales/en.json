@@ -2487,6 +2487,8 @@
       "builtinPathPlaceholder": "Built-in CLI (managed)",
       "installNow": "Install",
       "notInstalledHint": "No SDK detected yet. Click",
+      "cloudSdkMissing": "The cloud instance is missing the SDK",
+      "cloudStatusUnavailable": "Cloud instance status is temporarily unavailable",
       "savedHint": "Saved",
       "detectSucceeded": "Detection passed",
       "editPath": "Edit",

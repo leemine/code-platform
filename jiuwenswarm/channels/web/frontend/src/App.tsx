@@ -2287,14 +2287,7 @@ function AppContent({
     cliPath?: string,
     useBuiltin?: boolean,
   ) => {
-    return request<{
-      cli_agent: ExternalCliAgentKind;
-      status: "ok" | "warning" | "missing" | "unsupported" | "unavailable";
-      path?: string;
-      version?: string;
-      reference_version?: string;
-      message?: string;
-    }>("external_cli.detect", {
+    return request<ExternalCliDetectResult>("external_cli.detect", {
       cli_agent: cliAgent,
       cli_path: cliPath || "",
       use_builtin: useBuiltin ? "true" : "false",
