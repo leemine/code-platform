@@ -30,6 +30,8 @@ NEW→CREATING→ALLOCATED；未知结果→UNKNOWN，清单零匹配不授权�
 
 容器卷准备必须包含私有agent/config/home。数据卷会遮蔽镜像预建目录，HOME=/data/home必须在基础设施启动器导入前存在；已有HOME数据保留，符号链接和宽权限拒绝。单实例关闭应以传输错误唤醒连接等待者，不把资源回收误当作取消业务HTTP任务；进程关闭仍保留原取消语义。
 
+原实例策略为账号运行实例注入 `CODE_PLATFORM_ROLE=account-instance`。该角色首次生成账号配置时，在原配置写锁内确认目标文件缺失，从随包模板写入 Codex 和 Claude Code 的初始启用项。配置已存在时，启动、重试及复用原数据卷重建均沿用账号选择，包括明确关闭两项后的空列表。本地角色走原模板。执行器可用性仍受镜像依赖和会话模式约束，执行时按原接口验证所选模型。
+
 - Web/FastAPI 适配层必须保留完整 AuthResult 扩展，通过原 `apply_auth_result_to_ws` 传递请求及回包校验回调。账号模块显式贡献 `routing_user_id`，Web路由优先使用该可信身份；未贡献时沿用旧 IAM 用户名映射，不把所有 IAM UUID 改作工作区标识。
 - 实例 WebSocket 握手拒绝应映射为环境不可用（HTTP503），保留ALLOCATED回执，重试不得重复创建。
 - HTTP插件贡献为可选能力；既有仅贡献WebSocket的插件没有 `http_routes` 方法时仍可装配。元戎代理租户必须匹配部署实际租户，不把任务标签当成租户权限边界。

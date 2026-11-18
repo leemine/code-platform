@@ -488,6 +488,38 @@ def test_prepare_workspace_does_not_copy_legacy_heartbeat_template(
     assert not (workspace_dir / "agent" / "workspace" / "HEARTBEAT.md").exists()
 
 
+def test_prepare_workspace_seeds_cli_agents_only_on_first_cloud_config(tmp_path, monkeypatch):
+    from jiuwenswarm.common.config import dump_yaml_round_trip, load_yaml_round_trip
+
+    local, existing, fresh = (tmp_path / name for name in ("local", "existing", "fresh"))
+
+    def prepare(workspace):
+        utils.prepare_workspace(overwrite=False, workspace_dir=workspace, migrate_config=False)
+        return workspace / "config" / "config.yaml"
+
+    def agents(data):
+        return data["modes"]["team"]["jiuwen_team"]["external_cli_agents"]
+
+    monkeypatch.delenv("CODE_PLATFORM_ROLE", raising=False)
+    local_config = prepare(local)
+    assert agents(load_yaml_round_trip(local_config)) == []
+    existing_config = prepare(existing)
+    saved = load_yaml_round_trip(existing_config)
+    agents(saved).append({"cli_agent": "codex", "cli_path": "/account/bin/codex"})
+    dump_yaml_round_trip(existing_config, saved)
+    existing_bytes = existing_config.read_bytes()
+
+    monkeypatch.setenv("CODE_PLATFORM_ROLE", "account-instance")
+    assert prepare(existing).read_bytes() == existing_bytes
+    cloud_config = prepare(fresh)
+    saved = load_yaml_round_trip(cloud_config)
+    assert agents(saved) == ["codex", "claude"]
+    agents(saved).clear()
+    dump_yaml_round_trip(cloud_config, saved)
+    disabled_bytes = cloud_config.read_bytes()
+    assert prepare(fresh).read_bytes() == disabled_bytes
+
+
 def test_prepare_workspace_copies_rsi_program_dataset_creator(
     tmp_path: Path,
 ) -> None:
