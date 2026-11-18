@@ -25,6 +25,7 @@ type Account = { id: number | string; account: string };
 type Repository = { id: number; full_name: string; default_branch: string };
 type Branch = { name: string; commit: string };
 type Page<T> = { items: T[]; has_more: boolean };
+const GITCODE_TOKEN_URL = 'https://gitcode.com/setting/token-classic/create';
 
 function validateDevice(value: DeviceGrant): DeviceGrant {
   if (
@@ -72,6 +73,8 @@ export function ProjectGitHubConnection({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [authorization, setAuthorization] = useState('');
+  const [chromeOpenFailed, setChromeOpenFailed] = useState(false);
+  const isElectron = window.jiuwenDesktop?.isElectron === true;
   const [device, setDevice] = useState<DeviceGrant | null>(null);
   const [accounts, setAccounts] = useState<Page<Account>>({ items: [], has_more: false });
   const [accountPage, setAccountPage] = useState(1);
@@ -96,6 +99,7 @@ export function ProjectGitHubConnection({
       setToken('');
       setTokenPrompt(false);
       setAuthorization('');
+      setChromeOpenFailed(false);
       setDevice(null);
       clearCatalog();
     };
@@ -237,6 +241,16 @@ export function ProjectGitHubConnection({
         setBranchPage(nextPage);
       }
     });
+  const openInChrome = async () => {
+    const current = generation.current;
+    setChromeOpenFailed(false);
+    try {
+      if (await window.jiuwenDesktop?.openRepositoryAuthorization?.(provider)) return;
+    } catch {
+      // Keep the official link available to open manually.
+    }
+    if (current === generation.current) setChromeOpenFailed(true);
+  };
   useEffect(() => {
     if ((!open && !embedded) || status?.state !== 'pending' || !device || busy || failed) return;
     const timer = window.setTimeout(() => {
@@ -329,13 +343,15 @@ export function ProjectGitHubConnection({
                       clearCatalog();
                       setToken('');
                       setTokenPrompt(true);
-                      setAuthorization('https://gitcode.com/setting/token-classic/create');
-                      window.open('https://gitcode.com/setting/token-classic/create', '_blank', 'noopener,noreferrer');
+                      setAuthorization(GITCODE_TOKEN_URL);
+                      if (isElectron) void openInChrome();
+                      else window.open(GITCODE_TOKEN_URL, '_blank', 'noopener,noreferrer');
                       return;
                     }
                     void run(async (current) => {
                       clearCatalog();
                       setAuthorization('');
+                      setChromeOpenFailed(false);
                       setDevice(null);
                       const next = await request<{ flow: string; device: DeviceGrant }>(
                         'begin',
@@ -419,9 +435,18 @@ export function ProjectGitHubConnection({
                     target="_blank"
                     rel="noopener noreferrer"
                     data-testid={`chat-panel-project-${provider}-authorize`}
+                    onClick={isElectron ? (event) => {
+                      event.preventDefault();
+                      void openInChrome();
+                    } : undefined}
                   >
-                    {label('authorize')}
+                    {isElectron ? t('projectGitHub.openInChrome') : label('authorize')}
                   </a>
+                ) : null}
+                {authorization && chromeOpenFailed ? (
+                  <p role="alert" data-testid={`chat-panel-project-${provider}-chrome-error`}>
+                    {t('projectGitHub.chromeOpenFailed')}
+                  </p>
                 ) : null}
                 <button
                   type="button"

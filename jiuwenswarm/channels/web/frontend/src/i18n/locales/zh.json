@@ -5736,6 +5736,8 @@
     "refresh": "刷新",
     "connect": "连接 GitHub",
     "authorize": "前往 GitHub 授权",
+    "openInChrome": "在 Chrome 中打开",
+    "chromeOpenFailed": "无法打开 Google Chrome。请确认已安装 Chrome，或复制链接后在 Chrome 中打开。",
     "configure": "配置仓库访问权限",
     "disconnect": "从 Swarm 断开连接",
     "account": "GitHub 账户",

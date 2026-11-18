@@ -14,6 +14,7 @@ const { createShareImageExporter } = require('./share_image_export.cjs');
 const { SHARED_BROWSER_PARTITION, panelIdentity, hasLiveLease, evictionCandidates, createTargetHandler } = require('./browser_panels.cjs');
 const { createBrowserDownloadService } = require('./browser_downloads.cjs');
 const { createDownloadBubbleController } = require('./browser_download_bubble.cjs');
+const { openRepositoryAuthorization } = require('./repository_authorization.cjs');
 let macUpdateInProgress = false;
 
 const BACKEND_HOST = '127.0.0.1';
@@ -2499,6 +2500,7 @@ function registerIpcHandlers() {
   registerHandler('desktop:set-close-action', action => (
     process.platform === 'win32' && saveCloseAction(action)
   ));
+  registerHandler('desktop:open-repository-authorization', provider => openRepositoryAuthorization(provider));
   registerHandler('desktop:open-external-url', async url => {
     const hubBase = (
       process.env.SKILLHUB_OAUTH_BASE_URL

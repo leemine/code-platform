@@ -139,6 +139,8 @@ Preparation includes Git code, branches and history. It leaves LFS pointers inta
 
 In Code mode, select Cloud in the three-part workspace control, choose Create cloud environment, and select GitCode as the repository provider. Connect GitCode opens its official personal-token page. Create a token with the required repository read access, enter it once in the local dialog, and select your account, repository, branch, and environment name. Tokens are encrypted for the current cloud account and never written into projects; no OAuth application registration is required. The existing official GitHub CLI login remains available.
 
+In the local Electron app, the GitHub device authorization page and GitCode token page open in the installed Google Chrome. Use the device code shown in the app for GitHub, or return to the app to enter the token created on GitCode. Local and cloud web pages open an authorization tab in the current browser.
+
 After preparation, choose Use this environment to select the cloud project. This does not configure a model or start a session. Retries preserve the original commit and receipt; existing directories are never overwritten. Connections, caches, and preparation sources are isolated by provider. A ready workspace does not imply installed dependencies, downloaded LFS content, or restored process state.
 
 Gateway shutdown interrupts and waits for owned Git downloads before releasing private credential storage. A connection change between checkout and publication blocks that preparation. A failed GitCode token replacement preserves the previous connection; an explicit disconnect prevents restoration.

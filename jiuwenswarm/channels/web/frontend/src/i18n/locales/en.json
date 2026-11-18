@@ -5722,6 +5722,8 @@
     "provider": "Repository provider"
   },
   "projectGitHub": {
+    "openInChrome": "Open in Chrome",
+    "chromeOpenFailed": "Could not open Google Chrome. Check that Chrome is installed, or copy the link and open it in Chrome.",
     "devicePending": "Waiting for GitHub authorization; this updates automatically.",
     "deviceInstructions": "Open the GitHub authorization page and enter this code:",
     "deviceWaiting": "Waiting for you to authorize on GitHub. This code expires; do not share it.",

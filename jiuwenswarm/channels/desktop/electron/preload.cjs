@@ -20,6 +20,7 @@ const desktopApi = Object.freeze({
   getCloseAction: () => invoke('desktop:get-close-action'),
   setCloseAction: action => invoke('desktop:set-close-action', action),
   openExternalUrl: url => invoke('desktop:open-external-url', url),
+  openRepositoryAuthorization: provider => invoke('desktop:open-repository-authorization', provider),
   captureOAuthToken: options => invoke('desktop:capture-oauth-token', options),
   exportShareImage: (sessionId, locale) => invoke('desktop:export-share-image', sessionId, locale),
   onShareImageExportProgress: callback => {

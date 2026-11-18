@@ -174,6 +174,38 @@ test('official gh short code uses only GitHub device URL and cancel clears the a
 
 const choose = async(id,value)=>act(async()=>{const element=find(id);element.value=value;element.dispatchEvent(new dom.window.Event('change',{bubbles:true}));});
 
+test('desktop repository authorization opens Chrome and preserves the device code and token form', async () => {
+ const opened=[];
+ const originalOpen=window.open;
+ window.open=()=>assert.fail('Electron must not open an embedded authorization popup');
+ window.jiuwenDesktop={isElectron:true,openRepositoryAuthorization:async provider=>{
+  opened.push(provider);return opened.length!==2;
+ }};
+ webClient.request=async method=>{
+  if(method==='project.github.begin')return {execution_target:'cloud',flow:'device',device:{
+   attempt_id:'a'.repeat(32),user_code:'ABCD-EFGH',verification_uri:'https://github.com/login/device',expires_at:Date.now()/1000+900,retry_after:10
+  }};
+  return {execution_target:'cloud',configured:true,state:'disconnected',can_import:true};
+ };
+ try {
+  await render({preferredTarget:'cloud'});
+  await click('project-github-connect');
+  await click('project-github-authorize');
+  assert.equal(find('project-github-device-code').textContent,'ABCD-EFGH');
+  await choose('cloud-environment-provider','gitcode');
+  await click('project-gitcode-connect');
+  assert.ok(find('project-gitcode-chrome-error'));
+  assert.equal(find('project-gitcode-token').type,'password');
+  await click('project-gitcode-authorize');
+  assert.equal(find('project-gitcode-chrome-error'),null);
+  assert.deepEqual(opened,['github','gitcode','gitcode']);
+ } finally {
+  await unmount();
+  window.open=originalOpen;
+  delete window.jiuwenDesktop;
+ }
+});
+
 test('closing before the prepare reply does not leave recovery permanently busy',async()=>{
  sessionStorage.clear();let finish;
  webClient.request=async(method,params)=>{
