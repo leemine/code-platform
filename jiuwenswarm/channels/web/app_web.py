@@ -732,7 +732,7 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             upstream.close()
             self.send_error(400, "invalid Host header")
             return
-        upstream.settimeout(self._CLOUD_WORKSPACE_TIMEOUT if cloud_bridge else self._WS_HANDSHAKE_TIMEOUT)
+        upstream.settimeout(self._CLOUD_BRIDGE_TIMEOUT if cloud_bridge else self._WS_HANDSHAKE_TIMEOUT)
         try:
             if parsed.scheme in ("wss", "https"):
                 ctx = ssl.create_default_context() if _get_ssl_verify() else _get_insecure_ssl_context()

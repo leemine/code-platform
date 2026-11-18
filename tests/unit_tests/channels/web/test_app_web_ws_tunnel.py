@@ -11,6 +11,8 @@ from functools import partial
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from jiuwenswarm.channels.web.app_web import _SpaStaticHandler
 
 _UPGRADE_RESPONSE = (
@@ -84,11 +86,11 @@ def _serve_ws_proxy(
         thread.join(timeout=5)
 
 
-def _upgrade_status_line(proxy_port: int) -> str:
+def _upgrade_status_line(proxy_port: int, path: str = "/ws") -> str:
     with socket.create_connection(("127.0.0.1", proxy_port), timeout=15) as client:
         client.sendall(
             (
-                "GET /ws HTTP/1.1\r\n"
+                f"GET {path} HTTP/1.1\r\n"
                 f"Host: 127.0.0.1:{proxy_port}\r\n"
                 "Upgrade: websocket\r\n"
                 "Connection: Upgrade\r\n"
@@ -99,11 +101,12 @@ def _upgrade_status_line(proxy_port: int) -> str:
         return client.recv(4096).split(b"\r\n", 1)[0].decode("latin-1")
 
 
-def test_tunnel_waits_for_a_slow_gateway_upgrade(tmp_path: Path) -> None:
+@pytest.mark.parametrize("path", ["/ws", "/api/v1/data-sync/ws"])
+def test_tunnel_waits_for_a_slow_gateway_upgrade(tmp_path: Path, path: str) -> None:
     # A gateway that needs 0.5s to accept used to hit the 0.25s connect-probe
     # timeout, so every browser reconnect failed with 502.
     with _slow_upstream(0.5) as upstream_port, _serve_ws_proxy(upstream_port, tmp_path) as proxy_port:
-        assert " 101 " in _upgrade_status_line(proxy_port)
+        assert " 101 " in _upgrade_status_line(proxy_port, path)
 
 
 def test_tunnel_handshake_is_still_bounded(tmp_path: Path) -> None:
