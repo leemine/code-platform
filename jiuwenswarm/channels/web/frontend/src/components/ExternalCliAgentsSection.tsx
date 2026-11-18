@@ -26,6 +26,7 @@ export type ExternalCliDetectResult = {
   reference_version?: string;
   reason?: string;
   message?: string;
+  runtime_scope?: 'cloud';
 };
 
 export type ExternalCliDependencyInstallStatus = {
@@ -213,7 +214,7 @@ export function externalCliSaveValidationMessage(
   if (draftValues[externalCliKey(cliAgent, 'enabled')] !== 'true') return '';
   if (draftValues[externalCliKey(cliAgent, 'use_builtin')] === 'true') return '';
   const requestedPath = (draftValues[externalCliKey(cliAgent, 'cli_path')] ?? '').trim();
-  if (!result || result.status === 'ok' || result.status === 'warning') return '';
+  if (!result || result.runtime_scope === 'cloud' || result.status === 'ok' || result.status === 'warning') return '';
   const agentName = externalCliAgentDisplayName(cliAgent);
   if (result.status === 'missing') {
     return requestedPath
@@ -799,12 +800,18 @@ export function ExternalCliAgentsSection({
       nextEnabled: boolean,
       useBuiltin: boolean,
       requestedPath: string,
+      cloudManaged: boolean,
     ) => {
       setCommitting((prev) => ({ ...prev, [cliAgent]: true }));
       setAgentError(cliAgent, '');
       try {
         if (!nextEnabled) {
           await commit(cliAgent, { enabled: false, useBuiltin, cliPath: requestedPath });
+          showHint(t('config.externalCli.savedHint'));
+          return;
+        }
+        if (cloudManaged) {
+          await commit(cliAgent, { enabled: true, useBuiltin: useBuiltin || !requestedPath.trim(), cliPath: requestedPath });
           showHint(t('config.externalCli.savedHint'));
           return;
         }
@@ -1091,10 +1098,12 @@ export function ExternalCliAgentsSection({
         // regrow the card, shaking the whole page. Stale controls are disabled
         // below instead.
         const installed = isInstalledStatus(result);
+        const cloudManaged = result?.runtime_scope === 'cloud';
+        const canEnable = installed || (cloudManaged && result.reason === 'disabled');
         const installStatus = installStatuses?.[cliAgent];
         // This agent's own dependency install is running: only its card goes
         // busy, other agents' cards stay fully usable (installs are per-agent).
-        const agentInstalling = installStatus?.status === 'running';
+        const agentInstalling = !cloudManaged && installStatus?.status === 'running';
         // Pin the progress bar after a successful install until a *fresh*
         // detect result arrives (probe or local detection): comparing against
         // the result reference captured at the first succeeded render.
@@ -1167,7 +1176,16 @@ export function ExternalCliAgentsSection({
             <Loader2 className="settings-spinner h-3.5 w-3.5" />
             {t('config.externalCli.installPhase.running')}
           </span>
-        ) : !installed ? (
+        ) : cloudManaged && !canEnable ? (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-text-muted"
+            data-testid="settings-panel-external-cli-agent-status"
+            data-variant={cliAgent}
+          >
+            <CliStatusDisc />
+            {t(result.status === 'missing' ? 'config.externalCli.cloudSdkMissing' : 'config.externalCli.cloudStatusUnavailable')}
+          </span>
+        ) : !canEnable ? (
           <span
             className="inline-flex items-center gap-1 text-xs text-text-muted"
             data-testid="settings-panel-external-cli-agent-status"
@@ -1212,7 +1230,7 @@ export function ExternalCliAgentsSection({
             className="space-y-2 rounded-lg border border-border bg-secondary/10 p-3"
             data-testid="settings-panel-external-cli-agent"
             data-variant={cliAgent}
-            data-state={detectingNow ? 'detecting' : !installed ? 'not-installed' : !enabled ? 'disabled' : 'installed'}
+            data-state={detectingNow ? 'detecting' : !canEnable ? (cloudManaged ? 'unavailable' : 'not-installed') : !enabled ? 'disabled' : 'installed'}
           >
             {custom ? (
               <>
@@ -1374,15 +1392,15 @@ export function ExternalCliAgentsSection({
                   <div className="flex flex-shrink-0 items-center gap-2">
                     <Switch
                       checked={enabled}
-                      disabled={disabled || (!installed && !enabled) || committing[cliAgent] || agentInstalling || editing[cliAgent]}
-                      onChange={(next) => void toggleAgentEnabled(cliAgent, next, useBuiltin, cliPath)}
+                      disabled={disabled || (!canEnable && !enabled) || committing[cliAgent] || agentInstalling || editing[cliAgent]}
+                      onChange={(next) => void toggleAgentEnabled(cliAgent, next, useBuiltin, cliPath, cloudManaged)}
                       aria-label={t('config.externalCli.toggleEnable', { agent: label })}
                       data-testid="settings-panel-external-cli-agent-enable-switch"
                       data-variant={cliAgent}
                     />
                   </div>
                 </div>
-                {installed && enabled ? (
+                {cloudManaged ? null : installed && enabled ? (
                   <>
                     <div className="flex items-center gap-2">
                       <div className="text-xs text-text-muted">{t('config.externalCli.executablePath')}</div>

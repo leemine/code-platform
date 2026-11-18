@@ -464,6 +464,28 @@ async function mountCliSection(draftValues, onDetect) {
   };
 }
 
+test('cloud-off state enables the saved switch without a local install or path probe', async () => {
+  const initial = {
+    external_cli_agent_claude_enabled: 'false',
+    external_cli_agent_claude_use_builtin: 'false',
+    external_cli_agent_claude_cli_path: '/account/claude',
+  };
+  const env = await mountCliSection(initial, async (agent) => ({
+    cli_agent: agent,
+    status: agent === 'claude' ? 'unavailable' : 'missing',
+    reason: agent === 'claude' ? 'disabled' : 'sdk_not_installed',
+    runtime_scope: 'cloud',
+  }));
+  try {
+    assert.equal(document.querySelectorAll('[data-testid="settings-panel-external-cli-agent-install-btn"]').length, 0);
+    assert.equal(document.querySelector('[data-testid="settings-panel-external-cli-agent-enable-switch"][data-variant="codex"]').disabled, true);
+    await env.click('[data-testid="settings-panel-external-cli-agent-enable-switch"][data-variant="claude"]');
+    assert.deepEqual(env.commits, [['claude', { enabled: true, useBuiltin: false, cliPath: '/account/claude' }]]);
+  } finally {
+    env.cleanup();
+  }
+});
+
 test('PATH remains selectable with a saved built-in choice and after changing executables', async () => {
   const initial = {
     external_cli_agent_claude_enabled: 'true',
@@ -554,11 +576,20 @@ test('the detection hint distinguishes PATH lookup from executable validation', 
   assert.match(section, /title=\{t\('config\.externalCli\.redetectHint'\)\}/);
   assert.match(section, /disabled=\{disabled \|\| !onDetect \|\| editing\[cliAgent\]\}/);
   assert.match(section, /!onCommitAgent \|\| agentInstalling \|\| editing\[cliAgent\]/);
-  // The enable switch is disabled only when the CLI is not installed AND the
-  // agent is already disabled — so a page reload (installed=false until the
-  // auto-detect runs) does not lock the user out of an enabled agent, and a
-  // disabled agent cannot be turned on before installing the CLI.
-  assert.match(section, /disabled=\{disabled \|\| \(!installed && !enabled\) \|\| committing\[cliAgent\] \|\| agentInstalling \|\| editing\[cliAgent\]\}/);
+});
+
+test('a missing local CLI can still be switched off but requires installation before enabling', async () => {
+  const env = await mountCliSection({ external_cli_agent_claude_enabled: 'true' }, async (agent) => ({
+    cli_agent: agent, status: 'missing',
+  }));
+  try {
+    const selector = '[data-testid="settings-panel-external-cli-agent-enable-switch"]';
+    assert.equal(document.querySelector(`${selector}[data-variant="codex"]`).disabled, true);
+    await env.click(`${selector}[data-variant="claude"]`);
+    assert.equal(env.commits.at(-1)[1].enabled, false);
+  } finally {
+    env.cleanup();
+  }
 });
 
 test('uploaded custom agents are listed after Claude and Codex', async () => {

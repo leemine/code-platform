@@ -2201,11 +2201,45 @@ def _register_web_handlers(bind: WebHandlersBindParams) -> None:
     if callable(register_disconnect):
         register_disconnect(_on_disconnect)
 
-    async def _external_cli_detect(ws, req_id, params, session_id):
+    async def _external_cli_detect(ws, req_id, params, session_id, user_id=None):
         if not isinstance(params, dict):
             await channel.send_response(ws, req_id, ok=False, error="params must be object", code="BAD_REQUEST")
             return
         cli_agent = str(params.get("cli_agent") or "").strip().lower()
+        from gateway.auth.account_authenticator import current_account
+        from gateway.routing.e2a_proxy import fetch_agent_unary, is_agentos_routing_client
+
+        resolved_client = _resolve(agent_client)
+        if cli_agent in {"codex", "claude"} and current_account() is not None and is_agentos_routing_client(resolved_client):
+            ok, config_panel = await fetch_agent_unary(
+                agent_client=resolved_client, req_method=_ConfigReq.CONFIG_GET, params={},
+                session_id=None, user_id=user_id, channel_id=channel.channel_id,
+                label="cloud-external-cli-detect", timeout_seconds=8,
+            )
+            catalog = config_panel.get("execution_provider_catalog") if ok else None
+            if isinstance(catalog, str):
+                try:
+                    catalog = json.loads(catalog)
+                except ValueError:
+                    catalog = None
+            provider = next((row for row in catalog if isinstance(row, dict)
+                             and row.get("id") == f"{cli_agent}-direct"), {}) if isinstance(catalog, list) else {}
+            # Older workers already report availability, but a disabled entry
+            # does not establish whether its SDK is installed. The card can
+            # still save the account's enablement choice through config.save_all.
+            reason = provider.get("reason")
+            status = "ok" if provider.get("available") is True else "unavailable"
+            if reason == "sdk_not_installed":
+                status = "missing"
+            result = {
+                "cli_agent": cli_agent,
+                "status": status,
+                "runtime_scope": "cloud",
+            }
+            if reason in ("disabled", "sdk_not_installed"):
+                result["reason"] = reason
+            await channel.send_response(ws, req_id, ok=True, payload=result)
+            return
         cli_path = str(params.get("cli_path") or "").strip()
         raw_use_builtin = params.get("use_builtin")
         use_builtin = raw_use_builtin is True or str(raw_use_builtin).strip().lower() == "true"
