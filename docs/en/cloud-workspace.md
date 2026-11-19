@@ -100,7 +100,7 @@ The local sidebar uses the same circular avatar and account menu as the cloud UI
 
 The local dialog and cloud page share the account sign-in form. An existing valid session resumes cloud actions without another confirmation. Signing in only restores the form and never submits a creation automatically. Folder names can be entered while directories load, and loading can be dismissed; creation waits for directory validation. HTTP and WebSocket transports are reused while every operation still receives fresh authorization checks.
 
-Directory operations have a 150-second total processing budget, a 155-second browser deadline and a 175-second local Web proxy deadline; ordinary HTTP requests retain 30 seconds. Unknown creation outcomes are not replayed: read back the directory first. Diagnostics contain stage, status and elapsed time, without credentials or directory contents.
+Directory operations have a 150-second total processing budget, a 155-second browser deadline and a 175-second local Web proxy deadline; first entry into a cloud workspace also uses the 175-second Web proxy deadline. Ordinary HTTP requests retain 30 seconds. Unknown creation outcomes are not replayed: read back the directory first. Diagnostics contain stage, status and elapsed time, without credentials or directory contents.
 
 
 Cloud history restoration starts before auxiliary initialization and independently of Local connection readiness. Connection setup and history responses have separate timeout budgets; transport failures are not treated as deleted sessions. Reconnection rereads session state and unfinished history without resending user messages. Only concurrent unfinished account status requests are coalesced; authorization remains live.

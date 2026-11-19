@@ -619,8 +619,11 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             self._write_proxy_error(400, "invalid Host header")
             return
         parsed = urlparse(self.api_target)
-        timeout = (self._CLOUD_WORKSPACE_TIMEOUT
-                   if urlparse(self.path).path == "/api/v1/data-sync/workspace" else self._HTTP_PROXY_TIMEOUT)
+        path = urlparse(self.path).path
+        if path in ("/api/v1/data-sync/workspace", "/api/v1/auth/organization/environment/ensure"):
+            timeout = self._CLOUD_WORKSPACE_TIMEOUT
+        else:
+            timeout = self._HTTP_PROXY_TIMEOUT
         if parsed.scheme == "https":
             ssl_ctx = None if _get_ssl_verify() else _get_insecure_ssl_context()
             conn: http.client.HTTPConnection = http.client.HTTPSConnection(

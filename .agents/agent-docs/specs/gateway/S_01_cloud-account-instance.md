@@ -88,6 +88,8 @@ Web 独立入口提炼 codeswarm 登录/注册、凭据失效清理和退出行�
 
 Web RuntimeResume 将有 worker_instance/cursor/dispatches 的权威快照作为重放覆盖边界：已终态或快照范围内已缺席 dispatch 的旧重放不重新开启 UI 输出；必要时发出既有 runtime.history_required，由原历史加载与元数据链对账。首次空闲且无待交互快照可推进恢复游标，避免从零回放整个旧日志；运行中、待审批和已经观察到的输出保留原游标语义。工作进程变化重置边界；缺元数据的旧协议保持兼容，不伪造时间/终态，不重发 chat.send。
 
+云端首次进入通过 `POST /api/v1/auth/organization/environment/ensure` 验证已绑定实例就绪。该路径使用 Web 代理的175秒长等待，浏览器仍使用150秒，普通接口使用30秒。
+
 Web/TLS 失败恢复只属于可替换部署层 deploy/web/proxy_switch.py。停服前检查材料/哈希/镜像/归属/证书/语法；旧容器保留 ID，失败仅移除本次替身并恢复原角色；补偿失败明确报需人工恢复，不把其记作成功。账号/环境/Runtime 不依赖该脚本。单操作方、有界停机与保留容器代价见 deploy/web/README.md。
 
 云实例角色尚未装配分享导出的Agent文件链。Gate通过可选shareExportDisabledReason装配原App/ChatPanel；控件禁用并显示原因，启动恢复不发送/share-api查询，不删除已有导出任务记录。本地角色未传入该限制，保持原行为。此项是UI能力声明，不替代服务端既有拒绝；完整云导出实现与旧runner链接访问仍不在已支持范围。
