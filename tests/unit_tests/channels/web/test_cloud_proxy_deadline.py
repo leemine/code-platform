@@ -20,6 +20,12 @@ def serve(handler):
 
 
 def test_cloud_deadline_covers_slow_response_and_does_not_replay_write(tmp_path):
+    requests = [
+        ('/api/v1/ordinary', 502),
+        ('/api/v1/auth/organization/environment/ensure-extra', 502),
+        ('/api/v1/data-sync/workspace', 200),
+        ('/api/v1/auth/organization/environment/ensure', 200),
+    ]
     calls = []
     class Upstream(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -37,10 +43,10 @@ def test_cloud_deadline_covers_slow_response_and_does_not_replay_write(tmp_path)
             _CLOUD_WORKSPACE_TIMEOUT = 1
             def log_message(self, *args): pass
         with serve(partial(Proxy, directory=str(tmp_path))) as proxy:
-            for path, expected in [('/api/v1/ordinary', 502), ('/api/v1/data-sync/workspace', 200)]:
+            for path, expected in requests:
                 client = http.client.HTTPConnection('127.0.0.1', proxy, timeout=3)
                 client.request('POST', path, '{}', {'Content-Type': 'application/json'})
                 response = client.getresponse()
                 assert response.status == expected
                 response.read(); client.close()
-    assert calls == ['/api/v1/ordinary', '/api/v1/data-sync/workspace']
+    assert calls == [path for path, _ in requests]

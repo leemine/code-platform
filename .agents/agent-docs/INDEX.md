@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 68 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 69 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -39,7 +39,7 @@ generated: true
 | [gateway/services](#module-22) | 6 |
 | [gateway/services/data_sync](#module-23) | 2 |
 | [jiuwenswarm](#module-24) | 3 |
-| [jiuwenswarm/channels/web](#module-25) | 7 |
+| [jiuwenswarm/channels/web](#module-25) | 8 |
 | [jiuwenswarm/channels/web/frontend](#module-26) | 9 |
 | [jiuwenswarm/channels/web/frontend/src/components/ChatPanel](#module-27) | 1 |
 | [jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace](#module-28) | 1 |
@@ -298,6 +298,7 @@ generated: true
 | [F_20261113_2015_local-cloud-execution](features/F_20261113_2015_local-cloud-execution.md) | F | 本地页面云会话执行与目录请求期限 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/channels/web | gateway/services/cloud_execution_bridge.py, gateway/services/cloud_resource_address.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useCloudCatalog.ts | 无独立 D：用户明确授权定位旧目录失败并沿用三段式UI接通本地页面云会话，验证后提交CI和合入；本记录保存实施事实，当前契约归S_02_code-workspace-entry。 |
 | [B-20261117-1640-local-service-recovery](bugfix/gateway/B_20261117_1640_local-service-recovery.md) | B | 本地预览退出恢复与账号错误分层 | leemine | deploy/local, jiuwenswarm/channels/web | deploy/local/systemd/code-platform-local.target, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/accountAvailability.ts, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx | 无独立 D：用户明确要求修复现有本地服务退出与登录提示，不新增执行架构。 |
 | [B-20261119-0957-cloud-conversation-previous-scope](bugfix/gateway/B_20261119_0957_cloud-conversation-previous-scope.md) | B | 本机 App 云目录新会话的旧会话引用校验 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/resourceAddress.ts | 无独立 D：沿用既有 Code 工作区入口与目录操作契约。 |
+| [B-20261119-1940-cloud-workspace-ensure-proxy-timeout](bugfix/gateway/B_20261119_1940_cloud-workspace-ensure-proxy-timeout.md) | B | 云端首次进入的 Web 代理超时 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/app_web.py, tests/unit_tests/channels/web/test_cloud_proxy_deadline.py | 无独立 D：沿用既有云实例就绪接口与 Web 长超时规则。 |
 | [B_20261031_1418_session-recovery-lifecycle](bugfix/jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
 | [B_20261111_0300_account-probe-recovery](bugfix/web/B_20261111_0300_account-probe-recovery.md) | B | 账号探测短暂故障容错与串行自动恢复 | leemine | jiuwenswarm/channels/web, deploy/web | jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, deploy/web/proxy_switch.py | 无独立 D：补回 codeswarm 既有恢复行为，不新增账号或执行链。 |
 | [S-02-code-workspace-entry](specs/gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
