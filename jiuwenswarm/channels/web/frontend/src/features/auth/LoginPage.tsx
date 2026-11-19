@@ -19,9 +19,17 @@ export function LoginPage({ registrationEnabled }: { registrationEnabled: boolea
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
+    setNotice('');
+    if (registering) {
+      // Count Unicode code points to match the account authority's length check.
+      const passwordLength = Array.from(password).length;
+      if (passwordLength < 8 || passwordLength > 128) {
+        setError(t('localCloudAccount.invalidRegistrationPassword'));
+        return;
+      }
+    }
     setSubmitting(true);
     setError('');
-    setNotice('');
     try {
       await cloudRequest(registering ? 'register' : 'login', { username, password });
       if (registering) {

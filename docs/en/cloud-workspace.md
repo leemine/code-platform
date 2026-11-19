@@ -54,7 +54,7 @@ Internal supplement and evolution-approval requeues preserve the original accoun
 
 ## Candidate cloud sign-in and environment entry
 
-The Web entry extracts codeswarm's builtin username/password login, identity invalidation and logout. Account Kit still owns existing model authorization. Serve static UI, account HTTP and WebSocket from the same HTTPS origin matching `public_origin`; the default account path is `/api/v1/auth/organization`. Show registration only when `registration_enabled=true`.
+The Web entry extracts codeswarm's builtin username/password login, identity invalidation and logout. Account Kit still owns existing model authorization. Serve static UI, account HTTP and WebSocket from the same HTTPS origin matching `public_origin`; the default account path is `/api/v1/auth/organization`. Show registration only when `registration_enabled=true`. Registration passwords must have 8–128 characters. The page reports invalid length before submitting the request.
 
 First entry explicitly prepares the cloud environment; an existing allocation goes through the original ensure/readiness path before mounting the application. Authentication and environment failures expose retry instead of indefinite config loading. Logout closes the connection before revocation; unconfirmed revocation shows an error. Real UI/Provider acceptance on this candidate remains in progress; previous-version evidence is not a substitute.
 
