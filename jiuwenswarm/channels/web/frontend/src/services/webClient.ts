@@ -14,7 +14,7 @@ import i18n from '../i18n';
 import { GoalRecord } from '../types/goal';
 import { createSessionEventGate } from './sessionEventGate';
 import { RuntimeResume } from './runtimeResume';
-import { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
+import { isCloudResource, isCloudSessionInProjectScope } from '../features/cloudWorkspace/resourceAddress';
 export { isCloudResource } from '../features/cloudWorkspace/resourceAddress';
 import { localCloudAccountRequest, onLocalCloudAccountChange, requestLocalCloudLogin } from '../features/cloudWorkspace/localCloudAccountClient';
 
@@ -868,12 +868,19 @@ class RoutedWebClient extends WebClient {
   }
 
   override request<T = unknown>(method: string, params?: Record<string, unknown>, options: WebRequestOptions = {}): Promise<T> {
-    if (cloudRequestTarget(params)) return this.cloudClient().request<T>(method, params, options);
-    if (method === 'session.create' && isCloudResource(params?.previous_session_id)) {
-      const localParams = { ...params };
-      delete localParams.previous_session_id; delete localParams.previous_mode;
-      return super.request<T>(method, localParams, options);
+    const cloud = cloudRequestTarget(params);
+    if (method === 'session.create' && params?.previous_session_id) {
+      // The preceding session is an optional lifecycle hint. Keep it within the selected route.
+      const previousInTarget = cloud
+        ? isCloudSessionInProjectScope(params.previous_session_id, params.project_id)
+        : !isCloudResource(params.previous_session_id);
+      if (!previousInTarget) {
+        params = { ...params };
+        delete params.previous_session_id;
+        delete params.previous_mode;
+      }
     }
+    if (cloud) return this.cloudClient().request<T>(method, params, options);
     return super.request<T>(method, params, options);
   }
 

@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 31 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 32 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -30,7 +30,7 @@ generated: true
 | [gateway/message_handler](#module-13) | 1 |
 | [gateway/routing](#module-14) | 1 |
 | [gateway/services](#module-15) | 1 |
-| [jiuwenswarm/channels/web](#module-16) | 3 |
+| [jiuwenswarm/channels/web](#module-16) | 4 |
 | [jiuwenswarm/channels/web/frontend](#module-17) | 1 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-18) | 1 |
 | [jiuwenswarm/common](#module-19) | 3 |
@@ -177,6 +177,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B-20261117-1640-local-service-recovery](gateway/B_20261117_1640_local-service-recovery.md) | B | 本地预览退出恢复与账号错误分层 | leemine | deploy/local, jiuwenswarm/channels/web | deploy/local/systemd/code-platform-local.target, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/accountAvailability.ts, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx | 无独立 D：用户明确要求修复现有本地服务退出与登录提示，不新增执行架构。 |
+| [B-20261119-0957-cloud-conversation-previous-scope](gateway/B_20261119_0957_cloud-conversation-previous-scope.md) | B | 本机 App 云目录新会话的旧会话引用校验 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/resourceAddress.ts | 无独立 D：沿用既有 Code 工作区入口与目录操作契约。 |
 | [B_20261031_1418_session-recovery-lifecycle](jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
 | [B_20261111_0300_account-probe-recovery](web/B_20261111_0300_account-probe-recovery.md) | B | 账号探测短暂故障容错与串行自动恢复 | leemine | jiuwenswarm/channels/web, deploy/web | jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, deploy/web/proxy_switch.py | 无独立 D：补回 codeswarm 既有恢复行为，不新增账号或执行链。 |
 

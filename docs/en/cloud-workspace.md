@@ -88,6 +88,8 @@ Choosing Cloud in the local page immediately reveals cloud controls while retain
 
 After selecting and opening a cloud directory, create a cloud session from the local page. Models and execution providers come from the cloud environment. Messages, tool approvals, stopping and history reads use the original cloud session without page navigation. Local project selection remains independent. Signing out closes cloud connections and clears their displayed session state. Reconnection recovers original session state without resending input. This does not copy files or history, or migrate running tasks between hosts.
 
+When starting a conversation in a cloud directory, the client includes a previous-session reference only if that session shares the selected directory's cloud account and endpoint.
+
 An account cloud instance enables Codex and Claude Code when it first creates its configuration. New cloud sessions can select the installed providers. Existing cloud and local configurations retain their settings, including when a cloud instance is rebuilt with the same data volume. Running Codex requires an OpenAI Responses-compatible model, and Claude Code requires an Anthropic Messages-compatible model.
 
 Adjust your account switches under Settings → Agents → Third-party agents in the cloud web app. The status comes from your cloud instance. Use the existing switch to enable a disabled provider. The deployed cloud image supplies the SDKs.

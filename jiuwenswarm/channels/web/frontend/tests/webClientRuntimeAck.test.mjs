@@ -906,6 +906,43 @@ test('a new Local session never inherits a Cloud previous-session reference', as
   } finally { await client.disconnect(); }
 });
 
+test('a new Cloud session only keeps a previous session from the selected project account and target', async () => {
+  const client = new webClient.constructor();
+  const projectId = 'cloudp_0123456789abcdef01234567_cHJval8x';
+  const sameScope = 'clouds_0123456789abcdef01234567_c2Vzc18x';
+  const stale = 'clouds_0123456789abcdef01234568_c2Vzc18y';
+  const first = client.request('session.create', {
+    project_id: projectId,
+    execution_target: 'cloud',
+    execution_provider: 'codex-direct',
+    previous_session_id: stale,
+    previous_mode: 'agent',
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const socket = FakeWebSocket.instance;
+  socket.receive({ type: 'event', event: 'connection.ack', payload: { transport: 'cloud-bridge' } });
+  async function settle(request) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const { id, params } = socket.lastRequest;
+    socket.receive({ type: 'res', id, ok: true, payload: {} });
+    await request;
+    return params;
+  }
+  try {
+    assert.deepEqual(await settle(first), {
+      project_id: projectId, execution_target: 'cloud', execution_provider: 'codex-direct',
+    });
+    const openCode = { project_id: projectId, execution_provider: 'opencode-direct' };
+    assert.deepEqual(await settle(client.request('session.create', {
+      ...openCode, previous_session_id: 'local_session', previous_mode: 'agent',
+    })), openCode);
+    const sameAccount = { ...openCode, previous_session_id: sameScope, previous_mode: 'agent' };
+    assert.deepEqual(await settle(client.request('session.create', sameAccount)), sameAccount);
+  } finally {
+    await client.disconnect();
+  }
+});
+
 test('cloud completion cannot clear a still-running Local task indicator', async () => {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ authenticated: true }));
