@@ -199,7 +199,17 @@ test('existing login form reports wrong credentials and successful registration 
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { username: 'alice', password: 'test-password' });
   await click('auth-registration-toggle');
   route = async () => response({}, 201);
+  for (const invalidPassword of ['🌱'.repeat(7), 'a'.repeat(129)]) {
+    await fill('auth-login-password-input', invalidPassword);
+    const requestsBefore = calls.length;
+    await act(async () => query('auth-login-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    assert.equal(query('auth-login-error').textContent, '密码须为 8–128 个字符。');
+    assert.equal(calls.length, requestsBefore);
+  }
+  await fill('auth-login-password-input', '🌱'.repeat(8));
   await act(async () => query('auth-login-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }))); await tick();
+  assert.match(calls.at(-1).url, /\/register$/);
+  assert.equal(query('auth-login-error'), null);
   assert.ok(query('auth-registration-notice')); assert.equal(query('auth-login-password-input').value, '');
   assert.equal(query('original-app'), null);
 });
