@@ -120,13 +120,13 @@ class PhysicalResources:
         value = json.loads(raw)
         if (not isinstance(value, dict) or set(value) != {"version", "binding_id", "account_workspace",
                 "project_source", "project_target", "image", "user"} or type(value["version"]) is not int
-                or value["version"] != 1 or value["binding_id"] != binding_id
+                or value["version"] not in (1, 2) or value["binding_id"] != binding_id
                 or value["image"] != image or value["user"] != user):
             raise ValueError("OpenCode scope definition differs")
         account, project, target = (Path(value[field]) for field in ("account_workspace", "project_source", "project_target"))
         if (account.parent != self.boundary.workspace_root or not self.boundary.workspace_name_pattern.fullmatch(account.name)
                 or account.resolve() != account or str(account) != value["account_workspace"]
-                or not target.is_relative_to(PROJECT_ROOT) or target == PROJECT_ROOT
+                or not target.is_relative_to(PROJECT_ROOT) or (target == PROJECT_ROOT) != (value["version"] == 2)
                 or ".." in target.parts or str(target) != value["project_target"]
                 or project != account / "agent/workspace" / target.relative_to(PROJECT_ROOT)
                 or project.resolve() != project or str(project) != value["project_source"]):

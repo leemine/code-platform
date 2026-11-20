@@ -460,3 +460,54 @@ async def test_stall_grace_requires_repeated_scoped_http_timeouts(sandbox, monke
     now = 330
     assert await pool.reclaim_idle() == 1
     assert frontend.deleted == [first.instance_id] and all(claim == claims[0] for claim in claims)
+
+
+@pytest.mark.asyncio
+async def test_shared_binding_checks_every_project_and_retains_session_ownership_on_recycle(sandbox):
+    pool, frontend, account, _ = sandbox
+    first, second = account("first"), account("second")
+    other_dir = "/data/agent/workspace/code/other"
+    Path(first["workspace"], "agent/workspace/code/other").mkdir()
+
+    async def acquire(owner, project, directory, *, shared=True):
+        async with pool.hold(owner, project, directory, shared=shared) as lease:
+            return lease
+
+    a, b = await asyncio.gather(
+        acquire(first, "project", PROJECT_DIR), acquire(first, "other", other_dir),
+    )
+    assert len(frontend.created) == 1
+    assert a.instance_id == b.instance_id and a.binding_id == b.binding_id
+    assert (a.directory, b.directory) == (PROJECT_DIR, other_dir)
+    assert frontend.created[0]["mounts"][0] == {
+        "source": str(Path(first["workspace"], "agent/workspace")),
+        "target": "/data/agent/workspace", "readonly": False,
+    }
+    legacy = await acquire(first, "project", PROJECT_DIR, shared=False)
+    unrelated = await acquire(second, "project", PROJECT_DIR)
+    assert len({a.binding_id, legacy.binding_id, unrelated.binding_id}) == 3
+
+    pool.register_session(a, "project", "ses_a")
+    pool.register_session(b, "other", "ses_b")
+    with pytest.raises(EnvironmentUnavailable, match="already registered"):
+        pool.register_session(a, "project", "ses_b")
+    assert not pool.owns_session(a, "other", "ses_a")
+    assert not pool.owns_session(unrelated, "project", "ses_a")
+    pool.idle_seconds = 300
+    with pool.store.connect() as db:
+        db.execute("UPDATE provider_bindings SET used_at=0 WHERE binding_id=?", (a.binding_id,))
+    busy = other_dir
+
+    async def idle(lease):
+        return lease.directory != busy
+
+    pool.idle_check = idle
+    assert await pool.reclaim_idle() == 0
+    busy = None
+    assert await pool.reclaim_idle() == 1
+    assert frontend.deleted == [a.instance_id]
+    restored = await acquire(first, "project", PROJECT_DIR)
+    assert restored.binding_id == a.binding_id and restored.instance_id != a.instance_id
+    assert pool.owns_session(restored, "project", "ses_a")
+    assert not pool.owns_session(restored, "project", "ses_b")
+    assert frontend.created[-1]["workspace"] == frontend.created[0]["workspace"]

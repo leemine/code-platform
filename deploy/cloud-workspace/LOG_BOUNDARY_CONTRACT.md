@@ -129,8 +129,10 @@ Gateway 的 `resource_reconciler_socket` 和 `opencode_provider` 配置。
 账号 `/data`、身份挂载及可选运行安全配置。
 
 Gateway 写入私有 `scope.json`，将 Provider 实例的稳定状态根绑定到
-账号根、项目、镜像和运行账号。宿主验证创建请求的项目挂载、状态挂载
-及本代只读配置。元戎自动工作区别名只可以挂载同一个 Provider 状态根。
+账号根、执行目录、镜像和运行账号。版本 1 对应原来的单项目目录。版本 2
+只允许把该账号 Worker 的 `agent/workspace` 挂载到 `/data/agent/workspace`。
+宿主验证执行目录挂载、状态挂载和本代只读配置。元戎自动工作区别名只可以
+挂载同一个 Provider 状态根。
 元戎自动注入的日志挂载由宿主改写成每个绑定的私有目录。对已登记日志根，
 允许源和目标同路径且各带一个尾斜杠。Provider 准入拒绝重复目标、未声明的
 宿主挂载、特权及设备提升。

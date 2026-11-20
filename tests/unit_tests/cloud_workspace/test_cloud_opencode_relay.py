@@ -16,6 +16,7 @@ from gateway.services.cloud_opencode_relay import CloudOpencodeRelay, _OpenCodeQ
 
 
 ROUTE = "/provider/opencode"
+SHARED_ROUTE = ROUTE + "-worker"
 DIRECTORY = "/data/agent/workspace/demo"
 
 
@@ -43,26 +44,105 @@ def relay(tmp_path):
     class Pool:
         yuanrong = SimpleNamespace(frontend_endpoint="https://yuanrong.test", agent_namespace="tests")
         active = 0
+        sessions = {}
 
         @asynccontextmanager
-        async def hold(self, account, project, directory):
+        async def hold(self, account, project, directory, *, shared=False):
             self.active += 1
+            binding_id = account["account_id"] + ("-shared" if shared else "-" + project)
             try:
                 yield SimpleNamespace(
-                    instance_id=account["account_id"] + "-" + project, directory=directory, password="only-upstream",
+                    instance_id=binding_id, binding_id=binding_id, directory=directory, password="only-upstream",
                 )
             finally:
                 self.active -= 1
 
+        def register_session(self, lease, project_id, native_id):
+            self.sessions[(lease.binding_id, native_id)] = (project_id, lease.directory)
+
+        def project_sessions(self, lease, project_id):
+            return {native_id for (binding, native_id), scope in self.sessions.items()
+                    if binding == lease.binding_id and scope == (project_id, lease.directory)}
+
+        def owns_session(self, lease, project_id, native_id):
+            return self.sessions.get((lease.binding_id, native_id)) == (project_id, lease.directory)
+
     store = SimpleNamespace(by_user=accounts.__getitem__, guard_binding=lambda *args: nullcontext())
     pool = Pool()
     broker = CloudOpencodeRelay(store, pool)
-    app = Starlette(routes=[Route(ROUTE + "/{project_id}/{path:path}", broker.handle, methods=["GET", "POST"])])
+    app = Starlette(routes=[
+        Route(ROUTE + "/{project_id}/{path:path}", broker.handle, methods=["GET", "POST"]),
+        Route(SHARED_ROUTE + "/{project_id}/{path:path}", broker.handle_shared, methods=["GET", "POST"]),
+    ])
     return broker, app, credentials, accounts
 
 
 def _client(app, auth=None):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://gateway.test", auth=auth)
+
+
+@pytest.mark.asyncio
+async def test_shared_relay_keeps_session_routes_events_and_controls_project_scoped(relay):
+    broker, app, credentials, _ = relay
+    requests = []
+    sessions = {"ses_same": {"id": "ses_same", "directory": DIRECTORY},
+                "ses_private": {"id": "ses_private", "directory": DIRECTORY + "-private"}}
+    events = [
+        {"type": "server.connected", "properties": {"secret": "not forwarded"}},
+        {"type": "message.updated", "properties": {"info": {"sessionID": "ses_same"}, "marker": "own"}},
+        {"type": "message.part.updated", "properties": {"part": {"sessionID": "ses_private"}, "marker": "foreign"}},
+        {"type": "session.updated", "properties": {"info": {"id": "ses_private"}}},
+        {"type": "permission.asked", "properties": {"sessionID": "ses_same", "id": "perm_own"}},
+        {"type": "session.error", "properties": {"secret": "unscoped"}},
+        {"type": "message.updated", "properties": {
+            "sessionID": "ses_same", "info": {"sessionID": "ses_private"}, "marker": "conflicting",
+        }},
+    ]
+
+    async def upstream(request):
+        path = request.url.path.removeprefix("/serverless/v1/http/")
+        requests.append((request.method, path, request.url.params["instance"]))
+        if path == "session" and request.method == "POST":
+            native_id = "ses_same" if request.url.params["directory"] == DIRECTORY else "ses_private"
+            return httpx.Response(200, json=sessions[native_id])
+        if path == "session":
+            return httpx.Response(200, json=list(sessions.values()))
+        if path == "session/status":
+            return httpx.Response(200, json={key: {"type": "busy"} for key in sessions})
+        if path in ("permission", "question"):
+            return httpx.Response(200, json=[{"id": path + "_own", "sessionID": "ses_same"},
+                                             {"id": path + "_foreign", "sessionID": "ses_private"}])
+        if path == "event":
+            return httpx.Response(200, headers={"Content-Type": "text/event-stream"},
+                                  text="".join("data: " + json.dumps(event) + "\n\n" for event in events))
+        return httpx.Response(200, json={})
+
+    first, second = SHARED_ROUTE + "/same", SHARED_ROUTE + "/private"
+    async with broker._client, httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        broker._client = client
+        async with _client(app, OpenCodeRelayAuth(credentials["one"])) as worker:
+            assert (await worker.post(first + "/session", json={})).json() == sessions["ses_same"]
+            assert (await worker.post(second + "/session", json={})).json() == sessions["ses_private"]
+            assert (await worker.get(first + "/session")).json() == [sessions["ses_same"]]
+            assert set((await worker.get(first + "/session/status")).json()) == {"ses_same"}
+            assert (await worker.get(first + "/session/ses_private/message")).status_code == 404
+            assert (await worker.post(first + "/session/ses_private/abort")).status_code == 404
+            assert (await worker.post(first + "/session", json={"parentID": "ses_private"})).status_code == 404
+            assert (await worker.post(first + "/session/ses_same/prompt_async",
+                                      json={"parts": [{"id": "forged", "type": "text", "text": "x"}]})).status_code == 403
+            for kind in ("permission", "question"):
+                assert (await worker.post(f"{first}/{kind}/{kind}_foreign/reply", json={})).status_code == 404
+                assert (await worker.post(f"{first}/{kind}/{kind}_own/reply", json={})).status_code == 200
+            event_stream = await worker.get(first + "/event")
+            assert event_stream.status_code == 200 and '"marker": "own"' in event_stream.text
+            assert '"id": "perm_own"' in event_stream.text
+            assert all(value not in event_stream.text for value in ("ses_private", "foreign", "conflicting", "secret"))
+        async with _client(app, OpenCodeRelayAuth(credentials["two"])) as another:
+            assert (await another.get(first + "/session")).json() == []
+            assert (await another.get(first + "/session/ses_same")).status_code == 404
+    assert all(path not in ("session/ses_private/message", "session/ses_private/abort",
+                            "permission/permission_foreign/reply", "question/question_foreign/reply")
+               for _, path, _ in requests)
 
 
 @pytest.mark.asyncio

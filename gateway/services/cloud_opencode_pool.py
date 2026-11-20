@@ -95,6 +95,33 @@ class CloudOpencodePool:
                     PRIMARY KEY (account_id, project_id, provider)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS opencode_session_owners (
+                    binding_id TEXT NOT NULL, native_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL, directory TEXT NOT NULL,
+                    PRIMARY KEY (binding_id, native_id)
+                )
+            """)
+
+    def register_session(self, lease: OpenCodeLease, project_id: str, native_id: str):
+        with self.store.connect() as db:
+            if db.execute("INSERT OR IGNORE INTO opencode_session_owners VALUES (?, ?, ?, ?)",
+                          (lease.binding_id, native_id, project_id, lease.directory)).rowcount != 1:
+                raise EnvironmentUnavailable("OpenCode returned an already registered session")
+
+    def project_sessions(self, lease: OpenCodeLease, project_id: str) -> set[str]:
+        with self.store.connect() as db:
+            return {row[0] for row in db.execute("""
+                SELECT native_id FROM opencode_session_owners
+                WHERE binding_id=? AND project_id=? AND directory=?
+            """, (lease.binding_id, project_id, lease.directory))}
+
+    def owns_session(self, lease: OpenCodeLease, project_id: str, native_id: str) -> bool:
+        with self.store.connect() as db:
+            return db.execute("""
+                SELECT 1 FROM opencode_session_owners
+                WHERE binding_id=? AND native_id=? AND project_id=? AND directory=?
+            """, (lease.binding_id, native_id, project_id, lease.directory)).fetchone() is not None
 
     @staticmethod
     def _key(row):
@@ -180,7 +207,8 @@ class CloudOpencodePool:
             _private_directory(path)
         if self.resources is not None:
             manifest = {
-                "version": 1, "account_workspace": profile["account_workspace"],
+                "version": 2 if row["directory"] == str(WORKER_ROOT) else 1,
+                "account_workspace": profile["account_workspace"],
                 "project_source": row["project_source"], "project_target": row["directory"],
                 "binding_id": row["binding_id"], "image": profile["image"], "user": profile["user"],
             }
@@ -314,20 +342,39 @@ class CloudOpencodePool:
             raise EnvironmentUnavailable("OpenCode Provider physical fault remains unconfirmed") from exc
 
     @staticmethod
-    def _lease(row, plan):
-        return OpenCodeLease(row["instance_id"], row["directory"], plan[-1], row["binding_id"])
+    def _lease(row, plan, directory=None):
+        return OpenCodeLease(row["instance_id"], directory or row["directory"], plan[-1], row["binding_id"])
+
+    async def _idle(self, row, plan):
+        if self.idle_check is None:
+            return False
+        if row["directory"] != str(WORKER_ROOT):
+            return await self.idle_check(self._lease(row, plan))
+        with self.store.connect() as db:
+            directories = [entry[0] for entry in db.execute(
+                "SELECT DISTINCT directory FROM opencode_session_owners WHERE binding_id=?", (row["binding_id"],),
+            )]
+        for directory in directories or [row["directory"]]:
+            if not await self.idle_check(self._lease(row, plan, directory)):
+                return False
+        return True
 
     @asynccontextmanager
-    async def hold(self, account: dict, project_id: str, directory: str):
+    async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False):
         current = self._check_account(account)
-        if not isinstance(project_id, str) or not project_id or len(project_id) > 200:
+        if not isinstance(project_id, str) or not project_id or project_id.startswith("@") or len(project_id) > 200:
             raise ValueError("OpenCode requires a valid project ID")
-        key = current["account_id"], project_id, PROVIDER
         source = self._project_source(current, directory)
+        # Existing project rows keep their original key. '@' is outside the
+        # project ID alphabet and reserves one allocation per Worker environment.
+        placement = "@" + current["environment_id"] if shared else project_id
+        key = current["account_id"], placement, PROVIDER
+        mount_target = str(WORKER_ROOT) if shared else directory
+        mount_source = str(Path(current["workspace"]) / "agent/workspace") if shared else source
         try:
             async with self._locks[key]:
                 current = self._check_account(account)
-                row = self._binding(key, directory, source, current)
+                row = self._binding(key, mount_target, mount_source, current)
                 plan = self._plan(row)
                 if row["state"] == "DELETING":
                     if not await self.yuanrong.instance_absent(row["instance_id"]):
@@ -355,7 +402,7 @@ class CloudOpencodePool:
         except _INFRASTRUCTURE_ERRORS as exc:
             raise EnvironmentUnavailable("OpenCode Provider allocation unavailable") from exc
         try:
-            yield self._lease(row, plan)
+            yield self._lease(row, plan, directory)
         finally:
             async with self._locks[key]:
                 self._holds[key] -= 1
@@ -396,7 +443,7 @@ class CloudOpencodePool:
                 self._fault_since.pop(row["operation_id"], None)
                 raise EnvironmentUnavailable("OpenCode Provider ownership changed before deletion")
             if row["state"] == "ALLOCATED":
-                idle = idle_due and self.idle_check is not None and await self.idle_check(self._lease(row, plan))
+                idle = idle_due and await self._idle(row, plan)
                 if not idle and not await self._confirmed_fault(row, plan):
                     return 0
                 row = self._transition(row, "DELETING", instance_id=instance)

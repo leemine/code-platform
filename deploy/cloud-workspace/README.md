@@ -78,8 +78,9 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 ## 独立 OpenCode 执行实例
 
 在云工作区配置加入可选的 `opencode_provider`。启用后，Gateway 通过原元戎
-Frontend 管理 API 为 OpenCode 按账号、项目和 Provider 分配实例。Worker 的
-账号实例和会话历史沿用原入口。配置示例使用由部署方提供的镜像摘要和模型文件。
+Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenCode 会话分配实例。
+同一个 Worker 下的多个项目共用 OpenCode 实例；不同账号分别分配。已有会话通过原中继
+和项目绑定继续使用原状态卷。配置示例使用由部署方提供的镜像摘要和模型文件。
 
 ```json
 {
@@ -95,17 +96,22 @@ Frontend 管理 API 为 OpenCode 按账号、项目和 Provider 分配实例。W
 
 镜像包含官方 `opencode` 和 `sh`，并支持 Worker 现有的 POSIX 运行账号。
 模型文件为运维私有 JSON，包含 OpenCode 可用的模型配置，供独立实例启动。
-动态选模使用与 Worker 模型目录一致的 OpenCode 模型映射。模型配置随项目
+动态选模使用与 Worker 模型目录一致的 OpenCode 模型映射。模型配置随实例的稳定
 绑定保存，运行认证与原生状态保存在 Gateway 管理的目录。管理目录及项目
 路径必须能被执行池以相同路径访问。
 
 新启动的账号 Worker 获得由 Gateway 确定的 HTTPS 中继地址。现有 Worker
 需要重新启动才能读取该地址。开启后，使用已登记云项目的 OpenCode 会话
-通过中继运行，项目目录仍来自原 ProjectStore。OpenCode 容器挂载该项目、
-独立的持久状态和本代只读启动配置。远端模式使用现有 Default 审批控制。
+通过中继运行，项目目录仍来自原 ProjectStore。共享容器挂载该账号 Worker 的项目文件根、
+独立的持久状态和本代只读启动配置。各项目共享进程的文件访问范围。Gateway 继续校验项目目录，
+按项目校验原生会话、事件和审批回复。远端模式使用现有 Default 审批控制。
 
-同一项目绑定并发申请只创建一个实例。Gateway 在 HTTP 请求和 SSE 流期间
-持有实例。正常回收要求达到空闲时限，且原生会话确认空闲。创建应答丢失时先按元戎信息对账。
+部署共享版本时先更新宿主物理边界和 Gateway，再更新 Worker。新 Worker 写入会话时
+持久保存共享线路，历史记录没有该标记时继续用原项目线路。
+
+同一 Worker 的并发申请只创建一个共享实例。Gateway 在 HTTP 请求和 SSE 流期间
+持有实例。正常回收要求达到空闲时限，且共享实例的各项目会话均已空闲。
+创建应答丢失时先按元戎信息对账。
 
 没有请求持有实例时，回收器也检查 OpenCode 服务故障。元戎健康转发连续报告实例端口
 连接失败或提前断开时，从首次观察起经过至少 30 秒和配置的就绪超时，再由宿主确认
@@ -137,8 +143,7 @@ Frontend 管理 API 为 OpenCode 按账号、项目和 Provider 分配实例。W
 `auth_token` 参数进行应用认证。参数只写入 Gateway 到元戎的私有请求，Gateway 的
 HTTP 客户端日志使用无凭据的请求地址。该模式要求使用数字环回地址，并关闭此段连接复用。
 
-Gateway 在该根目录下写入私有项目绑定说明。宿主准入据此核验项目目录、
-稳定的 `/state` 和本代只读 `/run/opencode`，并改写元戎注入的共享日志挂载。
-确认旧实例退出前保留绑定说明及本代目录。Provider 容器只使用原本需要的
-项目和私有数据挂载。部署和故障边界见
+Gateway 在该根目录下写入私有绑定说明。宿主准入据此核验旧线路的单一项目目录或共享线路的
+Worker 项目根、稳定的 `/state` 和本代只读 `/run/opencode`，并改写元戎注入的共享日志挂载。
+确认旧实例退出前保留绑定说明及本代目录。部署和故障边界见
 [日志与物理确认契约](LOG_BOUNDARY_CONTRACT.md)。

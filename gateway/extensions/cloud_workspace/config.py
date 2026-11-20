@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
 OPENCODE_RELAY_ENV = "JIUWENSWARM_OPENCODE_RELAY_URL"
 OPENCODE_RELAY_PATH = "/provider/opencode"
+OPENCODE_WORKER_RELAY_PATH = OPENCODE_RELAY_PATH + "-worker"
 
 
 @dataclass(frozen=True)

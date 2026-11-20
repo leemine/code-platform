@@ -177,6 +177,27 @@ def _prepare_provider(resources, request):
     return scope, rewritten
 
 
+def test_shared_physical_scope_allows_only_the_bound_workers_project_root(provider):
+    resources, request, _, path, _ = provider
+    definition = json.loads(path.read_text())
+    worker_root = Path(definition["account_workspace"], "agent/workspace")
+    if os.getuid() == 0:
+        os.chown(worker_root, resources.boundary.uid, resources.boundary.uid)
+    definition.update(version=2, project_source=str(worker_root), project_target=str(physical.PROJECT_ROOT))
+    path.write_text(json.dumps(definition))
+    mount = request["HostConfig"]["Mounts"][0]
+    mount.update(Source=str(worker_root), Target=str(physical.PROJECT_ROOT))
+    scope, _ = _prepare_provider(resources, request)
+    assert scope["project_source"] == str(worker_root)
+    mount.update(Source=definition["account_workspace"], Target="/data")
+    with pytest.raises(ValueError, match="physical project, state or generation"):
+        _prepare_provider(resources, request)
+    definition["version"] = 1
+    path.write_text(json.dumps(definition))
+    with pytest.raises(ValueError, match="outside its account binding"):
+        _prepare_provider(resources, request)
+
+
 @pytest.mark.parametrize("invalid", ["wrong_project", "wrong_generation", "worker", "alias", "volume", "writable_config"])
 def test_provider_physical_scope_rejects_unapproved_mounts(provider, invalid):
     resources, request, *_ = provider

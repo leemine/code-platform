@@ -55,6 +55,10 @@ def load(provider: str, session_id: str, directory: str) -> dict | None:
                 or not isinstance(data["settings_revision"], str)):
             raise ValueError("Binding identity mismatch")
         native_id = data["native_id"]
+        if "shared_provider" in data and (
+            data["shared_provider"] is not True or provider != "opencode" or data["version"] != 2
+        ):
+            raise ValueError("Invalid shared OpenCode binding")
         if data["version"] == 1:
             if not isinstance(native_id, str) or not native_id:
                 raise ValueError("Invalid native session ID")
@@ -69,7 +73,7 @@ def load(provider: str, session_id: str, directory: str) -> dict | None:
 
 def save(provider: str, session_id: str, *, root: Path | None, directory: str,
          native_id: str | None, model_revision: str, settings_revision: str,
-         permission: str) -> None:
+         permission: str, shared_provider: bool = False) -> None:
     remote = root is None
     if remote and (provider != "opencode" or permission != "default"):
         raise ValueError("Only default-profile OpenCode supports a remote session binding")
@@ -83,6 +87,10 @@ def save(provider: str, session_id: str, *, root: Path | None, directory: str,
             "settings_revision": settings_revision, "permission": permission}
     if root is not None:
         data["root"] = str(_root(provider, str(root)))
+    if shared_provider:
+        if not remote:
+            raise ValueError("Only remote OpenCode can use a shared Provider")
+        data["shared_provider"] = True
     file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(prefix="binding-", suffix=".tmp", dir=file.parent)
     try:

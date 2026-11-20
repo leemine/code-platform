@@ -23,9 +23,25 @@ from gateway.services.cloud_opencode_pool import OpenCodeFault
 logger = logging.getLogger(__name__)
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,159}\Z")
 _NATIVE_ID = r"[A-Za-z0-9_-]{1,160}"
+_NATIVE_ID_PATTERN = re.compile(_NATIVE_ID)
 _GET = re.compile(rf"(?:global/health|event|provider|session(?:/(?:status|{_NATIVE_ID}(?:/message)?))?)\Z")
 _POST = re.compile(rf"(?:session(?:/{_NATIVE_ID}/(?:abort|prompt_async))?|(?:permission|question)/{_NATIVE_ID}/reply)\Z")
 _MAX_BODY = 8 * 1024 * 1024
+
+
+def _event_session(event):
+    props = event.get("properties")
+    if not isinstance(props, dict):
+        return None
+    info, part = props.get("info"), props.get("part")
+    candidates = [props.get("sessionID")]
+    if isinstance(part, dict):
+        candidates.append(part.get("sessionID"))
+    if isinstance(info, dict):
+        key = "id" if str(event.get("type", "")).startswith("session.") else "sessionID"
+        candidates.append(info.get(key))
+    identifiers = {value for value in candidates if isinstance(value, str) and _NATIVE_ID_PATTERN.fullmatch(value)}
+    return next(iter(identifiers)) if len(identifiers) == 1 else None
 
 
 def _project_directory(account: dict, project_id: str) -> str:
@@ -62,9 +78,9 @@ def _project_directory(account: dict, project_id: str) -> str:
 class _RelayResponse(StreamingResponse):
     """Keep the remote request and its Provider hold for the ASGI response."""
 
-    def __init__(self, upstream: httpx.Response, scope: AsyncExitStack):
+    def __init__(self, upstream: httpx.Response, scope: AsyncExitStack, *, content=None):
         self._scope = scope
-        super().__init__(upstream.aiter_bytes(), status_code=upstream.status_code, headers={
+        super().__init__(content if content is not None else upstream.aiter_bytes(), status_code=upstream.status_code, headers={
             "Content-Type": upstream.headers.get("Content-Type", "application/json"),
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
@@ -186,7 +202,91 @@ class CloudOpencodeRelay:
         self._replays[signature] = claims["exp"]
         return row
 
+    async def _shared_events(self, upstream, lease, project_id):
+        owned = self.pool.project_sessions(lease, project_id)
+        frame = bytearray()
+        async for line in upstream.aiter_lines():
+            if line.startswith("data:"):
+                frame.extend(line[5:].removeprefix(" ").encode())
+                frame.extend(b"\n")
+                if len(frame) > _MAX_BODY:
+                    raise ValueError("OpenCode SSE frame exceeds the relay limit")
+            elif not line and frame:
+                event = json.loads(frame)
+                frame.clear()
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get("type")
+                if kind in ("server.connected", "server.heartbeat"):
+                    yield b"data: " + json.dumps({"type": kind, "properties": {}}).encode() + b"\n\n"
+                    continue
+                native_id = _event_session(event)
+                if native_id is None:
+                    continue
+                if native_id in owned or self.pool.owns_session(lease, project_id, native_id):
+                    owned.add(native_id)
+                    yield b"data: " + json.dumps(event, ensure_ascii=False).encode() + b"\n\n"
+
+    async def _authorize_shared(self, lease, project_id, method, path, body):
+        resource, _, tail = path.partition("/")
+        native_id = tail.split("/", 1)[0]
+        if resource == "session" and native_id and tail != "status":
+            if not self.pool.owns_session(lease, project_id, native_id):
+                return False
+            if method == "POST" and tail.endswith("/prompt_async"):
+                payload = json.loads(body)
+                # Native message/part identifiers are global to the shared store.
+                if not isinstance(payload, dict) or not isinstance(payload.get("parts"), list):
+                    raise ValueError("Invalid shared OpenCode prompt")
+                if "messageID" in payload or any(
+                    not isinstance(part, dict) or "id" in part for part in payload["parts"]
+                ):
+                    raise ValueError("OpenCode message identifiers are assigned by the shared service")
+        if resource == "session" and method == "POST" and not tail:
+            payload = json.loads(body) if body else {}
+            if not isinstance(payload, dict) or set(payload) - {"title", "parentID"}:
+                raise ValueError("Invalid shared OpenCode session attributes")
+            parent = payload.get("parentID")
+            return parent is None or (
+                isinstance(parent, str) and self.pool.owns_session(lease, project_id, parent)
+            )
+        if resource in ("permission", "question"):
+            url, params = self._route(lease, resource)
+            result = await self._client.get(url, params=params, auth=("opencode", lease.password), timeout=5)
+            result.raise_for_status()
+            pending = result.json()
+            if not isinstance(pending, list):
+                raise EnvironmentUnavailable("OpenCode pending controls are unavailable")
+            return any(isinstance(item, dict) and item.get("id") == native_id
+                       and isinstance(item.get("sessionID"), str)
+                       and self.pool.owns_session(lease, project_id, item["sessionID"]) for item in pending)
+        return True
+
+    async def _shared_json(self, upstream, lease, project_id, method, path):
+        data = json.loads(await upstream.aread())
+        if method == "POST":
+            native_id = data.get("id") if isinstance(data, dict) else None
+            if (not isinstance(native_id, str) or not _NATIVE_ID_PATTERN.fullmatch(native_id)
+                    or data.get("directory") != lease.directory):
+                raise EnvironmentUnavailable("OpenCode returned a session outside its project")
+            self.pool.register_session(lease, project_id, native_id)
+        else:
+            owned = self.pool.project_sessions(lease, project_id)
+            if path == "session/status" and isinstance(data, dict):
+                data = {native_id: status for native_id, status in data.items() if native_id in owned}
+            elif path == "session" and isinstance(data, list):
+                data = [item for item in data if isinstance(item, dict) and item.get("id") in owned]
+            else:
+                raise EnvironmentUnavailable("OpenCode returned an invalid session listing")
+        return JSONResponse(data, status_code=upstream.status_code, headers={"Cache-Control": "no-store"})
+
     async def handle(self, request: Request):
+        return await self._handle(request, shared=False)
+
+    async def handle_shared(self, request: Request):
+        return await self._handle(request, shared=True)
+
+    async def _handle(self, request: Request, *, shared: bool):
         project_id, path = request.path_params["project_id"], request.path_params["path"]
         if not ((request.method == "GET" and _GET.fullmatch(path))
                 or (request.method == "POST" and _POST.fullmatch(path))):
@@ -210,7 +310,11 @@ class CloudOpencodeRelay:
             directory = _project_directory(account, project_id)
             if supplied_dir and supplied_dir != directory:
                 raise PermissionError("Project workspace differs")
-            lease = await scope.enter_async_context(self.pool.hold(account, project_id, directory))
+            hold = (self.pool.hold(account, project_id, directory, shared=True) if shared
+                    else self.pool.hold(account, project_id, directory))
+            lease = await scope.enter_async_context(hold)
+            if shared and not await self._authorize_shared(lease, project_id, request.method, path, body):
+                return JSONResponse({"code": "NOT_FOUND"}, status_code=404)
             with self.store.guard_binding(
                 {"authority": account["authority"], "user_id": account["account_id"]}, account
             ):
@@ -227,7 +331,10 @@ class CloudOpencodeRelay:
                     for item in models
                 ]}, headers={"Cache-Control": "no-store"})
 
-            response = _RelayResponse(upstream, scope)
+            if shared and upstream.is_success and path in ("session", "session/status"):
+                return await self._shared_json(upstream, lease, project_id, request.method, path)
+            events = self._shared_events(upstream, lease, project_id) if shared and path == "event" and upstream.is_success else None
+            response = _RelayResponse(upstream, scope, content=events)
             handed_off = True
             return response
         except (PermissionError, FileNotFoundError, KeyError, TypeError, ValueError):

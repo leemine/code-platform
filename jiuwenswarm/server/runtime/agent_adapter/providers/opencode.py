@@ -115,6 +115,7 @@ class _Session:
     service: Any = None
     relay_client: Any = None
     project_id: str = ""
+    shared_provider: bool = False
     prompt_attempted: bool = False
     equipment: Any = None
     equipment_error: bool = False
@@ -266,12 +267,13 @@ class OpenCodeAdapter:
             raise ValueError("OpenCode requires an existing absolute workspace directory")
         self._directory = str(directory.resolve())
 
-    def _create_relay_client(self, project_id):
+    def _create_relay_client(self, project_id, *, shared_provider=False):
         import httpx
         from gateway.common.security.opencode_relay_auth import OpenCodeRelayAuth
 
+        url = self._relay_url + "-worker" if shared_provider else self._relay_url
         return httpx.AsyncClient(
-            base_url=f"{self._relay_url}/{project_id}",
+            base_url=f"{url}/{project_id}",
             auth=OpenCodeRelayAuth(self._relay_auth_file),
             trust_env=False,
         )
@@ -374,10 +376,11 @@ class OpenCodeAdapter:
             from ..execution_input import session_facts
             facts = facts or session_facts(session_id)
             binding = recovery.load("opencode", session_id, directory)
+            shared_provider = bool(project_id) and (binding is None or binding.get("shared_provider", False))
             if binding:
                 if bool(self._executable) != (binding["version"] == 1):
                     raise ValueError("OpenCode recovery requires its original server mode")
-                recovery.require_settings(binding, self._session_recovery_settings(project_id))
+                recovery.require_settings(binding, self._session_recovery_settings(project_id, shared_provider))
                 if binding["native_id"] is None:
                     raise ValueError("OpenCode native session creation outcome is unknown; it cannot be retried safely")
             elif facts.has_assistant_history:
@@ -386,6 +389,7 @@ class OpenCodeAdapter:
             session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
                 model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
                 usage=OpenCodeUsage(complete=not bool(binding)), project_id=project_id,
+                shared_provider=shared_provider,
                 desired_permission=binding["permission"] if binding and self._executable else self._permission_profile)
             if self._executable:
                 from .opencode_service import SessionService
@@ -397,7 +401,7 @@ class OpenCodeAdapter:
                 if not session.service:
                     await self._apply_permissions(session)
                     if project_id:
-                        session.relay_client = self._create_relay_client(project_id)
+                        session.relay_client = self._create_relay_client(project_id, shared_provider=shared_provider)
                     if not binding:
                         if session.relay_client:
                             # Allocate and check readiness before reserving native creation.
@@ -439,7 +443,9 @@ class OpenCodeAdapter:
         if not isinstance(status, dict) or status.get("type") != "idle":
             raise ValueError("OpenCode native session is still active; recovery was not started")
 
-    def _session_recovery_settings(self, project_id):
+    def _session_recovery_settings(self, project_id, shared_provider=False):
+        if shared_provider:
+            return {**self._recovery_settings, "project_id": project_id, "shared_provider": True}
         if project_id:
             return {**self._recovery_settings, "project_id": project_id}
         return self._recovery_settings
@@ -452,8 +458,10 @@ class OpenCodeAdapter:
             "opencode", session.swarm_id,
             root=service.root if service else None, directory=session.directory,
             native_id=None if reserving else session.native_id, model_revision=session.model_revision,
-            settings_revision=recovery.settings_revision(self._session_recovery_settings(session.project_id)),
-            permission=session.desired_permission,
+            settings_revision=recovery.settings_revision(self._session_recovery_settings(
+                session.project_id, session.shared_provider,
+            )),
+            permission=session.desired_permission, shared_provider=session.shared_provider,
         )
         if service:
             service.retain_data = True
