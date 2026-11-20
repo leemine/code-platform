@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import os
 import re
+import stat
 from pathlib import Path
 from urllib.parse import urlsplit
 
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
+OPENCODE_RELAY_ENV = "JIUWENSWARM_OPENCODE_RELAY_URL"
+OPENCODE_RELAY_PATH = "/provider/opencode"
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class CloudConfig:
     runtime_env: tuple = ()
     resource_pool_id: str | None = None
     resource_reconciler_socket: str | None = None
+    opencode_provider: dict | None = None
 
     @classmethod
     def load(cls, path=None):
@@ -95,12 +100,14 @@ class CloudConfig:
             if not endpoint.is_absolute() or ".." in endpoint.parts:
                 raise ValueError("resource_reconciler_socket must be an absolute deployment path")
         self._runtime_account()
+        if self.opencode_provider is not None:
+            self._validate_opencode_provider()
         for mount in self.extra_mounts:
             target = str(mount.get("target", ""))
             if not target.startswith("/") or any(Path(target) == Path(x) or Path(target).is_relative_to(x) or Path(x).is_relative_to(target)
                                                     for x in ("/data", "/run/jiuwenswarm")):
                 raise ValueError("extra mount overlaps isolated runtime storage")
-        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE"}:
+        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV}:
             raise ValueError("runtime environment overrides isolated paths")
         public = urlsplit(self.public_origin)
         if (public.scheme != "https" or not public.hostname or public.username or public.password
@@ -118,3 +125,34 @@ class CloudConfig:
             raise ValueError("control and workspace roots must be separate")
         if self.cpu <= 0 or self.memory <= 0 or self.ready_timeout <= 0:
             raise ValueError("positive resource limits and deadline required")
+
+
+    def _validate_opencode_provider(self):
+        if self.resource_reconciler_socket is not None:
+            raise ValueError("Managed OpenCode requires a Provider-compatible physical resource boundary")
+        frontend = urlsplit(self.frontend_endpoint)
+        if (frontend.scheme not in {"http", "https"} or not frontend.hostname
+                or frontend.username or frontend.password or frontend.query or frontend.fragment):
+            raise ValueError("Managed OpenCode requires an explicit YuanRong Frontend endpoint")
+        profile = self.opencode_provider
+        if (not isinstance(profile, dict) or not {"image", "model_config"} <= profile.keys()
+                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds"}
+                or not isinstance(profile["image"], str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
+            raise ValueError("Managed OpenCode requires an immutable image and model configuration")
+        if not isinstance(profile["model_config"], str):
+            raise ValueError("Managed OpenCode requires a model configuration file")
+        path = Path(profile["model_config"])
+        if (not path.is_absolute() or path.is_relative_to(self.workspace_root)
+                or path.resolve() != path or not path.is_file()):
+            raise ValueError("Managed OpenCode model configuration must be outside account workspaces")
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError("Managed OpenCode model configuration must be private")
+        for key in ("cpu", "memory"):
+            value = profile.get(key, 1024)
+            if type(value) is not int or value <= 0:
+                raise ValueError("Managed OpenCode requires a positive resource budget")
+        interval = profile.get("idle_seconds", 300)
+        if type(interval) not in {int, float} or not math.isfinite(interval) or interval <= 0:
+            raise ValueError("Managed OpenCode requires a positive idle timeout")

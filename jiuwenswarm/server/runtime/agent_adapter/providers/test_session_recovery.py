@@ -362,6 +362,186 @@ def test_borrowed_opencode_lost_create_response_is_not_retried(providers, borrow
     asyncio.run(scenario())
 
 
+
+@pytest.fixture
+def managed_opencode(providers, monkeypatch, tmp_path):
+    from gateway.common.security.opencode_relay_auth import HEADER
+    from jiuwenswarm.server.runtime.session import session_metadata
+
+    relay_base = 'https://gateway.example.invalid/api/provider/opencode'
+    project_a, project_b = tmp_path / 'project-a', tmp_path / 'project-b'
+    project_a.mkdir()
+    project_b.mkdir()
+    metadata = {
+        'session-a': {'project_id': 'project-a', 'project_dir': str(project_a)},
+        'session-b': {'project_id': 'project-b', 'project_dir': str(project_b)},
+    }
+    calls = []
+    clients = []
+    state = SimpleNamespace(busy=False, healthy=True)
+    auth_file = tmp_path / 'worker.json'
+
+    def set_epoch(epoch, *, actor_id='alice'):
+        auth_file.write_text(json.dumps({
+            'mode': 'user_instance',
+            'instance_id': f'worker-{epoch}',
+            'epoch': epoch,
+            'workspace': str(tmp_path),
+            'login_owner': {'actor_id': actor_id, 'authority': 'test'},
+            'signing_key': '1' * 64,
+        }), encoding='utf-8')
+        auth_file.chmod(0o600)
+
+    set_epoch(1)
+    monkeypatch.setenv('JIUWENSWARM_OPENCODE_RELAY_URL', relay_base)
+    monkeypatch.setenv('JIUWENSWARM_INSTANCE_AUTH_FILE', str(auth_file))
+
+    def read_metadata(sid, *, cache_bust, enable_writeback):
+        assert cache_bust and not enable_writeback
+        return metadata.get(sid, {})
+
+    monkeypatch.setattr(session_metadata, 'get_session_metadata', read_metadata)
+
+    def unexpected_direct_connection(*args, **kwargs):
+        pytest.fail("Operator-managed OpenCode fell back to a direct connection")
+
+    monkeypatch.setattr(providers.opencode, 'resolve_cli', unexpected_direct_connection)
+    monkeypatch.setattr(providers.opencode.transport, 'create_client', unexpected_direct_connection)
+    original_client = httpx.AsyncClient
+
+    def respond(request):
+        assert request.url.host == 'gateway.example.invalid'
+        assert request.url.path.startswith('/api/provider/opencode/')
+        project_id, endpoint = request.url.path[len('/api/provider/opencode/'):].split('/', 1)
+        assert request.url.params['directory'] == str(tmp_path / project_id)
+        claims = json.loads(request.headers[HEADER])['claims']
+        calls.append((project_id, request.method, endpoint, claims['epoch']))
+        native_id = 'native-' + project_id
+        identity = {'id': native_id, 'directory': str(tmp_path / project_id)}
+        if endpoint == 'global/health':
+            return httpx.Response(200, json={'healthy': state.healthy})
+        if endpoint in ('session', f'session/{native_id}'):
+            return httpx.Response(200, json=identity)
+        if endpoint == 'session/status':
+            return httpx.Response(200, json={native_id: {'type': 'busy'}} if state.busy else {})
+        if endpoint == 'event':
+            return httpx.Response(200, text='', headers={'Content-Type': 'text/event-stream'})
+        pytest.fail(f'Unexpected native mutation or endpoint {request.method} {endpoint}')
+
+    def create_client(*args, **kwargs):
+        client = original_client(*args, transport=httpx.MockTransport(respond), **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(httpx, 'AsyncClient', create_client)
+
+    async def new_adapter():
+        adapter = providers.opencode.OpenCodeAdapter(mode='code')
+        await adapter.create_instance({
+            'permissions': {'enabled': True},
+            'opencode': {
+                'url': 'https://ignored.example.invalid',
+                'cli_path': '/ignored-opencode',
+                'model': {'providerID': 'fixture', 'modelID': 'fixture'},
+            },
+        }, mode='code')
+        return adapter
+
+    async def prepare(adapter, sid, directory=None):
+        await adapter.prepare_session(session_id=sid, channel_id='web', mode='code', project_dir=directory)
+
+    return SimpleNamespace(calls=calls, clients=clients, new_adapter=new_adapter, prepare=prepare,
+                           project_a=project_a, metadata=metadata, set_epoch=set_epoch, state=state)
+
+
+def test_managed_opencode_recovers_project_sessions_after_worker_epoch_changes(providers, managed_opencode):
+    async def scenario():
+        relay = managed_opencode
+        adapter = await relay.new_adapter()
+        try:
+            await relay.prepare(adapter, 'session-a')
+            await relay.prepare(adapter, 'session-b')
+            assert adapter._sessions['session-a'].native_id == 'native-project-a'
+            assert adapter._sessions['session-b'].native_id == 'native-project-b'
+            assert len(relay.clients) == 2 and relay.clients[0] is not relay.clients[1]
+            binding = providers.session_recovery.load('opencode', 'session-a', str(relay.project_a))
+            assert binding['version'] == 2
+        finally:
+            await adapter.cleanup()
+        assert all(client.is_closed for client in relay.clients)
+
+        relay.set_epoch(2)
+        restored = await relay.new_adapter()
+        try:
+            await relay.prepare(restored, 'session-a')
+            assert restored._sessions['session-a'].native_id == 'native-project-a'
+            assert relay.calls.count(('project-a', 'POST', 'session', 1)) == 1
+            assert ('project-a', 'GET', 'session/native-project-a', 2) in relay.calls
+            assert ('project-a', 'POST', 'session', 2) not in relay.calls
+        finally:
+            await restored.cleanup()
+
+        relay.set_epoch(3, actor_id='bob')
+        other_account = await relay.new_adapter()
+        request_count = len(relay.calls)
+        try:
+            with pytest.raises(ValueError, match='configuration changed'):
+                await relay.prepare(other_account, 'session-a')
+            assert len(relay.calls) == request_count
+        finally:
+            await other_account.cleanup()
+
+    asyncio.run(scenario())
+
+
+def test_managed_opencode_rejects_workspace_override_and_avoids_creation_if_unready(providers, managed_opencode, tmp_path):
+    async def scenario():
+        relay = managed_opencode
+        adapter = await relay.new_adapter()
+        try:
+            with pytest.raises(ValueError, match='project binding'):
+                await relay.prepare(adapter, 'session-a', str(tmp_path))
+            assert not relay.clients
+            relay.state.healthy = False
+            with pytest.raises(RuntimeError, match='unhealthy'):
+                await relay.prepare(adapter, 'session-a')
+            assert providers.session_recovery.load('opencode', 'session-a', str(relay.project_a)) is None
+            assert relay.clients[0].is_closed
+            relay.state.healthy = True
+            await relay.prepare(adapter, 'session-a')
+            assert relay.calls.count(('project-a', 'POST', 'session', 1)) == 1
+        finally:
+            await adapter.cleanup()
+
+    asyncio.run(scenario())
+
+
+def test_managed_opencode_checks_idle_inside_stream_hold_without_aborting_busy_session(managed_opencode):
+    async def scenario():
+        from jiuwenswarm.common.schema.agent import AgentRequest
+        from jiuwenswarm.common.schema.message import ReqMethod
+
+        relay = managed_opencode
+        adapter = await relay.new_adapter()
+        try:
+            await relay.prepare(adapter, 'session-a')
+            relay.state.busy = True
+            request = AgentRequest(request_id='turn', channel_id='web', session_id='session-a',
+                                   req_method=ReqMethod.CHAT_SEND, params={'mode': 'code'})
+            with pytest.raises(ValueError, match='still active'):
+                async for _ in adapter.process_message_stream_impl(request, {'query': 'hello'}):
+                    pass
+            assert [('GET', 'event'), ('GET', 'session/native-project-a'), ('GET', 'session/status')] == [
+                (method, endpoint) for _, method, endpoint, _ in relay.calls[-3:]
+            ]
+            assert not adapter._sessions['session-a'].active
+            assert not any(endpoint.endswith(('/prompt_async', '/abort')) for _, _, endpoint, _ in relay.calls)
+        finally:
+            await adapter.cleanup()
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize('provider', ['codex', 'claude', 'opencode'])
 def test_legacy_history_without_binding_is_not_silently_replayed(providers, monkeypatch, tmp_path, provider):
     from jiuwenswarm.server.runtime.session import session_history

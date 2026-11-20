@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from gateway.auth.account_authenticator import current_account
+from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
 from gateway.common.security.service_auth import ServiceAuthenticator, SERVICE_AUTH_HEADER
 from gateway.extensions.agentos.agentos_router.lifecycle import LaunchPlan
 from gateway.services.cloud_environments import EnvironmentUnavailable
 
 
 class CloudInstancePolicy:
-    def __init__(self, store, *, ready_timeout=120, resources=None):
+    def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None):
+        self.opencode_relay_url = opencode_relay_url
         self.resources = resources
         self.store = store
         self.ready_timeout = ready_timeout
@@ -48,6 +50,8 @@ class CloudInstancePolicy:
         env.update(CODE_PLATFORM_ROLE="account-instance", JIUWENSWARM_DATA_DIR="/data", JIUWENSWARM_CONFIG_DIR="/data/config", AGENT_SERVER_HOST="0.0.0.0",
                    JIUWENSWARM_INSTANCE_AUTH_FILE="/run/jiuwenswarm/instance-auth.json",
                    JIUWENSWARM_CONTAINER_FILE_ROOT="/home/agentos")
+        if self.opencode_relay_url:
+            env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

@@ -1,7 +1,7 @@
 """OpenCode AgentAdapter using the official HTTP/SSE API, without agent-core.
 
 The host owns scheduling, history and stream consumption. This adapter owns CLI
-services or borrows an explicitly configured server without disposing that server.
+services or connects to an external server directly or through a managed relay.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,9 @@ class _Session:
     pending: dict[str, str] = field(default_factory=dict)
     control_replied: asyncio.Event = field(default_factory=asyncio.Event)
     service: Any = None
+    relay_client: Any = None
+    project_id: str = ""
+    prompt_attempted: bool = False
     equipment: Any = None
     equipment_error: bool = False
     desired_permission: str = "default"
@@ -167,6 +171,8 @@ class OpenCodeAdapter:
         self._configured = False
         self._permission_profile = "default"
         self._recovery_settings = {}
+        self._relay_url = ""
+        self._relay_auth_file = None
 
     async def create_instance(self, config=None, *, mode="agent", sub_mode=None):
         if mode not in {"agent", "code"} or sub_mode not in {None, "normal"}:
@@ -182,29 +188,18 @@ class OpenCodeAdapter:
             raise ValueError("Native run permissions are not supported by OpenCode adapter")
         settings = (config.get("opencode") if "opencode" in config else get_config().get("opencode", {})) or {}
         self._recovery_settings = dict(settings)
-        executable = settings.get("cli_path")
+        self._relay_url = os.environ.get("JIUWENSWARM_OPENCODE_RELAY_URL", "").strip().rstrip("/")
         url = str(settings.get("url") or "").strip()
-        if executable or not url:
-            self._executable = resolve_cli("opencode", explicit=str(executable) if executable else None,
-                                           candidates=cli_candidates())
-            if not self._executable:
-                raise ValueError("OpenCode CLI was not found. Install OpenCode for this user, set opencode.cli_path, or configure opencode.url")
-        parsed = urlparse(url)
-        if not self._executable and (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password):
-            raise ValueError("OpenCode server URL must be explicit and contain no credentials")
-        if not self._executable and parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
-            raise ValueError("Remote OpenCode servers require HTTPS")
+        if self._relay_url:
+            self._executable = None
+            self._configure_relay(settings)
+            self._directory = ""
+        else:
+            self._configure_direct_connection(settings, url)
         model = settings.get("model", {})
         if model and (set(model) != {"providerID", "modelID"} or not all(isinstance(x, str) and x for x in model.values())):
             raise ValueError("OpenCode requires an explicit providerID/modelID")
-        directory = settings.get("directory")
-        if not directory and self._executable:
-            from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
-            directory = get_default_project_session_workspace_dir()
-        directory = Path(directory or "").expanduser()
-        if not directory.is_absolute() or not directory.is_dir():
-            raise ValueError("OpenCode requires an existing absolute workspace directory")
-        self._directory, self._model = str(directory.resolve()), dict(model)
+        self._model = dict(model)
         raw_timeout = settings.get("turn_timeout")
         self._timeout = float(raw_timeout) if raw_timeout is not None else None
         if raw_timeout is not None and (isinstance(raw_timeout, bool) or not math.isfinite(self._timeout) or self._timeout <= 0):
@@ -212,7 +207,7 @@ class OpenCodeAdapter:
         self._session_init_timeout = float(settings.get("session_init_timeout", 120))
         if not math.isfinite(self._session_init_timeout) or not 0 < self._session_init_timeout <= 600:
             raise ValueError("session_init_timeout must be finite and between 0 and 600 seconds")
-        if self._executable:
+        if self._executable or self._relay_url:
             self._configured = True
             return
         client = transport.create_client(url, username=settings.get("username", "opencode"), password=settings.get("password"))
@@ -228,14 +223,74 @@ class OpenCodeAdapter:
         self._client = client
         self._configured = True
 
-    async def _call(self, method, path, *, directory=None, body=None, session=None):
-        client = session.service.client if session and session.service else self._client
-        if client is None:
+    def _configure_relay(self, settings):
+        from gateway.common.security.service_auth import SERVICE_AUTH_ENV, ServiceAuthenticator
+
+        parsed = urlparse(self._relay_url)
+        if (parsed.scheme != "https" or not parsed.hostname or not parsed.path
+                or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.params):
+            raise ValueError("Managed OpenCode relay requires a configured HTTPS path")
+        auth_file = os.environ.get(SERVICE_AUTH_ENV)
+        try:
+            if not auth_file:
+                raise PermissionError("Missing Worker credential")
+            owner = ServiceAuthenticator(auth_file).public_binding()["owner"]
+        except (OSError, KeyError, TypeError, ValueError):
+            raise PermissionError("Managed OpenCode requires a valid Worker identity") from None
+        self._relay_auth_file = auth_file
+        self._recovery_settings = {
+            key: value for key, value in settings.items()
+            if key not in {"url", "username", "password", "directory", "cli_path"}
+        }
+        # The account identity and relay stay stable when either instance is replaced.
+        self._recovery_settings.update(relay_url=self._relay_url, relay_owner=owner)
+
+    def _configure_direct_connection(self, settings, url):
+        executable = settings.get("cli_path")
+        if executable or not url:
+            self._executable = resolve_cli("opencode", explicit=str(executable) if executable else None,
+                                           candidates=cli_candidates())
+            if not self._executable:
+                raise ValueError("OpenCode CLI was not found. Install OpenCode for this user, set opencode.cli_path, or configure opencode.url")
+        parsed = urlparse(url)
+        if not self._executable and (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password):
+            raise ValueError("OpenCode server URL must be explicit and contain no credentials")
+        if not self._executable and parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("Remote OpenCode servers require HTTPS")
+        directory = settings.get("directory")
+        if not directory and self._executable:
+            from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
+            directory = get_default_project_session_workspace_dir()
+        directory = Path(directory or "").expanduser()
+        if not directory.is_absolute() or not directory.is_dir():
+            raise ValueError("OpenCode requires an existing absolute workspace directory")
+        self._directory = str(directory.resolve())
+
+    def _create_relay_client(self, project_id):
+        import httpx
+        from gateway.common.security.opencode_relay_auth import OpenCodeRelayAuth
+
+        return httpx.AsyncClient(
+            base_url=f"{self._relay_url}/{project_id}",
+            auth=OpenCodeRelayAuth(self._relay_auth_file),
+            trust_env=False,
+        )
+
+    def _session_client(self, session):
+        if session and session.service:
+            return session.service.client
+        if session and session.relay_client:
+            return session.relay_client
+        if self._client is None:
             raise RuntimeError("OpenCode adapter is not configured")
+        return self._client
+
+    async def _call(self, method, path, *, directory=None, body=None, session=None):
         initializing = method == "POST" and path == "/session"
-        return await transport.request_json(client, method, path,
+        managed = session is not None and session.relay_client is not None
+        return await transport.request_json(self._session_client(session), method, path,
             directory=directory or (session.directory if session else self._directory), body=body,
-            timeout=self._session_init_timeout if initializing else 15,
+            timeout=self._session_init_timeout if initializing or managed else 15,
             operation="session initialization" if initializing else "API request")
 
     def build_query(self, request, turn):
@@ -258,25 +313,45 @@ class OpenCodeAdapter:
                 request.params["skills"] = selected
         return rendered, turn
 
+    @staticmethod
+    def _managed_project(session_id):
+        from gateway.common.work_mode import is_default_project_id
+        from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+        saved = get_session_metadata(session_id, cache_bust=True, enable_writeback=False)
+        project_id = saved.get("project_id")
+        directory = saved.get("project_dir")
+        if (not isinstance(project_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,159}", project_id)
+                or is_default_project_id(project_id) or not isinstance(directory, str)
+                or not Path(directory).is_absolute() or not Path(directory).is_dir()):
+            raise ValueError("Managed OpenCode requires a persisted project workspace binding")
+        return project_id, str(Path(directory).resolve())
+
     def _resolve_session_directory(self, session_id, project_dir=None):
         current = self._sessions.get(session_id)
+        if not project_dir and not current and self._relay_url:
+            _, project_dir = self._managed_project(session_id)
         path = Path(project_dir).expanduser() if project_dir else Path(current.directory if current else self._directory)
         if not path.is_absolute() or not path.is_dir():
             raise ValueError("OpenCode session requires an existing absolute workspace directory")
         directory = str(path.resolve())
         if current and directory != current.directory:
             raise ValueError("OpenCode session workspace cannot change after binding")
-        if not self._executable and directory != self._directory:
+        if not self._executable and not self._relay_url and directory != self._directory:
             raise ValueError("OpenCode session workspace must match its configured binding")
         return directory
 
     def execution_input_policy(self, request):
         from ..execution_input import ExecutionInputPolicy
-        session = self._sessions.get(request.session_id or "default")
+        sid = request.session_id or "default"
+        session = self._sessions.get(sid)
+        directory = session.directory if session else self._directory or None
+        if directory is None and self._relay_url:
+            _, directory = self._managed_project(sid)
         return ExecutionInputPolicy(
             require_model=not self._model or bool(request.params.get("model_name") or request.params.get("model_selection")),
             include_model_catalog=bool(self._executable), strip_agentos_max_tokens=True, catalog_settings_key="opencode",
-            bound_directory=session.directory if session else self._directory or None,
+            bound_directory=directory,
         )
 
     @staticmethod
@@ -290,15 +365,19 @@ class OpenCodeAdapter:
         from gateway.common.mode_matrix import deprecate_mode, NEW_AGENT_WORK_NORMAL, NEW_AGENT_CODE_NORMAL
         if deprecate_mode(mode) not in {NEW_AGENT_WORK_NORMAL, NEW_AGENT_CODE_NORMAL}:
             raise ValueError("OpenCode adapter supports single Agent/code only")
-        directory = self._resolve_session_directory(session_id, project_dir)
-        if session_id not in self._sessions:
+        project_id, trusted_directory = self._managed_project(session_id) if self._relay_url else ("", None)
+        directory = self._resolve_session_directory(session_id, project_dir or trusted_directory)
+        current = self._sessions.get(session_id)
+        if trusted_directory is not None and (directory != trusted_directory or current and current.project_id != project_id):
+            raise ValueError("Managed OpenCode session workspace does not match its project binding")
+        if current is None:
             from ..execution_input import session_facts
             facts = facts or session_facts(session_id)
             binding = recovery.load("opencode", session_id, directory)
             if binding:
                 if bool(self._executable) != (binding["version"] == 1):
                     raise ValueError("OpenCode recovery requires its original server mode")
-                recovery.require_settings(binding, self._recovery_settings)
+                recovery.require_settings(binding, self._session_recovery_settings(project_id))
                 if binding["native_id"] is None:
                     raise ValueError("OpenCode native session creation outcome is unknown; it cannot be retried safely")
             elif facts.has_assistant_history:
@@ -306,7 +385,7 @@ class OpenCodeAdapter:
             from .opencode_equipment import Equipment
             session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
                 model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
-                usage=OpenCodeUsage(complete=not bool(binding)),
+                usage=OpenCodeUsage(complete=not bool(binding)), project_id=project_id,
                 desired_permission=binding["permission"] if binding and self._executable else self._permission_profile)
             if self._executable:
                 from .opencode_service import SessionService
@@ -317,21 +396,23 @@ class OpenCodeAdapter:
             try:
                 if not session.service:
                     await self._apply_permissions(session)
+                    if project_id:
+                        session.relay_client = self._create_relay_client(project_id)
                     if not binding:
+                        if session.relay_client:
+                            # Allocate and check readiness before reserving native creation.
+                            health = await self._call("GET", "/global/health", session=session)
+                            if not isinstance(health, dict) or health.get("healthy") is not True:
+                                raise RuntimeError("Managed OpenCode server is unhealthy")
                         self._save_binding(session, reserving=True)
                 if session.service:
                     self._set_service_models(session, execution)
                     await session.service.configure(session.equipment, permission_profile=session.desired_permission)
                 if binding:
-                    native = await self._call("GET", f"/session/{session.native_id}", session=session)
-                    if native.get("id") != session.native_id or native.get("directory") != directory:
-                        raise ValueError("OpenCode recovery returned another session or workspace")
-                    statuses = await self._call("GET", "/session/status", session=session)
-                    if statuses.get(session.native_id, {}).get("type", "idle") != "idle":
-                        raise ValueError("OpenCode native session is still active; recovery was not started")
+                    await self._require_idle_native_session(session)
                 else:
                     native = await self._call("POST", "/session", body={"title": "Swarm single Agent"}, session=session)
-                session.native_id = native["id"]
+                    session.native_id = native["id"]
                 self._sessions[session_id] = session
                 async with session.configuration_lock:
                     if not binding:
@@ -339,10 +420,29 @@ class OpenCodeAdapter:
                     await self._apply_permissions(session)
                     self._save_binding(session)
             except BaseException:
-                self._sessions.pop(session_id, None)
+                if self._sessions.get(session_id) is session:
+                    del self._sessions[session_id]
                 if session.service:
                     await session.service.close()
+                elif session.relay_client:
+                    await session.relay_client.aclose()
                 raise
+
+    async def _require_idle_native_session(self, session):
+        native = await self._call("GET", f"/session/{session.native_id}", session=session)
+        if not isinstance(native, dict) or native.get("id") != session.native_id or native.get("directory") != session.directory:
+            raise ValueError("OpenCode recovery returned another session or workspace")
+        statuses = await self._call("GET", "/session/status", session=session)
+        if not isinstance(statuses, dict):
+            raise RuntimeError("OpenCode did not return native session status")
+        status = statuses.get(session.native_id, {"type": "idle"})
+        if not isinstance(status, dict) or status.get("type") != "idle":
+            raise ValueError("OpenCode native session is still active; recovery was not started")
+
+    def _session_recovery_settings(self, project_id):
+        if project_id:
+            return {**self._recovery_settings, "project_id": project_id}
+        return self._recovery_settings
 
     def _save_binding(self, session, *, reserving=False):
         if not session.swarm_id or (not reserving and not session.native_id):
@@ -352,7 +452,7 @@ class OpenCodeAdapter:
             "opencode", session.swarm_id,
             root=service.root if service else None, directory=session.directory,
             native_id=None if reserving else session.native_id, model_revision=session.model_revision,
-            settings_revision=recovery.settings_revision(self._recovery_settings),
+            settings_revision=recovery.settings_revision(self._session_recovery_settings(session.project_id)),
             permission=session.desired_permission,
         )
         if service:
@@ -456,6 +556,7 @@ class OpenCodeAdapter:
             self._save_binding(session)
             session.restored = False
             session.active, session.cancelled, session.permission_denied = True, False, False
+            session.prompt_attempted = session.relay_client is None
         terminal = False
         text_parts: dict[str, str] = {}
         part_types: dict[str, str] = {}
@@ -477,8 +578,15 @@ class OpenCodeAdapter:
                     except Exception as exc:
                         logger.info("OpenCode usage restore unavailable error_type=%s", type(exc).__name__)
             async with asyncio.timeout(self._timeout) as turn_budget:
-                async with transport.subscribe(session.service.client if session.service else self._client, session.directory) as events:
-                    # Establish the sole event subscription before accepting the prompt.
+                async with transport.subscribe(self._session_client(session), session.directory) as events:
+                    # The relay holds the instance while the event stream is open.
+                    if session.relay_client:
+                        await self._require_idle_native_session(session)
+                        if session.cancelled:
+                            terminal = True
+                            yield self._chunk(request, {"event_type":"chat.error", "code":"cancelled", "error":"Execution cancelled"}, complete=True, outcome="cancelled")
+                            return
+                        session.prompt_attempted = True
                     await self._call("POST", f"/session/{session.native_id}/prompt_async", body={
                         "model": selected_model, "parts": [{"type": "text", "text": inputs["query"]}],
                         "system": (
@@ -572,7 +680,8 @@ class OpenCodeAdapter:
             # Only our explicitly configured budget can claim a Turn deadline.
             if not turn_budget.expired():
                 raise RuntimeError("OpenCode native operation timed out") from None
-            await self._abort_and_check(session)
+            if session.prompt_attempted:
+                await self._abort_and_check(session)
             terminal = True
             # Reuse the existing successful-abort lifecycle projection to close
             # permission UI; timeout still ends the request as an error, not success.
@@ -582,7 +691,7 @@ class OpenCodeAdapter:
                 "error":"OpenCode turn timed out while executing or waiting for approval"},
                 complete=True, outcome="error")
         finally:
-            if not terminal:
+            if not terminal and session.prompt_attempted:
                 # Keep the active owner if abort fails: do not allow another turn
                 # to reuse a native session whose execution might still be running.
                 try:
@@ -591,6 +700,7 @@ class OpenCodeAdapter:
                     session.abort_failed = True
                     raise
             session.active = False
+            session.prompt_attempted = False
             session.pending.clear()
             async with session.configuration_lock:
                 try:
@@ -658,7 +768,8 @@ class OpenCodeAdapter:
             raise ValueError("OpenCode pilot supports cancel, not pause/resume/supplement")
         session = self._sessions.get(request.session_id or "default")
         if session and session.active:
-            await self._call("POST", f"/session/{session.native_id}/abort", session=session)
+            if session.relay_client is None or session.prompt_attempted:
+                await self._call("POST", f"/session/{session.native_id}/abort", session=session)
             session.cancelled = True
             session.control_replied.set()
         return AgentResponse(request.request_id, request.channel_id, payload={"event_type":"chat.interrupt_result", "intent":"cancel", "success":True})
@@ -683,6 +794,8 @@ class OpenCodeAdapter:
                     del self._sessions[session_id]
             else:
                 # Remote state is retained for the next Worker to reattach.
+                if session.relay_client:
+                    await session.relay_client.aclose()
                 del self._sessions[session_id]
             return True
 

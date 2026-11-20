@@ -74,3 +74,39 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 ## Codex运行安全装配候选（2026-11-11）
 
 新增可选独立安全装配及无模型探针，见[配置、验收与退出契约](RUNTIME_SECURITY_CONTRACT.md)／[English](RUNTIME_SECURITY_CONTRACT.en.md)。原日志／物理确认入口仅补调用，不新增创建回收链，SDK及产品默认权限不变。当前真实探针显示命名空间可用、写边界生效，但同UID工作区外合成控制文件仍可读，因此不能启用于真实账号；未修改现有systemd或113运行配置。
+
+## 独立 OpenCode 执行实例
+
+在云工作区配置加入可选的 `opencode_provider`。启用后，Gateway 通过原元戎
+Frontend 管理 API 为 OpenCode 按账号、项目和 Provider 分配实例。Worker 的
+账号实例和会话历史沿用原入口。配置示例使用由部署方提供的镜像摘要和模型文件。
+
+```json
+{
+  "opencode_provider": {
+    "image": "sha256:<OpenCode 容器镜像摘要>",
+    "model_config": "/opt/code-platform/private/opencode-models.json",
+    "cpu": 1000,
+    "memory": 1024,
+    "idle_seconds": 300
+  }
+}
+```
+
+镜像包含官方 `opencode` 和 `sh`，并支持 Worker 现有的 POSIX 运行账号。
+模型文件为运维私有 JSON，包含 OpenCode 可用的模型配置，供独立实例启动。
+动态选模使用与 Worker 模型目录一致的 OpenCode 模型映射。模型配置随项目
+绑定保存，运行认证与原生状态保存在 Gateway 管理的目录。管理目录及项目
+路径必须能被执行池以相同路径访问。
+
+新启动的账号 Worker 获得由 Gateway 确定的 HTTPS 中继地址。现有 Worker
+需要重新启动才能读取该地址。开启后，使用已登记云项目的 OpenCode 会话
+通过中继运行，项目目录仍来自原 ProjectStore。OpenCode 容器挂载该项目、
+独立的持久状态和本代只读启动配置。远端模式使用现有 Default 审批控制。
+
+同一项目绑定并发申请只创建一个实例。Gateway 在 HTTP 请求和 SSE 流期间
+持有实例，空闲且原生会话确认空闲后方可回收。创建应答丢失时先按元戎信息
+对账。回收确认后复用原状态卷，新实例接回原生会话。当前产品候选以元戎
+单实例 API 的 404 作为回收确认。现有 Worker 物理验证和日志准入规则依赖
+账号 `/data` 与 Worker 身份挂载，需为 Provider 单独适配并完成真实隔离池验收。
+启用现有 `resource_reconciler_socket` 的部署会拒绝这一 OpenCode 配置组合。

@@ -83,6 +83,10 @@ Runtime 和 Facade 继续拥有会话、Turn、生产者与历史。外部 adapt
 
 由 Worker 保存 Swarm 会话与远端原生会话的绑定。记录位于原 Provider 私有绑定目录，自有 CLI 沿用 v1，远端 OpenCode 使用 v2，无本地原生状态根。连接和模型只保存摘要。Worker 先持久化创建占位，收到原生会话 ID 后再提交绑定，创建结果未知时停止重试。重启后检查配置与固定工作区，确认原生会话身份及空闲状态，再用同一会话续聊。运行时释放保留原生状态。当前 Swarm 会话删除也走同一释放入口，远端原生记录仍保留。永久清理远端数据和接管进行中的回合需独立生命周期契约。
 
+## 元戎托管的 OpenCode
+
+云工作区插件可为账号 Worker 注入运维配置的 OpenCode HTTPS 中继。托管会话通过持久会话元数据选择真实项目，校验固定工作区。Gateway 用当前 Worker 的账号和代次认证请求，再核对原 ProjectStore。分配键为账号、项目和 OpenCode。原来的会话绑定存储保存稳定中继与项目身份的摘要，跨实例换代沿用。Gateway 在 SSE 流和每个原生请求期间保留实例，只有原生状态空闲且无持有时回收。元戎创建结果不明时复核现有实例，回收确认后新一代挂载原状态卷。Worker 在已经持有 SSE 的情况下核验原生 ID、目录和空闲状态，再提交新回合。物理实例地址和元戎管理凭据留在 Gateway。
+
 ## 全局权限档位与 Provider 生效状态
 
 继续使用原全局 permissions 配置与 reload_agent_config(config_base, env_overrides, target_session_id, reload_scopes)。会话 desired/effective 只是投影，不形成第二个权限配置源。插件可选实现 PermissionAwareAdapter.runtime_permission_status，提供 supported_profiles、update_timing、desired_profile、effective_profile（未确认 null）和 not_started/pending/applied/failed/unsupported；工厂可声明 permission_profiles 供原配置目录与选择器读取。未实现可选接口的 Native 保持原生命周期/界面，不强制迁移。

@@ -182,3 +182,11 @@ The adapter snapshots catalog content and checks its digest on native-session re
 settings require a new validation session; existing bindings and history are not silently migrated.
 The native usable-window reserve remains intact: 1000000 reports950000; `1M` reports996147 in this validation.
 UI projection continues to use native events. Browser UI, tools and long-context multi-turn compaction require separate acceptance.
+
+## Managed OpenCode for cloud workspaces
+
+When the cloud workspace deployment enables `opencode_provider`, the account
+Worker connects to a separate OpenCode service through the Gateway using a
+registered project. After idle reclamation, the replacement service attaches
+the original state volume and continues the original native session. Existing
+fixed-URL deployments keep their own state and require a separate migration.

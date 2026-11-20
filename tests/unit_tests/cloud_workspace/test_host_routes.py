@@ -96,3 +96,26 @@ async def test_normal_extension_loader_loads_configured_plugin(tmp_path, monkeyp
         assert loaded[0].http_routes()[0].path == '/api/v1/auth/organization/register'
     finally:
         await loaded[0].shutdown()
+
+
+def test_host_mounts_managed_open_code_route_only_when_assembled():
+    from types import SimpleNamespace
+    from fastapi import Request
+    from gateway.extensions.cloud_workspace.extension import CloudWorkspacePlugin
+
+    config = SimpleNamespace(api_prefix="/api/v1/auth/organization")
+    plugin = CloudWorkspacePlugin(config)
+    assert not any("/provider/" in route.path for route in plugin.http_routes())
+
+    async def relay(request: Request):
+        return request.path_params
+
+    plugin.environments = SimpleNamespace(opencode_relay=SimpleNamespace(handle=relay))
+    registry = ExtensionRegistry(None, {}, None)
+    registry.register_application_plugin(plugin)
+    app = FastAPI()
+    mount_application_plugin_http_routes(app, registry)
+    with TestClient(app) as client:
+        assert client.get(config.api_prefix + "/provider/opencode/project_1/global/health").json() == {
+            "project_id": "project_1", "path": "global/health",
+        }
