@@ -146,6 +146,23 @@ async def test_shared_relay_keeps_session_routes_events_and_controls_project_sco
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("http_code", "healthy", "expected"), [(200, True, True), (201, True, False), (200, False, False)])
+async def test_ready_probe_requires_authenticated_ok_and_healthy_response(relay, http_code, healthy, expected):
+    broker, *_ = relay
+
+    async def upstream(request):
+        assert request.method == "GET"
+        assert request.url.path == "/serverless/v1/http/global/health"
+        assert request.headers["authorization"] == "Basic " + base64.b64encode(b"opencode:test").decode()
+        return httpx.Response(http_code, json={"healthy": healthy})
+
+    lease = SimpleNamespace(instance_id="scoped-instance", directory=DIRECTORY, password="test")
+    async with broker._client, httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        broker._client = client
+        assert await broker.pool.ready_check(lease) is expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("status", "body", "expected"), [
     (502, "failed to dial sandbox\n", OpenCodeFault.LISTENER_UNAVAILABLE),
     (502, "bad gateway", None),

@@ -5,10 +5,12 @@ id: S_01_cloud-account-instance
 title: 云账号与原实例链契约
 type: S
 modules: [gateway, server/front]
-files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
+files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
 ---
 
 # 云账号与原实例链契约
+
+独立 OpenCode Provider 在核对元戎实例归属后，按分配代次确认应用就绪。带认证的 `/global/health` 返回 HTTP 200 且 `healthy: true` 才能获得该代首次中继租约。元戎报告 `RUNNING` 后，在同一就绪时限内重试健康 GET。超时保留原分配，会话创建和消息请求没有内部重放。运行状态缺失时，仍以归属校验和带认证健康结果共同确认就绪。
 
 独立账号服务是账号库唯一写者；环境库只保存账号引用、固定镜像、注册意图、实例操作回执和代次。注册operation_id在账号权威与环境意图间闭合，密码不进入环境库。首版单控制面写者，不声称分布式租约。
 

@@ -44,7 +44,7 @@ class Frontend:
     async def get_agent_info(self, instance_id):
         return self.instances[instance_id]
 
-    async def wait_until_running(self, instance_id):
+    async def wait_until_running(self, instance_id, *, confirm_unreported_ready=None):
         return await self.get_agent_info(instance_id)
 
     async def delete_sandbox(self, instance_id):
@@ -200,6 +200,64 @@ async def test_legacy_frontend_checks_exact_mounts_before_open_code_readiness(sa
             pytest.fail("An instance with a different workspace must not produce a lease")
     assert probes == [original]
     assert len(frontend.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_running_shared_provider_retries_health_before_dispatch_once_per_generation(sandbox, monkeypatch):
+    pool, frontend, account, _ = sandbox
+    owner = account("tenant-one")
+    other = "/data/agent/workspace/code/other"
+    Path(owner["workspace"], "agent/workspace/code/other").mkdir()
+    probes = []
+    dispatched = []
+
+    async def healthy(lease):
+        probes.append(lease.instance_id)
+        assert not dispatched or lease.instance_id != dispatched[-1]
+        return probes.count(lease.instance_id) == 2
+
+    async def acquire(project, directory):
+        async with pool.hold(owner, project, directory, shared=True) as lease:
+            dispatched.append(lease.instance_id)
+
+    async def idle(lease):
+        return True
+
+    monkeypatch.setattr(cloud_opencode_pool, "READY_RETRY_SECONDS", 0)
+    pool.ready_check = healthy
+    pool.idle_check = idle
+    for generation in (1, 2):
+        await asyncio.gather(acquire("one", PROJECT_DIR), acquire("two", other))
+        instances = [f"provider-{index}" for index in range(1, generation + 1) for _ in range(2)]
+        assert probes == dispatched == instances
+        assert len(frontend.created) == generation
+        assert await pool.reclaim_idle() == 1
+
+
+@pytest.mark.asyncio
+async def test_running_provider_health_deadline_leaves_allocation_available_for_retry(sandbox, monkeypatch):
+    pool, frontend, account, _ = sandbox
+    owner = account("tenant-one")
+    probes = []
+    ready = False
+
+    async def healthy(lease):
+        probes.append(lease.instance_id)
+        return ready
+
+    monkeypatch.setattr(cloud_opencode_pool, "READY_RETRY_SECONDS", 0.001)
+    pool.ready_timeout = 0.04
+    pool.ready_check = healthy
+    with pytest.raises(EnvironmentUnavailable, match="allocation unavailable"):
+        async with pool.hold(owner, "project", PROJECT_DIR):
+            pytest.fail("A failed health check must withhold the lease")
+    assert set(probes) == {"provider-1"}
+    ready = True
+    pool.ready_timeout = 1
+    async with pool.hold(owner, "project", PROJECT_DIR) as lease:
+        assert lease.instance_id == probes[-1] == "provider-1"
+    assert len(frontend.created) == 1
+    assert not frontend.deleted
 
 
 @pytest.mark.asyncio

@@ -150,7 +150,8 @@ class CloudOpencodeRelay:
         url, query = self._route(lease, "global/health")
         try:
             result = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
-            result.raise_for_status()
+            if result.status_code != 200:
+                return False
             health = result.json()
         except (httpx.HTTPError, ValueError):
             return False
