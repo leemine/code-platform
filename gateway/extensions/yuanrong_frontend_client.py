@@ -18,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Mapping, TypedDict
 
@@ -292,10 +293,8 @@ def _is_agent_running(instance: Mapping[str, Any] | None) -> bool:
     """True only when GET explicitly reports ``status=running``.
 
     A non-empty instance without ``status`` (partial body with only
-    ``instance_id`` / ``node_ip``, or a Legacy GET that omitted the field)
-    is **not** ready. ``wait_until_running`` keeps polling until status is
-    ``running``, a failed status, or timeout — otherwise a mid-probe GET
-    would skip the startup probe wait and WS/SSH would connect too early.
+    ``instance_id`` / ``node_ip``, or a legacy GET that omitted the field)
+    does not itself prove readiness.
     """
     if not isinstance(instance, Mapping) or not instance:
         return False
@@ -708,15 +707,21 @@ class YuanrongFrontendAgentClient(AgentServerClient):
         return rows
 
     async def wait_until_running(
-        self, instance_id: str, *, trace_id: str | None = None
+        self,
+        instance_id: str,
+        *,
+        trace_id: str | None = None,
+        confirm_unreported_ready: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
     ) -> dict[str, Any]:
         """Poll GET /api/agent/:id until ``status`` is explicitly ``running``.
 
         Create is asynchronous: the port probe completes after POST returns
         ``instance_id``. Connect WS/SSH only after this method succeeds.
 
-        Missing ``status`` is not treated as ready: keep polling. Only an
-        explicit ``running`` (or a failed status / timeout) ends the loop.
+        By default a missing status keeps polling. A caller with an independent
+        application readiness check may provide ``confirm_unreported_ready``.
+        It can confirm a successful instance GET that omitted both ``status``
+        and ``state`` within the original wait budget.
         """
         normalized_id = str(instance_id or "").strip()
         if not normalized_id:
@@ -765,6 +770,20 @@ class YuanrongFrontendAgentClient(AgentServerClient):
                 )
                 return instance
             remaining = deadline - asyncio.get_running_loop().time()
+            if (
+                remaining > 0
+                and confirm_unreported_ready is not None
+                and instance
+                and "status" not in instance
+                and "state" not in instance
+            ):
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        if await confirm_unreported_ready(instance) is True:
+                            return instance
+                except TimeoutError:
+                    pass
+                remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 detail = (
                     str(last_error)

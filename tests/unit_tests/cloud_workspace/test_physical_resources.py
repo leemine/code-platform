@@ -106,6 +106,186 @@ def create(stack):
     return call(stack[3], "POST", "/v1.41/containers/create", stack[1])[0]
 
 
+@pytest.fixture
+def provider(boundary, tmp_path, monkeypatch):
+    gate, worker, account, shared = boundary
+    provider_root = tmp_path / "providers"
+    binding = provider_root / ("b" * 32)
+    state = binding / "state"
+    generation = binding / ("a" * 32)
+    project = account / "agent/workspace/project"
+    project.mkdir(parents=True)
+    for path in (provider_root, binding, state, generation):
+        path.mkdir(mode=0o700)
+    if os.getuid() == 0:
+        for path in (provider_root, binding, state, generation, project):
+            os.chown(path, gate.uid, gate.uid)
+    journal = tmp_path / "journal"
+    journal.mkdir(mode=0o700)
+    credentials = tmp_path / "worker-identities"
+    credentials.mkdir(mode=0o700)
+    if os.getuid() == 0:
+        os.chown(credentials, gate.uid, gate.uid)
+    image = "sha256:" + "4" * 64
+    target = "/data/agent/workspace/project"
+    definition_path = binding / "scope.json"
+    definition = {"version": 1, "binding_id": binding.name, "account_workspace": str(account),
+                  "project_source": str(project), "project_target": target, "image": image, "user": gate.user}
+    definition_path.write_text(json.dumps(definition))
+    definition_path.chmod(0o600)
+    if os.getuid() == 0:
+        os.chown(definition_path, gate.uid, gate.uid)
+    resources = physical.PhysicalResources(gate, journal, credentials, "/run/jiuwenswarm", str(tmp_path / "docker.sock"),
+        "http://frontend", provider_root=provider_root, provider_images=[image])
+    request = {"Image": image, "User": gate.user, "HostConfig": {"Mounts": [
+        {"Type": "bind", "Source": str(project), "Target": target},
+        {"Type": "bind", "Source": str(state), "Target": "/state"},
+        {"Type": "bind", "Source": str(generation), "Target": "/run/opencode", "ReadOnly": True},
+        {"Type": "bind", "Source": str(state), "Target": "/home/" + gate.user},
+        {"Type": "bind", "Source": str(shared), "Target": str(shared)},
+    ]}}
+    response = {"container": None, "renamed": None, "deletes": [], "frontend_absent": True}
+
+    def docker(method, path):
+        if method == "DELETE":
+            response["deletes"].append(path)
+            response["container"] = None
+            return 204, {}
+        assert method == "GET"
+        if path.startswith("/containers/cpo-"):
+            value = response["container"]
+        else:
+            assert path == "/containers/" + "1" * 64 + "/json"
+            value = response["renamed"]
+        return (404, {}) if value is None else (200, value)
+
+    def check_frontend(url, **kwargs):
+        if response["frontend_absent"]:
+            raise HTTPError(url, 404, "absent", {}, None)
+        raise HTTPError(url, 503, "unavailable", {}, None)
+
+    monkeypatch.setattr(resources, "docker", docker)
+    monkeypatch.setattr(physical, "urlopen", check_frontend)
+    payload = dict(workspace=str(state), identity=str(generation), image=image, user=gate.user, instance_id="op-1")
+    return resources, request, payload, definition_path, response
+
+
+def _prepare_provider(resources, request):
+    scope = resources.create_scope(request)
+    rewritten, _ = resources.boundary.rewrite(request, provider_scope=scope)
+    return scope, rewritten
+
+
+@pytest.mark.parametrize("invalid", ["wrong_project", "wrong_generation", "worker", "alias", "volume", "writable_config"])
+def test_provider_physical_scope_rejects_unapproved_mounts(provider, invalid):
+    resources, request, *_ = provider
+    mounts = request["HostConfig"]["Mounts"]
+    if invalid == "wrong_project":
+        mounts[0]["Source"] = mounts[0]["Source"].replace("env_" + "1" * 32, "env_" + "2" * 32)
+    elif invalid == "wrong_generation":
+        mounts[2]["Source"] = mounts[2]["Source"].replace("b" * 32, "c" * 32)
+    elif invalid == "worker":
+        mounts.append({"Type": "bind", "Source": mounts[0]["Source"], "Target": "/data"})
+    elif invalid == "alias":
+        mounts[3]["Source"] = mounts[0]["Source"]
+    elif invalid == "volume":
+        mounts.append({"Type": "volume", "Source": "other", "Target": "/extra"})
+    else:
+        mounts[2]["ReadOnly"] = False
+    with pytest.raises(ValueError):
+        resources.create_scope(request)
+
+
+def test_provider_physical_scope_authenticates_binding_and_legacy_binds(provider):
+    resources, request, _, definition, _ = provider
+    original = resources.create_scope(request)
+    assert original["role"] == "opencode" and original["name"] == "cpo-" + original["slot"]
+    host = request["HostConfig"]
+    host["Binds"] = [f'{m["Source"]}:{m["Target"]}:{"ro" if m.get("ReadOnly") else "rw"}' for m in host.pop("Mounts")]
+    assert resources.create_scope(request) == original
+    scope = json.loads(definition.read_text())
+    scope["account_workspace"] = scope["account_workspace"].replace("env_" + "1" * 32, "env_" + "2" * 32)
+    definition.write_text(json.dumps(scope))
+    with pytest.raises(ValueError, match="outside its account binding"):
+        resources.create_scope(request)
+
+
+def test_provider_physical_scope_supports_stock_log_root_trailing_slash(provider):
+    resources, request, *_ = provider
+    host = request["HostConfig"]
+    mounts = host.pop("Mounts")
+    log = mounts[-1]["Source"]
+    host["Binds"] = [f'{m["Source"]}:{m["Target"]}' + (":ro" if m.get("ReadOnly") else "")
+                     for m in mounts[:-1]] + [f"{log}/:{log}/"]
+    scope, rewritten = _prepare_provider(resources, request)
+    private_log = resources.boundary.log_root / scope["slot"]
+    assert rewritten["HostConfig"]["Binds"][-1] == f"{private_log}:{log}/"
+    with resources.dispatch(rewritten, "/containers/create", scope=scope):
+        pass
+    host["Binds"].append(f"{log}:{log}")
+    with pytest.raises(ValueError, match="invalid OpenCode physical log mount"):
+        resources.create_scope(request)
+
+
+def test_provider_confirmation_fences_live_container_and_reuses_physical_slot(provider):
+    resources, request, payload, _, response = provider
+    scope, rewritten = _prepare_provider(resources, request)
+    assert str(resources.boundary.log_root / scope["slot"]) in str(rewritten["HostConfig"]["Mounts"])
+    with pytest.raises(ValueError, match="no physical dispatch receipt"):
+        resources.confirm_deleted(payload)
+    with resources.dispatch(rewritten, "/containers/create", scope=scope) as (receipt_file, receipt, path):
+        assert parse_qs(urlsplit(path).query)["name"] == [scope["name"]]
+        receipt.update(state="CREATED", observed=True, container_id="1" * 64)
+        resources.write(receipt_file, receipt)
+    response["container"] = {"Id": "1" * 64, "Image": scope["image"], "Config": rewritten,
+        "State": {"Status": "exited", "Running": False, "StartedAt": "2026-11-21T02:00:00Z"},
+        "Mounts": [{"Type": "bind", "Source": m["Source"], "Destination": m["Target"], "RW": not m.get("ReadOnly", False)}
+                   for m in rewritten["HostConfig"]["Mounts"]]}
+    with pytest.raises(ValueError, match="original lifecycle recovery"):
+        resources.confirm_deleted(payload)
+    assert response["deletes"] == [] and resources.read(receipt_file)["state"] == "CREATED"
+    next_identity = Path(payload["identity"]).with_name("c" * 32)
+    next_identity.mkdir(mode=0o700)
+    if os.getuid() == 0:
+        os.chown(next_identity, resources.boundary.uid, resources.boundary.uid)
+    request["HostConfig"]["Mounts"][2]["Source"] = str(next_identity)
+    next_scope, next_request = _prepare_provider(resources, request)
+    assert scope["slot"] == next_scope["slot"] and scope["key"] != next_scope["key"]
+    with pytest.raises(ValueError, match="previous physical operation"):
+        with resources.dispatch(next_request, "/containers/create", scope=next_scope):
+            pass
+    response["renamed"] = response["container"]
+    response["container"] = None
+    with pytest.raises(ValueError, match="observed OpenCode container absence remains unconfirmed"):
+        resources.confirm_deleted(payload)
+    assert response["deletes"] == [] and resources.read(receipt_file)["state"] == "CREATED"
+    response["renamed"] = None
+    assert resources.confirm_deleted(payload)["absent"] is True
+    with pytest.raises(ValueError, match="already dispatched"):
+        with resources.dispatch(rewritten, "/containers/create", scope=scope):
+            pass
+    with resources.dispatch(next_request, "/containers/create", scope=next_scope):
+        assert Path(scope["workspace"]).is_dir()
+
+
+def test_provider_confirmation_validates_observed_id_before_orphan_delete(provider):
+    resources, request, payload, _, response = provider
+    scope, rewritten = _prepare_provider(resources, request)
+    with resources.dispatch(rewritten, "/containers/create", scope=scope) as (journal, receipt, _):
+        receipt.update(state="CREATED", observed=True, container_id="1" * 64)
+        resources.write(journal, receipt)
+    response["container"] = {"Id": "2" * 64, "Image": scope["image"], "Config": rewritten,
+        "State": {"Status": "created", "Running": False, "StartedAt": "0001-01-01T00:00:00Z"},
+        "Mounts": [{"Type": "bind", "Source": m["Source"], "Destination": m["Target"], "RW": not m.get("ReadOnly", False)}
+                   for m in rewritten["HostConfig"]["Mounts"]]}
+    with pytest.raises(ValueError, match="identity differs from the receipt"):
+        resources.confirm_deleted(payload)
+    assert response["deletes"] == []
+    response["container"]["Id"] = "1" * 64
+    assert resources.confirm_deleted(payload)["absent"] is True
+    assert response["deletes"] == ["/containers/" + "1" * 64 + "?force=false&v=false"]
+
+
 def test_lost_create_response_recovered_without_replay_and_fences_late_request(stack):
     resources, request, state, proxy, restricted, payload = stack
     state["drop"] = True

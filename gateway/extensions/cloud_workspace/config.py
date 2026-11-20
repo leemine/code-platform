@@ -128,18 +128,23 @@ class CloudConfig:
 
 
     def _validate_opencode_provider(self):
-        if self.resource_reconciler_socket is not None:
-            raise ValueError("Managed OpenCode requires a Provider-compatible physical resource boundary")
+        if self.resource_reconciler_socket is None:
+            raise ValueError("Managed OpenCode requires physical resource confirmation")
         frontend = urlsplit(self.frontend_endpoint)
         if (frontend.scheme not in {"http", "https"} or not frontend.hostname
                 or frontend.username or frontend.password or frontend.query or frontend.fragment):
             raise ValueError("Managed OpenCode requires an explicit YuanRong Frontend endpoint")
         profile = self.opencode_provider
         if (not isinstance(profile, dict) or not {"image", "model_config"} <= profile.keys()
-                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds"}
+                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
             raise ValueError("Managed OpenCode requires an immutable image and model configuration")
+        auth_transport = profile.get("auth_transport", "basic")
+        if auth_transport not in ("basic", "query"):
+            raise ValueError("Unsupported OpenCode authentication transport")
+        if auth_transport == "query" and frontend.hostname not in ("127.0.0.1", "::1"):
+            raise ValueError("OpenCode query authentication requires a loopback YuanRong Frontend")
         if not isinstance(profile["model_config"], str):
             raise ValueError("Managed OpenCode requires a model configuration file")
         path = Path(profile["model_config"])

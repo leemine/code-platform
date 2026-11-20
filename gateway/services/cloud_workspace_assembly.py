@@ -25,7 +25,8 @@ def assemble(config, client):
     if config.opencode_provider:
         from gateway.services.cloud_opencode_pool import CloudOpencodePool
         from gateway.services.cloud_opencode_relay import CloudOpencodeRelay
-        relay = CloudOpencodeRelay(store, CloudOpencodePool(store, client._yuanrong, config))
+        pool = CloudOpencodePool(store, client._yuanrong, config, resources=resources)
+        relay = CloudOpencodeRelay(store, pool, auth_transport=config.opencode_provider.get("auth_transport", "basic"))
         relay_url = config.public_origin.rstrip("/") + config.api_prefix + OPENCODE_RELAY_PATH
     policy = CloudInstancePolicy(
         store, ready_timeout=config.ready_timeout, resources=resources, opencode_relay_url=relay_url,

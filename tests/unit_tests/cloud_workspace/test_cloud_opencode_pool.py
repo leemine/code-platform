@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -157,6 +158,49 @@ async def test_creation_lost_response_never_reposts_and_can_reconcile(sandbox):
 
 
 @pytest.mark.asyncio
+async def test_legacy_frontend_checks_exact_mounts_before_open_code_readiness(sandbox, monkeypatch):
+    pool, frontend, account, _ = sandbox
+    owner = account("tenant-one")
+    async with pool.hold(owner, "project", PROJECT_DIR) as original:
+        pass
+    instance = frontend.instances[original.instance_id]
+    instance.pop("status")
+    root = instance["rootfs"]
+    instance["host_user"] = root.pop("user")
+    home = {"source": root.pop("workspace"), "target": "/home/agentos"}
+    root["mounts"] = [home] + [
+        {key: value for key, value in mount.items() if key != "readonly" or value}
+        for mount in root["mounts"]
+    ]
+    probes = []
+
+    async def healthy(lease):
+        probes.append(lease)
+        return True
+
+    async def wait(instance_id, *, confirm_unreported_ready):
+        info = await frontend.get_agent_info(instance_id)
+        if await confirm_unreported_ready(info):
+            return info
+        raise TimeoutError("Ready state was not confirmed")
+
+    pool.ready_check = healthy
+    monkeypatch.setattr(frontend, "wait_until_running", wait)
+    async with pool.hold(owner, "project", PROJECT_DIR) as lease:
+        assert lease == original
+    assert probes == [original]
+
+    mismatched = deepcopy(instance)
+    mismatched["rootfs"]["mounts"][0]["source"] = "/different-workspace"
+    frontend.instances[original.instance_id] = mismatched
+    with pytest.raises(EnvironmentUnavailable, match="allocation unavailable"):
+        async with pool.hold(owner, "project", PROJECT_DIR):
+            pytest.fail("An instance with a different workspace must not produce a lease")
+    assert probes == [original]
+    assert len(frontend.created) == 1
+
+
+@pytest.mark.asyncio
 async def test_reclaim_waits_for_idle_and_absence_and_retains_native_state(sandbox):
     pool, frontend, account, _ = sandbox
     owner = account("tenant-one")
@@ -207,3 +251,84 @@ async def test_mismatched_instance_rejected_before_use_or_reclaim(sandbox):
     assert await pool.reclaim_idle() == 0
     assert not frontend.deleted
     assert len(frontend.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_frontend_absence_does_not_recycle_without_physical_confirmation(sandbox):
+    original, frontend, account, config = sandbox
+    owner = account("tenant-one")
+
+    class Confirmation:
+        def __init__(self):
+            self.allowed = False
+            self.calls = []
+
+        async def confirm_deleted(self, **claim):
+            assert claim["instance_id"] not in frontend.instances
+            assert Path(claim["identity"]).is_dir()
+            self.calls.append(claim)
+            if not self.allowed:
+                raise RuntimeError("physical deletion remains unconfirmed")
+
+    resources = Confirmation()
+    pool = CloudOpencodePool(original.store, frontend, config, resources=resources)
+
+    async def idle(_lease):
+        return True
+
+    pool.idle_check = idle
+    async with pool.hold(owner, "project", PROJECT_DIR) as first:
+        state = Path(frontend.created[0]["workspace"])
+        identity = Path(frontend.created[0]["mounts"][2]["source"])
+        marker = state / "native-db"
+        marker.write_text("original")
+        scope = (state.parent / "scope.json").read_text()
+        assert owner["workspace"] in scope and first.binding_id in scope
+        assert first.password not in scope
+
+    assert await pool.reclaim_idle() == 0
+    assert frontend.deleted == [first.instance_id] and len(frontend.created) == 1
+    assert identity.exists()
+    key = (owner["account_id"], "project", "opencode")
+    assert pool._get(key)["state"] == "DELETING" and pool._get(key)["generation"] == 1
+
+    with pytest.raises(EnvironmentUnavailable, match="physical deletion remains unconfirmed"):
+        async with pool.hold(owner, "project", PROJECT_DIR):
+            pytest.fail("Frontend absence alone cannot release the physical slot")
+    assert len(frontend.created) == 1 and identity.exists()
+
+    resources.allowed = True
+    async with pool.hold(owner, "project", PROJECT_DIR) as second:
+        assert second.binding_id == first.binding_id and second.instance_id != first.instance_id
+        assert not identity.exists() and marker.read_text() == "original"
+        assert pool._get(key)["generation"] == 2
+    assert resources.calls == [{"workspace": str(state), "identity": str(identity),
+                                "image": config.opencode_provider["image"], "user": "agentos",
+                                "instance_id": first.instance_id}] * 3
+
+
+@pytest.mark.asyncio
+async def test_missing_frontend_metadata_cannot_trigger_a_later_busy_delete(sandbox):
+    original, frontend, account, config = sandbox
+    owner = account("tenant-one")
+
+    async def refuse(**_):
+        raise RuntimeError("old physical container still running")
+
+    pool = CloudOpencodePool(original.store, frontend, config, resources=SimpleNamespace(confirm_deleted=refuse))
+    async with pool.hold(owner, "project", PROJECT_DIR) as lease:
+        identity = Path(frontend.created[0]["mounts"][2]["source"])
+
+    hidden = frontend.instances.pop(lease.instance_id)
+    assert await pool.reclaim_idle() == 0
+    assert not frontend.deleted and identity.is_dir()
+    key = (owner["account_id"], "project", "opencode")
+    assert pool._get(key)["state"] == "ALLOCATED"
+
+    async def busy(_lease):
+        return False
+
+    frontend.instances[lease.instance_id] = hidden
+    pool.idle_check = busy
+    assert await pool.reclaim_idle() == 0
+    assert not frontend.deleted

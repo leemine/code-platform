@@ -538,9 +538,14 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
     model_config.write_text("{}")
     model_config.chmod(0o600)
     managed = replace(config, opencode_provider={"image": "sha256:" + "b" * 64, "model_config": str(model_config)})
+    with pytest.raises(ValueError, match="physical resource confirmation"):
+        managed.validate()
+    managed = replace(managed, resource_reconciler_socket=str(tmp_path / "physical.sock"))
     managed.validate()
-    with pytest.raises(ValueError, match="Provider-compatible"):
-        replace(managed, resource_reconciler_socket=str(tmp_path / "legacy.sock")).validate()
+    query_auth = replace(managed, opencode_provider={**managed.opencode_provider, "auth_transport": "query"})
+    replace(query_auth, frontend_endpoint="http://127.0.0.1:19888").validate()
+    with pytest.raises(ValueError, match="loopback YuanRong Frontend"):
+        replace(query_auth, frontend_endpoint="https://routed.example").validate()
     with pytest.raises(ValueError, match="overrides isolated paths"):
         replace(managed, runtime_env=((OPENCODE_RELAY_ENV, "https://incorrect.test"),)).validate()
 

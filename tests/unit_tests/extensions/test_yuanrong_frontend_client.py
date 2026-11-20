@@ -1,11 +1,12 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 
+import asyncio
 import io
 import json
 import logging
 import urllib.error
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -760,6 +761,7 @@ async def test_wait_until_running_raises_on_failed_status(
     status: str,
 ):
     await client.connect("http://127.0.0.1:8080")
+    confirm = AsyncMock(return_value=True)
 
     def fake_urlopen(req, timeout=0):
         return _fake_agent_get_urlopen(
@@ -774,7 +776,10 @@ async def test_wait_until_running_raises_on_failed_status(
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         with pytest.raises(YuanrongAgentApiError, match="agent instance failed"):
-            await client.wait_until_running(_CREATE_INSTANCE_ID)
+            await client.wait_until_running(
+                _CREATE_INSTANCE_ID, confirm_unreported_ready=confirm
+            )
+    confirm.assert_not_awaited()
 
 
 def test_startup_budget_seconds_matches_delay_plus_period_times_failure():
@@ -904,6 +909,57 @@ async def test_wait_until_running_times_out_when_status_never_present(
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
         with pytest.raises(YuanrongAgentApiError, match="not running after"):
             await client.wait_until_running(_CREATE_INSTANCE_ID)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_running_uses_application_check_for_unreported_status(
+    client: YuanrongFrontendAgentClientProbe,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    partial = {"instance_id": _CREATE_INSTANCE_ID}
+    placement = {**partial, "node_ip": "10.0.0.1"}
+    get = AsyncMock(side_effect=[
+        YuanrongAgentApiError("GET unavailable"),
+        {},
+        {**partial, "status": "creating"},
+        {**partial, "state": "starting"},
+        {**partial, "status": ""},
+        partial,
+        placement,
+    ])
+    confirm = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(client, "get_agent_info", get)
+    monkeypatch.setattr(yuanrong_mod, "_AGENT_RUNNING_RETRY_INTERVAL_SECONDS", 0.0)
+
+    instance = await client.wait_until_running(
+        _CREATE_INSTANCE_ID, confirm_unreported_ready=confirm
+    )
+
+    assert instance == placement
+    assert get.await_count == 7
+    assert confirm.await_args_list == [call(partial), call(placement)]
+
+
+@pytest.mark.asyncio
+async def test_wait_until_running_bounds_application_check_by_wait_deadline(
+    client: YuanrongFrontendAgentClientProbe,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def never_ready(_instance):
+        await asyncio.Event().wait()
+
+    confirm = AsyncMock(side_effect=never_ready)
+    monkeypatch.setattr(
+        client, "get_agent_info", AsyncMock(return_value={"instance_id": _CREATE_INSTANCE_ID}),
+    )
+    monkeypatch.setattr(yuanrong_mod, "_AGENT_RUNNING_TIMEOUT_SECONDS", 0.05)
+
+    with pytest.raises(YuanrongAgentApiError, match="not running after"):
+        await asyncio.wait_for(
+            client.wait_until_running(_CREATE_INSTANCE_ID, confirm_unreported_ready=confirm),
+            timeout=1,
+        )
+    confirm.assert_awaited_once()
 
 
 def test_create_sandbox_derives_probes_from_ports():

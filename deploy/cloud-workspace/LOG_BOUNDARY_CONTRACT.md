@@ -118,3 +118,26 @@ Gateway的 `resource_reconciler_socket` 指向容器内该确认socket。该配�
 ## 可选运行安全装配候选
 
 原HTTP入口可显式挂接独立 `runtime_security.py`；策略参数、逐次摘要检查、原回执证据及退出条件由[RUNTIME_SECURITY_CONTRACT.md](RUNTIME_SECURITY_CONTRACT.md)维护。安全变换与日志变换分开，无第二创建链；无新参数时行为不变。当前仅局部测试，读取边界未通过，不允许将候选策略接入真实账号；日志隔离通过不等于Codex控制凭据隔离通过。
+
+
+## 独立 OpenCode Provider 的物理边界
+
+在既有物理确认参数上追加 `--opencode-provider-root` 与
+`--opencode-provider-image`。启用前须为 Provider 预建私有状态根，配合
+Gateway 的 `resource_reconciler_socket` 和 `opencode_provider` 配置。
+镜像摘要与运行账号均由部署侧控制。原 Worker 准入沿用自己的镜像名单、
+账号 `/data`、身份挂载及可选运行安全配置。
+
+Gateway 写入私有 `scope.json`，将 Provider 实例的稳定状态根绑定到
+账号根、项目、镜像和运行账号。宿主验证创建请求的项目挂载、状态挂载
+及本代只读配置。元戎自动工作区别名只可以挂载同一个 Provider 状态根。
+元戎自动注入的日志挂载由宿主改写成每个绑定的私有目录。对已登记日志根，
+允许源和目标同路径且各带一个尾斜杠。Provider 准入拒绝重复目标、未声明的
+宿主挂载、特权及设备提升。
+
+每个耐久状态绑定只有一个物理 Docker 名称。既有持久回执机制先写派发意图
+再转交 Docker。元戎返回 404 后，受限确认入口再次核对元戎结果及 Docker
+容器身份。Docker 名称改变或缺失时，仍按已观察的容器 ID 检查旧实例。
+确认入口只允许补偿永未启动的、归属匹配的孤儿容器。已启动容器须由元戎
+原生命周期移除。回执确认完成后，Gateway 才能清理本代配置并使用原状态卷
+启用下一代。

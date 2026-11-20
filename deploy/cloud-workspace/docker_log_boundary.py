@@ -72,9 +72,29 @@ class LogBoundary:
         if self.log_root.is_relative_to(self.workspace_root) or self.workspace_root.is_relative_to(self.log_root):
             raise ValueError("workspace and private logs must be disjoint")
 
-    def rewrite(self, request):
+    @staticmethod
+    def _protect_provider(value, host):
+        forbidden = (
+            "CapAdd", "Devices", "DeviceRequests", "DeviceCgroupRules", "SecurityOpt",
+            "Sysctls", "StorageOpt", "GroupAdd", "Tmpfs", "ContainerIDFile",
+        )
+        if any(host.get(key) for key in forbidden) or value.get("Volumes"):
+            raise ValueError("caller privileges conflict with Provider policy")
+        if (host.get("Runtime", "runc") not in ("", "runc")
+                or host.get("NetworkMode") == "host" or str(host.get("NetworkMode", "")).startswith("container:")
+                or any(host.get(key) not in (None, "", "private")
+                       for key in ("PidMode", "IpcMode", "UTSMode", "CgroupnsMode"))
+                or host.get("UsernsMode") not in (None, "")
+                or any(host.get(key) is not None for key in ("MaskedPaths", "ReadonlyPaths"))):
+            raise ValueError("caller namespaces or kernel paths conflict with Provider policy")
+        host["CapDrop"] = ["ALL"]
+        host["SecurityOpt"] = ["no-new-privileges:true"]
+
+    def rewrite(self, request, *, provider_scope=None):
         value = copy.deepcopy(request)
-        if not isinstance(value, dict) or value.get("Image") not in self.images or value.get("User") != self.user:
+        if not isinstance(value, dict) or value.get("User") != self.user:
+            raise ValueError("unapproved image or execution user")
+        if provider_scope is None and value.get("Image") not in self.images:
             raise ValueError("unapproved image or execution user")
         host = value.get("HostConfig", {})
         if not isinstance(host, dict) or host.get("Privileged") or host.get("VolumesFrom"):
@@ -93,19 +113,30 @@ class LogBoundary:
             if len(parts) not in (2, 3):
                 raise ValueError("invalid bind syntax")
             mounts.append((parts[0], parts[1], (binds, index, parts)))
-        workspaces = [source for source, target, _ in mounts if target == "/data"]
-        if len(workspaces) != 1:
-            raise ValueError("one account /data mount required")
-        workspace = Path(workspaces[0])
-        if (workspace.parent != self.workspace_root or len(workspace.name) > 255
-                or "\\" in workspace.name or "\x00" in workspace.name
-                or not self.workspace_name_pattern.fullmatch(workspace.name)):
-            raise ValueError("invalid account workspace")
-        if workspace.resolve() != workspace or not workspace.is_dir() or workspace.is_symlink():
-            raise ValueError("workspace missing or linked")
-        if workspace.stat().st_uid != self.uid or stat.S_IMODE(workspace.stat().st_mode) != 0o700:
-            raise ValueError("workspace owner/mode mismatch")
-        private = self.log_root / hashlib.sha256(str(workspace).encode()).hexdigest()
+        if provider_scope is None:
+            workspaces = [source for source, target, _ in mounts if target == "/data"]
+            if len(workspaces) != 1:
+                raise ValueError("one account /data mount required")
+            workspace = Path(workspaces[0])
+            if (workspace.parent != self.workspace_root or len(workspace.name) > 255
+                    or "\\" in workspace.name or "\x00" in workspace.name
+                    or not self.workspace_name_pattern.fullmatch(workspace.name)):
+                raise ValueError("invalid account workspace")
+            if workspace.resolve() != workspace or not workspace.is_dir() or workspace.is_symlink():
+                raise ValueError("workspace missing or linked")
+            if workspace.stat().st_uid != self.uid or stat.S_IMODE(workspace.stat().st_mode) != 0o700:
+                raise ValueError("workspace owner/mode mismatch")
+            slot = hashlib.sha256(str(workspace).encode()).hexdigest()
+            audit = {"account": workspace.name}
+        else:
+            slot = provider_scope.get("slot")
+            if (provider_scope.get("role") != "opencode" or provider_scope.get("image") != value.get("Image")
+                    or provider_scope.get("user") != self.user
+                    or not isinstance(slot, str) or not re.fullmatch(r"[a-f0-9]{64}", slot)):
+                raise ValueError("invalid Provider scope")
+            self._protect_provider(value, host)
+            audit = {"provider": "opencode", "slot": slot}
+        private = self.log_root / slot
         replacements = []
         for source, target, item in mounts:
             if not isinstance(source, str) or not isinstance(target, str):
@@ -124,9 +155,10 @@ class LogBoundary:
                     break
                 if root.is_relative_to(source_path):
                     raise ValueError("ancestor mount exposes shared logs")
-        if not replacements:
+        if not replacements and provider_scope is None:
             raise ValueError("expected automatic log mount missing")
-        private_directory(private, self.uid)
+        if replacements:
+            private_directory(private, self.uid)
         for relative, item in replacements:
             dest = private
             for part in relative.parts:
@@ -139,8 +171,7 @@ class LogBoundary:
                 parts[0] = str(dest)
                 binds[index] = ":".join(parts)
         # No payload, environment, credentials, or command lines in the audit.
-        return value, {"account": workspace.name, "private_log_directory": str(private),
-                       "replaced_mounts": len(replacements)}
+        return value, {**audit, "private_log_directory": str(private), "replaced_mounts": len(replacements)}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -153,6 +184,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.forward()
 
     do_POST = do_PUT = do_DELETE = do_HEAD = do_PATCH = do_GET
+
+    def _prepare_create(self, request):
+        if not isinstance(request, dict):
+            raise ValueError("invalid Docker create payload")
+        resources = getattr(self.server, "resources", None)
+        if resources is not None and resources.is_provider_image(request.get("Image")):
+            scope = resources.create_scope(request)
+            value, audit = self.server.boundary.rewrite(request, provider_scope=scope)
+            return value, audit, scope
+        security = getattr(self.server, "runtime_security", None)
+        if security is not None:
+            request = security.rewrite(request)
+        value, audit = self.server.boundary.rewrite(request)
+        return value, audit, None
 
     def forward(self):
         self.close_connection = True
@@ -182,16 +227,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if re.fullmatch(r"/(?:v[0-9]+\.[0-9]+/)?containers/create", path):
                 if self.command != "POST":
                     raise ValueError("invalid create method")
-                decoded = json.loads(body)
-                security = getattr(self.server, "runtime_security", None)
-                if security is not None:
-                    decoded = security.rewrite(decoded)
-                print(json.dumps({"create_image": decoded.get("Image"), "create_user": decoded.get("User"),
-                    "host_keys": sorted(decoded.get("HostConfig", {})),
-                    "bind_count": len(decoded.get("HostConfig", {}).get("Binds", []))}), flush=True)
-                request, audit = self.server.boundary.rewrite(decoded)
+                request, audit, scope = self._prepare_create(json.loads(body))
+                print(json.dumps({"create_image": request.get("Image"), "create_user": request.get("User"),
+                    "host_keys": sorted(request.get("HostConfig", {})),
+                    "bind_count": len(request.get("HostConfig", {}).get("Binds", []))}), flush=True)
                 if getattr(self.server, "resources", None) is not None:
-                    self.guarded_create(request)
+                    if scope is not None:
+                        print(json.dumps(audit), flush=True)
+                    self.guarded_create(request, scope=scope)
                     return
                 body = json.dumps(request, separators=(",", ":")).encode()
                 print(json.dumps(audit), flush=True)
@@ -238,7 +281,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "expected automatic log mount missing", "unsupported request framing",
                 "noncanonical API path",
                 "invalid bind syntax", "ancestor mount exposes shared logs",
-                "unsupported privileged or inherited mounts"} else type(error).__name__
+                "unsupported privileged or inherited mounts", "invalid Provider scope",
+                "caller privileges conflict with Provider policy",
+                "caller namespaces or kernel paths conflict with Provider policy",
+                "invalid OpenCode physical scope", "invalid private OpenCode scope definition",
+                "OpenCode scope definition differs", "OpenCode project is outside its account binding",
+                "OpenCode physical project, state or generation mount differs",
+                "unexpected OpenCode physical mount", "invalid OpenCode bind syntax",
+                "unsupported OpenCode bind options", "ambiguous OpenCode physical mount"} else type(error).__name__
             print(json.dumps({"boundary_error": reason}), flush=True)
             # Never include user payload or exception strings in responses.
             if not responded and not isinstance(error, (BrokenPipeError, ConnectionResetError)):
@@ -248,9 +298,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     pass
 
 
-    def guarded_create(self, request):
+    def guarded_create(self, request, *, scope=None):
         resources = self.server.resources
-        with resources.dispatch(request, self.path) as (path, receipt, target):
+        with resources.dispatch(request, self.path, scope=scope) as (path, receipt, target):
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
                 upstream.settimeout(self.server.connect_timeout)
                 upstream.connect(self.server.upstream)
@@ -260,7 +310,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 # Persist intent before dispatch. Crash/timeout never implies no effect.
                 receipt["state"] = "SENT"
                 security = getattr(self.server, "runtime_security", None)
-                if security is not None:
+                if security is not None and scope is None:
                     receipt["runtime_security_sha256"] = security.digest
                 resources.write(path, receipt)
                 upstream.settimeout(self.server.upstream_timeout)
@@ -447,6 +497,8 @@ def main():
     parser.add_argument("--reconcile-listen")
     parser.add_argument("--reconcile-frontend")
     parser.add_argument("--reconcile-gid", type=int)
+    parser.add_argument("--opencode-provider-root", type=Path)
+    parser.add_argument("--opencode-provider-image", action="append", default=[])
     parser.add_argument("--runtime-security-manifest", type=Path)
     parser.add_argument("--runtime-security-sha256")
     args = parser.parse_args()
@@ -454,6 +506,10 @@ def main():
                      args.reconcile_listen, args.reconcile_frontend, args.reconcile_gid]
     if any(v is not None for v in physical_args) and not all(v is not None for v in physical_args):
         parser.error("physical confirmation requires all six explicit deployment parameters")
+    if (args.opencode_provider_root is not None) != bool(args.opencode_provider_image):
+        parser.error("OpenCode Provider admission requires both its root and image allowlist")
+    if args.opencode_provider_root is not None and args.physical_journal_root is None:
+        parser.error("OpenCode Provider admission requires physical confirmation")
     if args.reconcile_gid is not None and args.reconcile_gid <= 0:
         parser.error("confirmation group must be non-root")
     if (args.runtime_security_manifest is None) != (args.runtime_security_sha256 is None):
@@ -484,7 +540,8 @@ def main():
             if args.physical_journal_root is not None:
                 from physical_resources import PhysicalResources
                 resources = PhysicalResources(boundary, Path(args.physical_journal_root), Path(args.identity_root),
-                    args.identity_target, str(upstream), args.reconcile_frontend)
+                    args.identity_target, str(upstream), args.reconcile_frontend,
+                    provider_root=args.opencode_provider_root, provider_images=args.opencode_provider_image)
                 restricted = Path(args.reconcile_listen)
                 if restricted in (listen, upstream):
                     raise ValueError("confirmation endpoint must be distinct")

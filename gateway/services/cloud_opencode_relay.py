@@ -77,14 +77,44 @@ class _RelayResponse(StreamingResponse):
                 await self._scope.aclose()
 
 
+class _OpenCodeQueryAuthTransport(httpx.AsyncBaseTransport):
+    """Add OpenCode auth on the private hop without changing the logged URL."""
+
+    def __init__(self, transport: httpx.AsyncBaseTransport):
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        headers = request.headers.copy()
+        authorization = headers.pop("Authorization", "")
+        if not authorization.startswith("Basic ") or "auth_token" in request.url.params:
+            raise httpx.RequestError("OpenCode upstream authentication is missing or ambiguous")
+        private_request = httpx.Request(
+            request.method, request.url.copy_add_param("auth_token", authorization[6:]),
+            headers=headers, stream=request.stream, extensions=request.extensions,
+        )
+        return await self._transport.handle_async_request(private_request)
+
+    async def aclose(self):
+        await self._transport.aclose()
+
+
 class CloudOpencodeRelay:
-    def __init__(self, store, pool):
+    def __init__(self, store, pool, *, auth_transport="basic"):
         self.store, self.pool = store, pool
         frontend = urlsplit(pool.yuanrong.frontend_endpoint)
         self.origin = f"{frontend.scheme}://{frontend.netloc}"
         self._replays: dict[str, int] = {}
+        transport = None
+        if auth_transport == "query":
+            if frontend.hostname not in ("127.0.0.1", "::1"):
+                raise ValueError("OpenCode query authentication requires a loopback YuanRong Frontend")
+            # YuanRong rewrites the first HTTP request in a tunnel connection.
+            transport = _OpenCodeQueryAuthTransport(httpx.AsyncHTTPTransport(
+                limits=httpx.Limits(max_keepalive_connections=0), trust_env=False,
+            ))
         self._client = httpx.AsyncClient(trust_env=False, follow_redirects=False,
-                                         timeout=httpx.Timeout(15, read=75))
+                                         transport=transport, timeout=httpx.Timeout(15, read=75))
+        pool.ready_check = self._ready
         pool.idle_check = self._idle
 
     async def close(self):
@@ -97,6 +127,16 @@ class CloudOpencodeRelay:
             "port": "4096",
             "directory": lease.directory,
         }
+
+    async def _ready(self, lease) -> bool:
+        url, query = self._route(lease, "global/health")
+        try:
+            result = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
+            result.raise_for_status()
+            health = result.json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        return isinstance(health, dict) and health.get("healthy") is True
 
     async def _idle(self, lease) -> bool:
         url, query = self._route(lease, "session/status")

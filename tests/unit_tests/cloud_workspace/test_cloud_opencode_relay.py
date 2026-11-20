@@ -1,6 +1,8 @@
 import asyncio
+import base64
 from contextlib import asynccontextmanager, nullcontext
 import json
+import logging
 from types import SimpleNamespace
 
 import httpx
@@ -9,7 +11,7 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 
 from gateway.common.security.opencode_relay_auth import HEADER, OpenCodeRelayAuth
-from gateway.services.cloud_opencode_relay import CloudOpencodeRelay
+from gateway.services.cloud_opencode_relay import CloudOpencodeRelay, _OpenCodeQueryAuthTransport
 
 
 ROUTE = "/provider/opencode"
@@ -60,6 +62,29 @@ def relay(tmp_path):
 
 def _client(app, auth=None):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://gateway.test", auth=auth)
+
+
+@pytest.mark.asyncio
+async def test_query_auth_keeps_the_credential_off_the_client_request_and_logs(caplog):
+    password = "isolated-opencode-credential"
+    expected = base64.b64encode(f"opencode:{password}".encode()).decode()
+
+    async def upstream(request):
+        assert request.url.params["auth_token"] == expected
+        assert request.url.params["directory"] == DIRECTORY
+        assert "Authorization" not in request.headers
+        assert await request.aread() == b"{}"
+        return httpx.Response(200, json={"healthy": True})
+
+    transport = _OpenCodeQueryAuthTransport(httpx.MockTransport(upstream))
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        async with httpx.AsyncClient(transport=transport) as client:
+            result = await client.post("http://127.0.0.1/serverless/v1/http/session",
+                                       params={"directory": DIRECTORY}, auth=("opencode", password), content=b"{}")
+    assert result.json() == {"healthy": True}
+    assert "auth_token" not in result.request.url.params
+    assert "HTTP Request:" in caplog.text and "auth_token" not in caplog.text
+    assert expected not in caplog.text and password not in caplog.text
 
 
 @pytest.mark.asyncio

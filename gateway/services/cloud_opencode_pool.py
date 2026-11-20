@@ -63,13 +63,14 @@ class CloudOpencodePool:
     Per-binding locks serialize create and reclaim within that Gateway.
     """
 
-    def __init__(self, store, yuanrong, config):
-        self.store, self.yuanrong = store, yuanrong
+    def __init__(self, store, yuanrong, config, *, resources=None):
+        self.store, self.yuanrong, self.resources = store, yuanrong, resources
         self.options = dict(config.opencode_provider)
         self.storage = Path(config.state_root) / "opencode-providers"
         self.runtime, self.namespace = config.runtime, config.namespace
         self.ready_timeout = config.ready_timeout
         self.idle_seconds = float(self.options.get("idle_seconds", 300))
+        self.ready_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
         self.idle_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
         self._locks = defaultdict(asyncio.Lock)
         self._holds = Counter()
@@ -115,11 +116,12 @@ class CloudOpencodePool:
             raise PermissionError("OpenCode workspace must be an existing canonical project directory")
         return str(source)
 
-    def _binding(self, key, directory, source, runtime_user):
+    def _binding(self, key, directory, source, account):
         row = self._get(key)
         if row is None:
             profile = {
-                "image": self.options["image"], "runtime": self.runtime, "user": runtime_user,
+                "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
+                "account_workspace": account["workspace"], "physical_verification": self.resources is not None,
                 "cpu": int(self.options.get("cpu", 1000)), "memory": int(self.options.get("memory", 1024)),
             }
             with self.store.connect() as db:
@@ -157,11 +159,23 @@ class CloudOpencodePool:
         return updated
 
     def _plan(self, row):
+        profile = json.loads(row["profile_json"])
+        if profile.get("physical_verification", False) != (self.resources is not None):
+            raise EnvironmentUnavailable("OpenCode Provider physical boundary changed")
         root = self.storage / row["binding_id"]
         state = root / "state"
         config = root / row["operation_id"]
         for path in (root, state, config):
             _private_directory(path)
+        if self.resources is not None:
+            manifest = {
+                "version": 1, "account_workspace": profile["account_workspace"],
+                "project_source": row["project_source"], "project_target": row["directory"],
+                "binding_id": row["binding_id"], "image": profile["image"], "user": profile["user"],
+            }
+            encoded = json.dumps(manifest, sort_keys=True).encode()
+            if _initial_file(root / "scope.json", encoded) != encoded:
+                raise EnvironmentUnavailable("OpenCode Provider physical scope changed")
         model_path = root / "opencode.json"
         if not model_path.exists():
             model_config = json.loads(Path(self.options["model_config"]).read_text())
@@ -179,7 +193,6 @@ class CloudOpencodePool:
             {"source": str(state), "target": "/state", "readonly": False},
             {"source": str(config), "target": "/run/opencode", "readonly": True},
         ]
-        profile = json.loads(row["profile_json"])
         spec = {
             "sandbox_type": "docker", "runtime": profile["runtime"],
             "rootfs": {"imageurl": profile["image"], "user": profile["user"], "ports": [str(PORT)]},
@@ -193,14 +206,29 @@ class CloudOpencodePool:
     def _matches(plan, info):
         name, workspace, spec, mounts, _ = plan
         root = info.get("rootfs") or {}
-        return (
-            (not info.get("name") or info["name"] == name)
-            and root.get("workspace") == workspace
-            and root.get("imageurl") == spec["rootfs"]["imageurl"]
-            and root.get("user") == spec["rootfs"]["user"]
-            and {(m.get("source"), m.get("target"), m.get("readonly", False)) for m in root.get("mounts", [])}
-            == {(m["source"], m["target"], m["readonly"]) for m in mounts}
-        )
+        user = spec["rootfs"]["user"]
+        if (not isinstance(root, dict) or (info.get("name") and info["name"] != name)
+                or root.get("imageurl") != spec["rootfs"]["imageurl"]
+                or root.get("user", info.get("host_user")) != user
+                or info.get("host_user", user) != user or not isinstance(root.get("mounts"), list)):
+            return False
+        actual = {}
+        for mount in root["mounts"]:
+            if not isinstance(mount, dict):
+                return False
+            target, readonly = mount.get("target"), mount.get("readonly", False)
+            if not isinstance(target, str) or target in actual or type(readonly) is not bool:
+                return False
+            actual[target] = (mount.get("source"), readonly)
+
+        # YuanRong 0.10.0 reports host_user and a workspace home bind in GET.
+        home_target = f"/home/{user}"
+        has_workspace_alias = actual.get(home_target) == (workspace, False)
+        if has_workspace_alias:
+            del actual[home_target]
+        expected = {mount["target"]: (mount["source"], mount["readonly"]) for mount in mounts}
+        workspace_matches = (root["workspace"] == workspace if "workspace" in root else has_workspace_alias)
+        return workspace_matches and actual == expected
 
     async def _allocate(self, row, plan):
         if row["state"] in {"CREATING", "UNKNOWN"}:
@@ -229,6 +257,18 @@ class CloudOpencodePool:
             raise
         return self._transition(row, "ALLOCATED", instance_id=instance.sandbox_id)
 
+    async def _confirm_retired(self, row, plan):
+        if self.resources is not None:
+            _, workspace, spec, mounts, _ = plan
+            identity = next(mount["source"] for mount in mounts if mount["target"] == "/run/opencode")
+            try:
+                await self.resources.confirm_deleted(
+                    workspace=workspace, identity=identity, image=spec["rootfs"]["imageurl"],
+                    user=spec["rootfs"]["user"], instance_id=row["instance_id"],
+                )
+            except RuntimeError as exc:
+                raise EnvironmentUnavailable("OpenCode Provider physical deletion remains unconfirmed") from exc
+
     @staticmethod
     def _lease(row, plan):
         return OpenCodeLease(row["instance_id"], row["directory"], plan[-1], row["binding_id"])
@@ -243,16 +283,25 @@ class CloudOpencodePool:
         try:
             async with self._locks[key]:
                 current = self._check_account(account)
-                row = self._binding(key, directory, source, current["profile"]["runtime_user"])
+                row = self._binding(key, directory, source, current)
+                plan = self._plan(row)
                 if row["state"] == "DELETING":
                     if not await self.yuanrong.instance_absent(row["instance_id"]):
                         raise EnvironmentUnavailable("OpenCode Provider deletion is pending")
+                    await self._confirm_retired(row, plan)
                     row = self._recycle(row)
-                plan = self._plan(row)
+                    plan = self._plan(row)
                 if row["state"] != "ALLOCATED":
                     row = await self._allocate(row, plan)
+
+                ready_options = {}
+                if (ready_check := self.ready_check) is not None:
+                    async def confirm_unreported_ready(info):
+                        return self._matches(plan, info) and await ready_check(self._lease(row, plan))
+
+                    ready_options["confirm_unreported_ready"] = confirm_unreported_ready
                 async with asyncio.timeout(self.ready_timeout):
-                    info = await self.yuanrong.wait_until_running(row["instance_id"])
+                    info = await self.yuanrong.wait_until_running(row["instance_id"], **ready_options)
                 if not self._matches(plan, info):
                     raise EnvironmentUnavailable("OpenCode Provider ownership could not be verified")
                 self._check_account(account)
@@ -292,9 +341,9 @@ class CloudOpencodePool:
         if row["state"] == "ALLOCATED" and row["used_at"] > time.time() - self.idle_seconds:
             return 0
         instance = row["instance_id"]
+        plan = self._plan(row)
         absent = await self.yuanrong.instance_absent(instance)
         if not absent:
-            plan = self._plan(row)
             if not self._matches(plan, await self.yuanrong.get_agent_info(instance)):
                 raise EnvironmentUnavailable("OpenCode Provider ownership changed before deletion")
             if row["state"] == "ALLOCATED":
@@ -304,5 +353,8 @@ class CloudOpencodePool:
             await self.yuanrong.delete_sandbox(instance)
             if not await self.yuanrong.instance_absent(instance):
                 return 0
+        # A Frontend 404 did not initiate a delete. If physical confirmation
+        # fails, keep ALLOCATED so a returning instance still needs an idle check.
+        await self._confirm_retired(row, plan)
         self._recycle(row)
         return 1

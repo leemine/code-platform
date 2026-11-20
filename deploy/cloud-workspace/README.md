@@ -106,7 +106,31 @@ Frontend 管理 API 为 OpenCode 按账号、项目和 Provider 分配实例。W
 
 同一项目绑定并发申请只创建一个实例。Gateway 在 HTTP 请求和 SSE 流期间
 持有实例，空闲且原生会话确认空闲后方可回收。创建应答丢失时先按元戎信息
-对账。回收确认后复用原状态卷，新实例接回原生会话。当前产品候选以元戎
-单实例 API 的 404 作为回收确认。现有 Worker 物理验证和日志准入规则依赖
-账号 `/data` 与 Worker 身份挂载，需为 Provider 单独适配并完成真实隔离池验收。
-启用现有 `resource_reconciler_socket` 的部署会拒绝这一 OpenCode 配置组合。
+对账。回收确认后复用原状态卷，新实例接回原生会话。替换实例前，Gateway 等待元戎单实例 API 确认 404，再通过
+`resource_reconciler_socket` 核对旧 Docker 容器。确认失败时保留原代次和配置，
+不会再次创建。启用 `opencode_provider` 时必须配置这个 Unix socket。 旧的无物理确认绑定
+不会自动迁移到新物理边界。
+
+在原物理边界启动参数中加入以下选项，保持原 Worker 镜像和身份规则。
+
+- `--opencode-provider-root <state_root>/opencode-providers`。预建为 0700，与 Gateway 及运行账号的所有权一致。
+- `--opencode-provider-image sha256:<镜像摘要>`。与 Gateway 的 `opencode_provider.image` 匹配，可为受管环境分别指定镜像摘要。
+
+所选镜像需满足元戎运行时的启动要求。YuanRong 0.10.0 的 Docker 执行器会在容器内调用
+`python3.11` 和 `yr_runtime_main.py`。使用该版本时，镜像需一并提供对应的官方运行时，
+保留 OpenCode 的原版可执行文件。
+
+若元戎实例详情省略运行状态，Gateway 会核对镜像、执行用户和三项精确挂载，
+并在原就绪等待时限内通过 OpenCode 健康接口确认就绪。该版本返回的工作区同源
+`/home/<user>` 挂载用于核对工作区归属。
+
+元戎 `/serverless/v1/http/` 会移除应用的 `Authorization`。本机环回 Frontend
+可在 `opencode_provider` 设置 `"auth_transport": "query"`，通过 OpenCode 官方的
+`auth_token` 参数进行应用认证。参数只写入 Gateway 到元戎的私有请求，Gateway 的
+HTTP 客户端日志使用无凭据的请求地址。该模式要求使用数字环回地址，并关闭此段连接复用。
+
+Gateway 在该根目录下写入私有项目绑定说明。宿主准入据此核验项目目录、
+稳定的 `/state` 和本代只读 `/run/opencode`，并改写元戎注入的共享日志挂载。
+确认旧实例退出前保留绑定说明及本代目录。Provider 容器只使用原本需要的
+项目和私有数据挂载。部署和故障边界见
+[日志与物理确认契约](LOG_BOUNDARY_CONTRACT.md)。
