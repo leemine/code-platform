@@ -528,3 +528,32 @@ async def test_required_physical_verification_cannot_be_silently_disabled(config
         assert infra.create_calls == 1
     finally:
         await app.instances.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_managed_opencode_policy_reaches_existing_account_launch(config, tmp_path):
+    from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
+
+    model_config = tmp_path / "provider-models.json"
+    model_config.write_text("{}")
+    model_config.chmod(0o600)
+    managed = replace(config, opencode_provider={"image": "sha256:" + "b" * 64, "model_config": str(model_config)})
+    with pytest.raises(ValueError, match="physical resource confirmation"):
+        managed.validate()
+    managed = replace(managed, resource_reconciler_socket=str(tmp_path / "physical.sock"))
+    managed.validate()
+    query_auth = replace(managed, opencode_provider={**managed.opencode_provider, "auth_transport": "query"})
+    replace(query_auth, frontend_endpoint="http://127.0.0.1:19888").validate()
+    with pytest.raises(ValueError, match="loopback YuanRong Frontend"):
+        replace(query_auth, frontend_endpoint="https://routed.example").validate()
+    with pytest.raises(ValueError, match="overrides isolated paths"):
+        replace(managed, runtime_env=((OPENCODE_RELAY_ENV, "https://incorrect.test"),)).validate()
+
+    _, app = service(config, Infrastructure())
+    actor = await registered(app)
+    info = AgentInfo(user_id=actor["user_id"], agent_type="jiuwenswarm")
+    assert OPENCODE_RELAY_ENV not in CloudInstancePolicy(app.store).plan(info).env_vars
+    endpoint = managed.public_origin + managed.api_prefix + "/provider/opencode"
+    plan = CloudInstancePolicy(app.store, opencode_relay_url=endpoint).plan(info)
+    assert plan.env_vars[OPENCODE_RELAY_ENV] == endpoint
+    assert OPENCODE_RELAY_ENV not in app.store.get(actor)["profile"]["runtime_env"]

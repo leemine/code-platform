@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import hashlib
+import logging
 import json
 import os
 from pathlib import Path
@@ -12,10 +13,13 @@ from gateway.auth.accounts import AccountError, credential
 from gateway.auth.account_authenticator import current_account
 from gateway.auth.remote_accounts import AccountAuthorityUnavailable
 from gateway.extensions.auth.credential_authenticator import AuthContext
-from gateway.extensions.cloud_workspace.config import CloudConfig, CONFIG_ENV
+from gateway.extensions.cloud_workspace.config import (
+    CloudConfig, CONFIG_ENV, OPENCODE_RELAY_PATH, OPENCODE_WORKER_RELAY_PATH,
+)
 from gateway.services.cloud_environments import EnvironmentUnavailable
 from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution
 
+logger = logging.getLogger(__name__)
 COOKIE = "jiuwenswarm_organization"
 
 def public_environment(row):
@@ -33,6 +37,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
     def __init__(self, config):
         self.config = config
         self.accounts = self.environments = self.authenticator = None
+        self._opencode_reaper = None
         self._password_slots = asyncio.Semaphore(2)
         self.set_extension_dir(Path(__file__).parent)
 
@@ -45,12 +50,31 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
         if self.config is None:
             self.config = CloudConfig.load()
         self.accounts, self.authenticator, self.environments = assemble(self.config, services.require_agent_client())
+        if self.environments.opencode_relay:
+            self._opencode_reaper = asyncio.create_task(self._reap_opencode(self.environments.opencode_relay.pool))
+
+    @staticmethod
+    async def _reap_opencode(pool):
+        while True:
+            await asyncio.sleep(max(1.0, min(30.0, pool.idle_seconds)))
+            try:
+                await pool.reclaim_idle()
+            except Exception as exc:
+                logger.warning("Managed OpenCode idle sweep failed (%s)", type(exc).__name__)
 
     def http_routes(self):
-        return tuple(HTTPRouteContribution(self.config.api_prefix + path, self.http, methods) for path, methods in (
+        routes = tuple(HTTPRouteContribution(self.config.api_prefix + path, self.http, methods) for path, methods in (
             ("/register", ("POST",)), ("/login", ("POST",)), ("/logout", ("POST",)),
             ("/status", ("GET",)), ("/environment", ("GET",)), ("/environment/ensure", ("POST",)),
         ))
+        if self.environments is not None and self.environments.opencode_relay:
+            relay = self.environments.opencode_relay
+            routes += tuple(HTTPRouteContribution(
+                self.config.api_prefix + prefix + "/{project_id}/{path:path}", handler, ("GET", "POST"),
+            ) for prefix, handler in (
+                (OPENCODE_RELAY_PATH, relay.handle), (OPENCODE_WORKER_RELAY_PATH, relay.handle_shared),
+            ))
+        return routes
 
     def bind_web_channel(self, channel, services):
         from gateway.services.project_environments import ProjectEnvironments
@@ -176,6 +200,10 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
 
     async def shutdown(self):
         # The host owns Router shutdown and its writer lease.
+        if self._opencode_reaper is not None:
+            self._opencode_reaper.cancel()
+            await asyncio.gather(self._opencode_reaper, return_exceptions=True)
+            await self.environments.opencode_relay.close()
         if hasattr(self, "projects"):
             await self.projects.close()
 

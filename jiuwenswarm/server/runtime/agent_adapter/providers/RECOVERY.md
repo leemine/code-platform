@@ -9,18 +9,24 @@ author_email: 68536087@qq.com
 The adapters persist a versioned binding under
 `get_agent_sessions_dir()/.provider-bindings/`. The filename hashes the Provider
 and Swarm session ID; it never interpolates a user-supplied session ID as a path.
-The binding contains the native ID, private data root, canonical workspace,
-local principal, desired permission profile and model/settings fingerprints.
-Credentials are not copied into the binding. Writes use a private temporary
-file, fsync and atomic replacement.
+The binding contains the native ID, canonical workspace, local principal,
+permission profile and model/settings fingerprints. Version 1 bindings for
+locally managed sessions also contain their private data root. Writes use a
+private temporary file, fsync and atomic replacement. Credentials stay in the
+existing Provider configuration.
 
 Codex resumes the stored thread through the official SDK and validates its ID,
 workspace, idle state and effective permissions. Claude uses the original SDK
 session ID and transcript namespace through `resume`; native init/result events
 continue to validate the ID. Owned OpenCode services reopen their original XDG
 data namespace and validate the original session and workspace through HTTP.
-Borrowed OpenCode servers retain their previous behavior; this change does not
-claim cold recovery for external server ownership.
+OpenCode configured with a fixed `opencode.url` uses a version 2 binding with
+no local native root. The Worker records a pending binding before creating the
+native session and replaces it with the returned ID before prompting. A pending
+binding fences a retry if the creation outcome could not be recorded. On
+reattach the Worker verifies the settings fingerprint, original native session
+ID, workspace and idle status through the existing HTTP client. Adapter release
+retains the remote session and Worker binding.
 
 Adapter disposal closes clients and processes but retains bound native data.
 Uninitialized temporary namespaces are still removed. Retained private data is
@@ -34,8 +40,9 @@ or a mismatched native ID fails explicitly. Rendered Swarm history is never
 replayed as native context. A legacy session without a binding cannot be
 automatically recovered: no native ID is guessed and no replacement conversation
 is silently started. Retained data is not automatically garbage-collected on
-disposal; distinguishing eviction from permanent deletion would need the host
-to provide that intent, outside this Provider-only change.
+disposal. The current Swarm delete flow uses the same runtime release hook,
+so it also leaves the remote OpenCode session in place. Remote data purge
+requires a separate host operation that conveys permanent deletion.
 
 ## Validation (Windows, 2026-11-03)
 

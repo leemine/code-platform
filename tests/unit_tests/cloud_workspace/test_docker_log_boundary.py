@@ -10,6 +10,7 @@ import sys
 import threading
 import tempfile
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,6 +91,95 @@ def test_legacy_bind_syntax_and_private_log_symlink_refusal(boundary):
     log.symlink_to(actor)
     with pytest.raises(ValueError): gate.rewrite(value)
 
+
+
+def provider_request(boundary):
+    gate, worker, actor, shared = boundary
+    image = "sha256:" + "e" * 64
+    scope = {"role": "opencode", "image": image, "user": gate.user, "slot": "e" * 64}
+    request = {**worker, "Image": image, "HostConfig": {"Mounts": [
+        {"Type": "bind", "Source": str(actor), "Target": "/state"},
+        {"Type": "bind", "Source": str(shared), "Target": str(shared)},
+    ]}}
+    return gate, request, scope, worker
+
+
+def test_provider_routing_admits_scope_and_preserves_worker_security(boundary):
+    gate, provider, scope, worker = provider_request(boundary)
+    handler = object.__new__(module.Handler)
+    security_calls = []
+    scope_calls = []
+
+    def create_scope(value):
+        scope_calls.append(value)
+        return scope
+
+    def worker_security(value):
+        security_calls.append(value)
+        return value
+
+    handler.server = SimpleNamespace(
+        boundary=gate,
+        resources=SimpleNamespace(is_provider_image=lambda image: image == scope["image"], create_scope=create_scope),
+        runtime_security=SimpleNamespace(rewrite=worker_security),
+    )
+    provider["HostConfig"]["MaskedPaths"] = None
+    output, audit, guarded = handler._prepare_create(provider)
+    host = output["HostConfig"]
+    assert scope_calls == [provider] and not security_calls and guarded is scope
+    assert host["CapDrop"] == ["ALL"] and host["SecurityOpt"] == ["no-new-privileges:true"]
+    assert host["Mounts"][0] == provider["HostConfig"]["Mounts"][0]
+    assert host["Mounts"][1]["Source"] == str(gate.log_root / scope["slot"])
+    assert host["Mounts"][1]["Target"] == provider["HostConfig"]["Mounts"][1]["Target"]
+    assert "SECRET" not in json.dumps(audit)
+    assert provider["HostConfig"].keys() == {"Mounts", "MaskedPaths"}
+
+    _, worker_audit, guarded = handler._prepare_create(worker)
+    assert security_calls == [worker] and guarded is None
+    assert worker_audit["private_log_directory"] != audit["private_log_directory"]
+
+    handler.server.resources = None
+    with pytest.raises(ValueError, match="unapproved image"):
+        handler._prepare_create(provider)
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("Privileged", True), ("VolumesFrom", ["other"]), ("Devices", [{}]),
+    ("DeviceRequests", [{}]), ("CapAdd", ["SYS_ADMIN"]), ("SecurityOpt", ["seccomp=unconfined"]),
+    ("PidMode", "host"), ("IpcMode", "container:other"), ("CgroupnsMode", "host"),
+    ("NetworkMode", "host"), ("NetworkMode", "container:other"), ("UsernsMode", "host"),
+    ("Runtime", "unapproved"), ("MaskedPaths", []),
+])
+def test_provider_routing_rejects_operator_owned_security_overrides(boundary, key, value):
+    gate, request, scope, _ = provider_request(boundary)
+    request["HostConfig"][key] = value
+    with pytest.raises(ValueError):
+        gate.rewrite(request, provider_scope=scope)
+    assert list(gate.log_root.iterdir()) == []
+
+
+def test_provider_logs_keep_nested_alias_and_cannot_choose_private_log_source(boundary):
+    gate, request, scope, _ = provider_request(boundary)
+    shared = gate.shared[0] / "component"
+    shared.mkdir()
+    request["HostConfig"] = {"Binds": [f"{shared}:{shared}:rw"]}
+    value, _ = gate.rewrite(request, provider_scope=scope)
+    expected = gate.log_root / scope["slot"] / "component"
+    assert value["HostConfig"]["Binds"] == [f"{expected}:{shared}:rw"]
+    assert expected.stat().st_mode & 0o777 == 0o700
+
+    request["HostConfig"] = {"Binds": [f"{expected}:{shared}:rw"]}
+    with pytest.raises(ValueError, match="private log source"):
+        gate.rewrite(request, provider_scope=scope)
+
+
+def test_provider_mounts_without_stock_logs_remain_unchanged(boundary):
+    gate, request, scope, _ = provider_request(boundary)
+    request["HostConfig"]["Mounts"].pop()
+    value, audit = gate.rewrite(request, provider_scope=scope)
+    assert value["HostConfig"]["Mounts"] == request["HostConfig"]["Mounts"]
+    assert audit["replaced_mounts"] == 0
+    assert list(gate.log_root.iterdir()) == []
 
 def test_actual_unix_http_create_is_rewritten_before_forwarding(boundary, tmp_path):
     gate, request, actor, shared = boundary

@@ -10,13 +10,13 @@ A normally installed plugin must register `opencode-direct` under `jiuwenswarm.a
 
 This pilot uses a startup snapshot for supported OpenAI-compatible individual models. Refresh the OpenCode service after changing Swarm model configuration. Stale snapshots, OpenAIAccount, model groups and unmapped options fail explicitly, without falling back to Native. Legacy explicit `opencode.model` remains compatible. Reusing the model picker does not imply live service configuration synchronization or support for every model protocol.
 
-`JIUWENSWARM_AGENT_SDK` remains a legacy default. Active sessions retain their connection; an empty session uses current configuration at first execution. Configuration revisions are not durably bound yet. Cold restoration after native-session release is rejected. The adapter cleans up owned sessions, not the borrowed server.
+`JIUWENSWARM_AGENT_SDK` remains a legacy default. Active sessions retain their connection. With a fixed `opencode.url`, the Worker saves the binding between the Swarm and native OpenCode sessions. After a Worker restart, it can reattach to the original idle native session using the original configuration, workspace and model. Runtime release retains the binding and remote session. Recovery fails if the legacy binding is missing, creation had an unknown outcome or the native session is unavailable.
 
 ## Validation and remaining scope
 
 The actual Swarm browser→Gateway→Front→Worker/Runtime→OpenCode flow passed two-model selection, replies, existing approval/rejection UI, exit7 failure history/UI, cancellation while awaiting approval followed by another turn, default Native execution, and binding/history restoration after navigation and refresh. A separate environment with no Core distribution also passed real execution with both models without loading Core modules. Component previews do not count as channel acceptance.
 
-Nothing has been submitted or released. Team, Native product tool injection, a second external Provider, cold restoration, standalone plugin installation and supported optional-Core packaging remain unimplemented. Permission mapping does not imply full Native governance. Invocation completion, command exit success and task acceptance remain distinct; missing exit codes stay unknown.
+Nothing has been submitted or released. Team, Native product tool injection, a second external Provider, recovery of an in-flight turn across processes, standalone plugin installation and supported optional-Core packaging remain unimplemented. Permission mapping does not imply full Native governance. Invocation completion, command exit success and task acceptance remain distinct; missing exit codes stay unknown.
 
 
 ## Templates, Skills and MCP (N01–N04 candidate)
@@ -182,3 +182,11 @@ The adapter snapshots catalog content and checks its digest on native-session re
 settings require a new validation session; existing bindings and history are not silently migrated.
 The native usable-window reserve remains intact: 1000000 reports950000; `1M` reports996147 in this validation.
 UI projection continues to use native events. Browser UI, tools and long-context multi-turn compaction require separate acceptance.
+
+## Managed OpenCode for cloud workspaces
+
+When the cloud workspace deployment enables `opencode_provider`, the account
+Worker connects to a separate OpenCode service through the Gateway using a
+registered project. After idle reclamation, the replacement service attaches
+the original state volume and continues the original native session. Existing
+fixed-URL deployments keep their own state and require a separate migration.

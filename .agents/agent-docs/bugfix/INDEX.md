@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 33 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 34 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -19,7 +19,7 @@ generated: true
 | [agent_adapter](#module-2) | 2 |
 | [channels/web/frontend](#module-3) | 1 |
 | [config_panel](#module-4) | 1 |
-| [deploy/cloud-workspace](#module-5) | 1 |
+| [deploy/cloud-workspace](#module-5) | 2 |
 | [deploy/local](#module-6) | 1 |
 | [deploy/web](#module-7) | 1 |
 | [desktop](#module-8) | 3 |
@@ -29,7 +29,7 @@ generated: true
 | [gateway/extensions/data_sync](#module-12) | 1 |
 | [gateway/message_handler](#module-13) | 1 |
 | [gateway/routing](#module-14) | 1 |
-| [gateway/services](#module-15) | 1 |
+| [gateway/services](#module-15) | 2 |
 | [jiuwenswarm/channels/web](#module-16) | 5 |
 | [jiuwenswarm/channels/web/frontend](#module-17) | 1 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-18) | 1 |
@@ -86,6 +86,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B_20261111_2010_codex-container-sandbox](deploy/B_20261111_2010_codex-container-sandbox.md) | B | Codex嵌套沙箱的部署前提与控制文件读取边界 | leemine | deploy/cloud-workspace | deploy/cloud-workspace/runtime_security.py, deploy/cloud-workspace/codex_sandbox_probe.py, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_runtime_security.py, tests/unit_tests/cloud_workspace/test_codex_sandbox_probe.py, deploy/cloud-workspace/runtime-permissions.yaml.example, tests/unit_tests/cloud_workspace/test_runtime_permissions.py | 无独立 D：依据管理仓PLATFORM_CODEX_SANDBOX_DEPLOYMENT_20261111及用户确认；没有另造D编号。 |
+| [B_20261121_0219_opencode-provider-fault-reclaim](gateway/services/B_20261121_0219_opencode-provider-fault-reclaim.md) | B | OpenCode 服务退出后的独立实例回收 | leemine | gateway/services, deploy/cloud-workspace | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/resource_reconciler.py, deploy/cloud-workspace/physical_resources.py | 无独立 D：用户确认补齐当前 S_02 托管 OpenCode 回收契约，无独立设计。 |
 
 <a id="module-6"></a>
 
@@ -169,6 +170,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [B_20261116_1132_cloud-directory-reuse](gateway/B_20261116_1132_cloud-directory-reuse.md) | B | 云目录连接寿命、断线分类与分段耗时 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/data_sync | gateway/services/cloud_workspace_client.py, gateway/services/data_sync/ui.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/data_sync/transport.py | 无独立 D：用户授权优化既有三段式目录操作与连接复用，保持实时权限；不新增执行或同步协议。 |
+| [B_20261121_0219_opencode-provider-fault-reclaim](gateway/services/B_20261121_0219_opencode-provider-fault-reclaim.md) | B | OpenCode 服务退出后的独立实例回收 | leemine | gateway/services, deploy/cloud-workspace | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/resource_reconciler.py, deploy/cloud-workspace/physical_resources.py | 无独立 D：用户确认补齐当前 S_02 托管 OpenCode 回收契约，无独立设计。 |
 
 <a id="module-16"></a>
 

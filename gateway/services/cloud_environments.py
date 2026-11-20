@@ -277,8 +277,9 @@ class EnvironmentStore:
 
 
 class EnvironmentService:
-    def __init__(self, store: EnvironmentStore, accounts, instances):
+    def __init__(self, store: EnvironmentStore, accounts, instances, *, opencode_relay=None):
         self.store, self.accounts, self.instances = store, accounts, instances
+        self.opencode_relay = opencode_relay
 
     async def register(self, username, password):
         intent = await asyncio.to_thread(self.store.registration, username, password)
