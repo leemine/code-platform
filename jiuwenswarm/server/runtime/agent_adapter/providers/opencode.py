@@ -296,16 +296,18 @@ class OpenCodeAdapter:
             facts = facts or session_facts(session_id)
             binding = recovery.load("opencode", session_id, directory)
             if binding:
-                if not self._executable:
-                    raise ValueError("OpenCode recovery requires its original session-owned service")
+                if bool(self._executable) != (binding["version"] == 1):
+                    raise ValueError("OpenCode recovery requires its original server mode")
                 recovery.require_settings(binding, self._recovery_settings)
+                if binding["native_id"] is None:
+                    raise ValueError("OpenCode native session creation outcome is unknown; it cannot be retried safely")
             elif facts.has_assistant_history:
                 raise ValueError("OpenCode cannot restore a released session without a recovery binding; its original native session cannot be identified")
             from .opencode_equipment import Equipment
             session = _Session(binding["native_id"] if binding else "", directory, swarm_id=session_id,
                 model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
                 usage=OpenCodeUsage(complete=not bool(binding)),
-                desired_permission=binding["permission"] if binding else self._permission_profile)
+                desired_permission=binding["permission"] if binding and self._executable else self._permission_profile)
             if self._executable:
                 from .opencode_service import SessionService
                 if binding:
@@ -313,6 +315,10 @@ class OpenCodeAdapter:
                 else:
                     session.service = SessionService(self._executable, directory)
             try:
+                if not session.service:
+                    await self._apply_permissions(session)
+                    if not binding:
+                        self._save_binding(session, reserving=True)
                 if session.service:
                     self._set_service_models(session, execution)
                     await session.service.configure(session.equipment, permission_profile=session.desired_permission)
@@ -338,13 +344,19 @@ class OpenCodeAdapter:
                     await session.service.close()
                 raise
 
-    def _save_binding(self, session):
-        if session.swarm_id and session.native_id and session.service:
-            recovery.save("opencode", session.swarm_id, root=session.service.root, directory=session.directory,
-                native_id=session.native_id, model_revision=session.model_revision,
-                settings_revision=recovery.settings_revision(self._recovery_settings),
-                permission=session.desired_permission)
-            session.service.retain_data = True
+    def _save_binding(self, session, *, reserving=False):
+        if not session.swarm_id or (not reserving and not session.native_id):
+            return
+        service = session.service
+        recovery.save(
+            "opencode", session.swarm_id,
+            root=service.root if service else None, directory=session.directory,
+            native_id=None if reserving else session.native_id, model_revision=session.model_revision,
+            settings_revision=recovery.settings_revision(self._recovery_settings),
+            permission=session.desired_permission,
+        )
+        if service:
+            service.retain_data = True
 
     async def reconcile_session_mcp(self, session_id, needed, *, execution_request=None):
         """Compatibility entry; the host retains snapshot commit ownership."""
@@ -670,7 +682,7 @@ class OpenCodeAdapter:
                     await session.service.close()
                     del self._sessions[session_id]
             else:
-                await self._call("DELETE", f"/session/{session.native_id}", session=session)
+                # Remote state is retained for the next Worker to reattach.
                 del self._sessions[session_id]
             return True
 
@@ -760,7 +772,8 @@ class OpenCodeAdapter:
         # leave another session able to start with a silently stale policy.
         for _, session in sessions:
             session.desired_permission = profile
-            self._save_binding(session)
+            if session.service:
+                self._save_binding(session)
         for sid, session in sessions:
             async with session.configuration_lock:
                 if self._sessions.get(sid) is not session:

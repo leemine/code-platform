@@ -18,6 +18,7 @@ if __name__ == '__main__' and getattr(sys, 'frozen', False):
     from jiuwenswarm.common.external_cli_runtime import activate_external_cli_runtime_paths
     activate_external_cli_runtime_paths()
 
+import httpx
 import pytest
 
 
@@ -48,6 +49,7 @@ def test_binding_roundtrip_rejects_mismatch_and_missing_data(providers, tmp_path
     recovery.save(provider, '../untrusted-id', root=root, directory=str(tmp_path), native_id='native-id',
         model_revision='model', settings_revision='settings', permission='default')
     restored = recovery.load(provider, '../untrusted-id', str(tmp_path))
+    assert restored['version'] == 1
     assert restored['native_id'] == 'native-id'
     assert restored['root'] == str(root.resolve())
     with pytest.raises(ValueError, match='binding'):
@@ -206,6 +208,157 @@ def test_opencode_recreated_service_uses_same_native_session(providers, monkeypa
         assert second._sessions['one'].service.root == root
         assert calls.count(('POST', '/session')) == 1
         assert ('DELETE', '/session/native-one') not in calls
+    asyncio.run(scenario())
+
+
+@pytest.fixture
+def borrowed_opencode(providers, monkeypatch, tmp_path):
+    calls = []
+    state = SimpleNamespace(
+        identity={'id': 'native-one', 'directory': str(tmp_path)},
+        statuses={},
+        missing=False,
+        lose_create_response=False,
+    )
+    settings = {
+        'url': 'https://opencode.example.invalid',
+        'username': 'fixture-worker',
+        'password': 'opencode-recovery-fixture-secret',
+        'directory': str(tmp_path),
+        'model': {'providerID': 'fixture', 'modelID': 'fixture'},
+    }
+
+    def respond(request):
+        operation = (request.method, request.url.path)
+        calls.append(operation)
+        if operation == ('GET', '/global/health'):
+            return httpx.Response(200, json={'healthy': True})
+        if operation == ('POST', '/session'):
+            if state.lose_create_response:
+                raise httpx.ReadTimeout('create response lost', request=request)
+            return httpx.Response(200, json=state.identity)
+        if operation == ('GET', '/session/native-one'):
+            if state.missing:
+                return httpx.Response(404)
+            return httpx.Response(200, json=state.identity)
+        if operation == ('GET', '/session/status'):
+            return httpx.Response(200, json=state.statuses)
+        raise AssertionError(f'Unexpected native call {operation}')
+
+    def create_client(url, *, username, password):
+        return httpx.AsyncClient(base_url=url, transport=httpx.MockTransport(respond), trust_env=False)
+
+    monkeypatch.setattr(providers.opencode.transport, 'create_client', create_client)
+
+    async def new_adapter(**overrides):
+        adapter = providers.opencode.OpenCodeAdapter(mode='code')
+        await adapter.create_instance({
+            'permissions': {'enabled': True, 'mode': 'manual'},
+            'opencode': {**settings, **overrides},
+        }, mode='code')
+        return adapter
+
+    async def prepare(adapter):
+        await adapter.prepare_session(session_id='one', channel_id='web', mode='code', project_dir=str(tmp_path))
+
+    return SimpleNamespace(calls=calls, state=state, settings=settings, new_adapter=new_adapter, prepare=prepare)
+
+
+def test_borrowed_opencode_persists_native_id_before_first_turn(providers, borrowed_opencode):
+    async def scenario():
+        native = borrowed_opencode
+        first = await native.new_adapter()
+        try:
+            await native.prepare(first)
+            file = providers.session_recovery._file('opencode', 'one')
+            content = file.read_text(encoding='utf-8')
+            record = json.loads(content)
+            assert record['version'] == 2
+            assert record['native_id'] == 'native-one'
+            assert record.get('root') is None
+            assert native.settings['password'] not in content
+        finally:
+            await first.cleanup()
+
+        second = await native.new_adapter()
+        try:
+            await native.prepare(second)
+            restored = second._sessions['one']
+            assert restored.native_id == 'native-one'
+            assert restored.restored and restored.service is None
+            assert native.calls.count(('POST', '/session')) == 1
+            assert ('GET', '/session/native-one') in native.calls
+            assert ('GET', '/session/status') in native.calls
+        finally:
+            await second.cleanup()
+        assert not any(method == 'DELETE' for method, _ in native.calls)
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('failure', ['active', 'missing', 'wrong-id', 'wrong-directory', 'different-url', 'owned-mode'])
+def test_borrowed_opencode_invalid_restore_never_creates_another_session(providers, borrowed_opencode, failure):
+    async def scenario():
+        native = borrowed_opencode
+        first = await native.new_adapter()
+        try:
+            await native.prepare(first)
+        finally:
+            await first.cleanup()
+
+        overrides = {}
+        if failure == 'active':
+            native.state.statuses['native-one'] = {'type': 'busy'}
+        elif failure == 'missing':
+            native.state.missing = True
+        elif failure == 'wrong-id':
+            native.state.identity['id'] = 'another-native-id'
+        elif failure == 'wrong-directory':
+            native.state.identity['directory'] += '-other'
+        elif failure == 'different-url':
+            overrides['url'] = 'https://other-opencode.example.invalid'
+        second = await native.new_adapter(**overrides)
+        if failure == 'owned-mode':
+            second._executable = 'official-cli'
+        before = len(native.calls)
+        try:
+            with pytest.raises((ValueError, RuntimeError)):
+                await native.prepare(second)
+            assert not second.has_session_runtime('one')
+            assert native.calls.count(('POST', '/session')) == 1
+            if failure in {'different-url', 'owned-mode'}:
+                assert len(native.calls) == before
+            else:
+                assert ('GET', '/session/native-one') in native.calls[before:]
+        finally:
+            await second.cleanup()
+    asyncio.run(scenario())
+
+
+def test_borrowed_opencode_lost_create_response_is_not_retried(providers, borrowed_opencode):
+    async def scenario():
+        native = borrowed_opencode
+        native.state.lose_create_response = True
+        first = await native.new_adapter()
+        try:
+            with pytest.raises(RuntimeError, match='session initialization'):
+                await native.prepare(first)
+            assert not first.has_session_runtime('one')
+            record = json.loads(providers.session_recovery._file('opencode', 'one').read_text(encoding='utf-8'))
+            assert record['native_id'] is None
+        finally:
+            await first.cleanup()
+
+        native.state.lose_create_response = False
+        second = await native.new_adapter()
+        before = len(native.calls)
+        try:
+            with pytest.raises((ValueError, RuntimeError)):
+                await native.prepare(second)
+            assert len(native.calls) == before
+            assert native.calls.count(('POST', '/session')) == 1
+            assert not second.has_session_runtime('one')
+        finally:
+            await second.cleanup()
     asyncio.run(scenario())
 
 

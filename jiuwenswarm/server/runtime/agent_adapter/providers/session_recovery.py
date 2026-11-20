@@ -47,29 +47,42 @@ def load(provider: str, session_id: str, directory: str) -> dict | None:
         if file.is_symlink() or file.stat().st_size > 65536:
             raise ValueError("Invalid binding file")
         data = json.loads(file.read_text(encoding="utf-8"))
-        if (data["version"] != 1 or data["provider"] != provider
+        if (data["version"] not in {1, 2} or data["provider"] != provider
                 or data["session_id"] != session_id or data["principal"] != getpass.getuser()
                 or data["directory"] != str(Path(directory).resolve())
                 or data["permission"] not in {"default", "full_access"}
-                or not isinstance(data["native_id"], str) or not data["native_id"]
                 or not isinstance(data["model_revision"], str)
                 or not isinstance(data["settings_revision"], str)):
             raise ValueError("Binding identity mismatch")
-        data["root"] = str(_root(provider, data["root"]))
+        native_id = data["native_id"]
+        if data["version"] == 1:
+            if not isinstance(native_id, str) or not native_id:
+                raise ValueError("Invalid native session ID")
+            data["root"] = str(_root(provider, data["root"]))
+        elif (provider != "opencode" or "root" in data or data["permission"] != "default"
+              or (native_id is not None and (not isinstance(native_id, str) or not native_id))):
+            raise ValueError("Invalid remote OpenCode binding")
         return data
     except (OSError, ValueError, KeyError, TypeError):
         raise ValueError("Provider recovery binding is invalid, missing data, or belongs to another workspace/user") from None
 
 
-def save(provider: str, session_id: str, *, root: Path, directory: str,
-         native_id: str, model_revision: str, settings_revision: str,
+def save(provider: str, session_id: str, *, root: Path | None, directory: str,
+         native_id: str | None, model_revision: str, settings_revision: str,
          permission: str) -> None:
+    remote = root is None
+    if remote and (provider != "opencode" or permission != "default"):
+        raise ValueError("Only default-profile OpenCode supports a remote session binding")
+    if (native_id is None and not remote) or (native_id is not None and
+                                              (not isinstance(native_id, str) or not native_id)):
+        raise ValueError("Invalid native session ID")
     file = _file(provider, session_id)
-    data = {"version": 1, "provider": provider, "session_id": session_id,
-            "principal": getpass.getuser(), "root": str(_root(provider, str(root))),
-            "directory": str(Path(directory).resolve()), "native_id": native_id,
-            "model_revision": model_revision, "settings_revision": settings_revision,
-            "permission": permission}
+    data = {"version": 2 if remote else 1, "provider": provider, "session_id": session_id,
+            "principal": getpass.getuser(), "directory": str(Path(directory).resolve()),
+            "native_id": native_id, "model_revision": model_revision,
+            "settings_revision": settings_revision, "permission": permission}
+    if root is not None:
+        data["root"] = str(_root(provider, str(root)))
     file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(prefix="binding-", suffix=".tmp", dir=file.parent)
     try:
@@ -77,7 +90,15 @@ def save(provider: str, session_id: str, *, root: Path, directory: str,
             json.dump(data, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, file)
+        if native_id is None:
+            # Reserve the session before remote POST. A lost response or
+            # interrupted Worker cannot turn a retry into a second creation.
+            try:
+                os.link(temporary, file)
+            except FileExistsError:
+                raise ValueError("OpenCode session already has a remote recovery binding") from None
+        else:
+            os.replace(temporary, file)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

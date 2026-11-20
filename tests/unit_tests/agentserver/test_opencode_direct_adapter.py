@@ -280,6 +280,8 @@ def completed_events():
 
 @pytest.fixture
 def host(tmp_path, monkeypatch):
+    from jiuwenswarm.common import utils
+
     calls=[]; events=completed_events(); reply=asyncio.Event()
     original=httpx.AsyncClient
     native_permissions = []
@@ -288,8 +290,10 @@ def host(tmp_path, monkeypatch):
         if req.url.path == '/global/health':return httpx.Response(200,json={"healthy":True})
         if req.url.path == '/session/ses_test':
             if req.method == 'PATCH': native_permissions.extend(json.loads(req.content)['permission'])
-            return httpx.Response(200,json={"id":"ses_test","permission":list(native_permissions)})
-        if req.url.path == '/session':return httpx.Response(200,json={"id":"ses_test"})
+            return httpx.Response(200, json={"id": "ses_test", "directory": str(tmp_path),
+                                             "permission": list(native_permissions)})
+        if req.url.path == '/session':
+            return httpx.Response(200, json={"id": "ses_test", "directory": str(tmp_path)})
         if req.url.path == '/session/status':return httpx.Response(200,json={})
         if req.url.path == '/event':return httpx.Response(200,stream=Events(events,reply),headers={'content-type':'text/event-stream'})
         if req.url.path.endswith('/reply'):reply.set()
@@ -298,6 +302,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(interface, 'resolve_sdk_choice', lambda:'opencode-direct')
     monkeypatch.setattr(interface, 'create_adapter', lambda sdk,mode:OpenCodeAdapter(mode=mode))
     monkeypatch.setattr(interface, 'get_config', lambda:{'preferred_language':'en'})
+    monkeypatch.setattr(utils, 'get_agent_sessions_dir', lambda: tmp_path / 'sessions')
     monkeypatch.setattr(session_history,'get_agent_sessions_dir',lambda:tmp_path/'sessions')
     app=interface.JiuWenSwarm()
     config={'permissions':{'enabled':True,'mode':'manual'},'opencode':{'url':'http://127.0.0.1:12345','directory':str(tmp_path),'model':{'providerID':'test','modelID':'test'}}}
@@ -309,7 +314,7 @@ def request(sid='test-session', **params):
 
 
 @pytest.mark.asyncio
-async def test_real_facade_preserves_history_and_closes_borrowed_sessions(host):
+async def test_real_facade_preserves_history_and_releases_borrowed_sessions(host):
     app,config,calls,_,root=host
     await app.create_instance(config)
     try:
@@ -324,7 +329,7 @@ async def test_real_facade_preserves_history_and_closes_borrowed_sessions(host):
         assert not app.has_session_runtime('test-session')
     finally:
         await app.cleanup()
-    assert any(c[:2]==('DELETE','/session/ses_test') for c in calls)
+    assert not any(method == 'DELETE' for method, _, _ in calls)
     assert not any(c[1]=='/instance/dispose' for c in calls)
 
 
@@ -412,33 +417,48 @@ async def test_native_cancel_keeps_history_cancelled(host):
 
 
 @pytest.mark.asyncio
-async def test_released_history_is_not_silently_restarted(host):
-    app,config,calls,_,_=host
-    await app.create_instance(config)
+async def test_fresh_facade_reattaches_borrowed_session_and_preserves_history(host):
+    first, config, calls, _, _ = host
+    await first.create_instance(config)
     try:
-        _=[c async for c in app.process_message_stream(request())]
-        await app.cleanup_session_runtime('test-session')
-        before=len([c for c in calls if c[:2]==('POST','/session')])
-        with pytest.raises(ValueError,match='cannot restore'):
-            await app._adapter.prepare_session(session_id='test-session',channel_id='web',mode='agent')
-        assert len([c for c in calls if c[:2]==('POST','/session')])==before
-    finally:await app.cleanup()
+        chunks = [chunk async for chunk in first.process_message_stream(request())]
+        assert any(chunk.payload.get('event_type') == 'chat.final' for chunk in chunks)
+        original_id = first._adapter._sessions['test-session'].native_id
+        assert await first.cleanup_session_runtime('test-session')
+    finally:
+        await first.cleanup()
+
+    second = interface.JiuWenSwarm()
+    await second.create_instance(config)
+    try:
+        chunks = [chunk async for chunk in second.process_message_stream(request())]
+        assert any(chunk.payload.get('event_type') == 'chat.final' for chunk in chunks)
+        assert second._adapter._sessions['test-session'].native_id == original_id
+        assert ('GET', f'/session/{original_id}', None) in calls
+        assert ('GET', '/session/status', None) in calls
+    finally:
+        await second.cleanup()
+
+    assert sum(call[:2] == ('POST', '/session') for call in calls) == 1
+    assert not any(method == 'DELETE' for method, _, _ in calls)
 
 
 @pytest.mark.asyncio
-async def test_cleanup_failure_retains_adapter_for_retry(host,monkeypatch):
-    app,config,_,_,_=host
+async def test_owned_service_close_failure_retains_adapter_for_retry(owned_permissions, monkeypatch):
+    app, config, services = owned_permissions
     await app.create_instance(config)
-    _=[c async for c in app.process_message_stream(request())]
-    adapter=app._adapter;original=adapter._call
-    async def fail_delete(method,path,**kw):
-        if method=='DELETE':raise RuntimeError('temporary delete failure')
-        return await original(method,path,**kw)
-    monkeypatch.setattr(adapter,'_call',fail_delete)
-    with pytest.raises(RuntimeError,match='temporary delete'):
-        await app.cleanup()
+    _ = [chunk async for chunk in app.process_message_stream(request())]
+    adapter = app._adapter
+    service = services[0]
+
+    async def fail_close():
+        raise RuntimeError('temporary close failure')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service, 'close', fail_close)
+        with pytest.raises(RuntimeError, match='temporary close'):
+            await app.cleanup()
     assert app._adapter is adapter and adapter.has_session_runtime('test-session')
-    monkeypatch.setattr(adapter,'_call',original)
     await app.cleanup()
     assert app._adapter is None
 
@@ -461,7 +481,7 @@ async def test_failed_abort_keeps_owner_and_cleanup_retries(host,monkeypatch):
     monkeypatch.setattr(adapter,'_call',original)
     await app.cleanup()
     assert any(c[1].endswith('/abort') for c in calls)
-    assert any(c[:2]==('DELETE','/session/ses_test') for c in calls)
+    assert not any(method == 'DELETE' for method, _, _ in calls)
 
 
 @pytest.mark.asyncio
@@ -581,7 +601,7 @@ async def test_external_manager_selection_survives_environment_change(host, monk
         assert any((chunk.payload or {}).get('content') == 'PUBLIC_REPLY' for chunk in chunks)
     finally:
         await runtime.close()
-    assert any(call[:2] == ('DELETE', '/session/ses_test') for call in calls)
+    assert not any(method == 'DELETE' for method, _, _ in calls)
 
 
 @pytest.mark.asyncio

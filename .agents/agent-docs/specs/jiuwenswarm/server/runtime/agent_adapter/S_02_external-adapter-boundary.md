@@ -25,12 +25,12 @@ Native输入、控制恢复及原Facade答案转换兼容导出保留。
 | 接口/事实 | 责任与失败边界 |
 | --- | --- |
 | create_instance | 插件校验显式 URL、workspace；模型为原Swarm选择，旧显式model仍兼容，健康检查失败关闭客户端；URL 模式只借用服务；配置 opencode.cli_path 时创建会话自有官方 CLI 服务，复用 Swarm 模型目录 |
-| prepare_session / has_session_runtime | 创建、查询本适配器拥有的原生 session；固定 workspace；已有助手历史但原生 session 已释放时拒绝冷恢复，不隐式新建空上下文 |
+| prepare_session / has_session_runtime | 创建或按持久绑定恢复原生 session。恢复校验 Provider 配置、原生会话 ID、固定 workspace 和 idle 状态。已有助手历史且无绑定、创建结果未知或原生会话已丢失时拒绝恢复，不隐式新建会话 |
 | build_query（必需） | 返回(query, effective UserTurn)；外部实现解释原有UserTurn，Native拥有原InteractiveInput转换；缺失方法拒绝，不回退Native。OpenCode 支持文本、可移植模板 persona、Skill 与 MCP；Native tools/rails/subagents、Team/计划执行明确拒绝；允许原Swarm单模型选择，未映射协议/参数和模型组拒绝 |
 | process_message_stream_impl | 原 Runtime/Facade 拥有请求队列、producer 和唯一消费者；适配器先订阅再 prompt_async，仅映射匹配 session 的原生事件；助手正文不混入用户提示 |
 | deliver_control_input_impl（必需） | 在原 producer 活动期间答复指定原生权限/问题 ID，不发第二 prompt、不增加消费者；使用既有 Web selected_options/custom_input 输入；重复、过期、跨 session 答复拒绝 |
-| process_interrupt | OpenCode 仅 cancel，经官方 abort；不声称支持暂停、补充输入或原生恢复 |
-| cleanup_session_adapter / cleanup | 宿主先取消并等待 producer；插件删除自己创建的原生 session 并关闭客户端，不 dispose 借用的 server。借用模式 abort/delete 失败保留所有者；自有服务清理失败亦须释放自有进程/目录；Swarm 历史保留 |
+| process_interrupt | OpenCode 仅 cancel，经官方 abort。暂停、恢复进行中的回合和追加输入尚不支持 |
+| cleanup_session_adapter / cleanup | 宿主先取消并等待 producer。插件释放会话运行时和所持客户端。借用模式保留远端原生会话与持久绑定，abort 失败保留所有者。自有服务关闭后保留有绑定的原生数据，Swarm 历史保留 |
 
 ## 终态与历史
 
@@ -44,7 +44,7 @@ Native输入、控制恢复及原Facade答案转换兼容导出保留。
 
 旧 interrupt 模块、RootPermissionQueueError、PromptSuggestionForkRail 与 KVCacheAffinityConfig 保留兼容导出；纯协议谓词和原生实现加载分开。Gateway push 由已有服务器显式绑定 sender；Runtime-direct 无服务器时返回未发送，不隐式创建服务器。
 
-完整 AgentServer/Gateway/WebSocket 启动、第二 Provider、运行中切换、Team、双实例交错、跨进程恢复、MCP/产品工具注入及无 Core 正常安装未验收。官方 question 事件虽有映射，真实问题交互未验收；真实验证范围为文本、命令、权限批准/拒绝、取消和清理。
+完整 AgentServer/Gateway/WebSocket 启动、第二 Provider、运行中切换、Team、双实例交错、进行中回合的跨进程接管、MCP/产品工具注入及无 Core 正常安装未验收。官方 question 事件虽有映射，真实问题交互未验收；真实验证范围为文本、命令、权限批准/拒绝、取消和清理。
 
 ## 关联与验证
 
@@ -78,6 +78,10 @@ Runtime 和 Facade 继续拥有会话、Turn、生产者与历史。外部 adapt
 ## 会话项目目录
 
 自有 CLI 首次按 Swarm project_dir 绑定，省略则用 opencode.directory；已有会话省略则沿用绑定，显式变更拒绝。目录必须绝对且存在，规范化后比较。借用 URL 保留固定配置边界。装备解析、HTTP/SSE、CLI cwd 和关闭请求使用同一会话目录；默认目录不覆盖用户 UI 项目选择。修复证据：B_20261030_1455_opencode-session-workspace-binding。
+
+## 固定 URL 的会话恢复
+
+由 Worker 保存 Swarm 会话与远端原生会话的绑定。记录位于原 Provider 私有绑定目录，自有 CLI 沿用 v1，远端 OpenCode 使用 v2，无本地原生状态根。连接和模型只保存摘要。Worker 先持久化创建占位，收到原生会话 ID 后再提交绑定，创建结果未知时停止重试。重启后检查配置与固定工作区，确认原生会话身份及空闲状态，再用同一会话续聊。运行时释放保留原生状态。当前 Swarm 会话删除也走同一释放入口，远端原生记录仍保留。永久清理远端数据和接管进行中的回合需独立生命周期契约。
 
 ## 全局权限档位与 Provider 生效状态
 
