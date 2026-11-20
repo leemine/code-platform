@@ -138,6 +138,10 @@ Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenC
 并在原就绪等待时限内通过 OpenCode 健康接口确认就绪。该版本返回的工作区同源
 `/home/<user>` 挂载用于核对工作区归属。
 
+元戎明确报告 `RUNNING` 时，Gateway 也会等待该代 Provider 的带认证健康检查返回
+HTTP 200 和 `healthy: true`。Gateway 只在就绪等待时限内重试健康 GET，成功后放行
+原请求。检查超时会返回服务不可用，并保留当前分配供后续请求继续检查。
+
 元戎 `/serverless/v1/http/` 会移除应用的 `Authorization`。本机环回 Frontend
 可在 `opencode_provider` 设置 `"auth_transport": "query"`，通过 OpenCode 官方的
 `auth_token` 参数进行应用认证。参数只写入 Gateway 到元戎的私有请求，Gateway 的

@@ -26,6 +26,7 @@ from gateway.services.cloud_environments import EnvironmentUnavailable, _private
 logger = logging.getLogger(__name__)
 PROVIDER = "opencode"
 PORT = 4096
+READY_RETRY_SECONDS = 0.25
 WORKER_ROOT = PurePosixPath("/data/agent/workspace")
 FAULT_GRACE_SECONDS = 30.0
 STALL_GRACE_SECONDS = 60.0
@@ -83,6 +84,7 @@ class CloudOpencodePool:
         self.fault_check: Callable[[OpenCodeLease], Awaitable[OpenCodeFault | None]] | None = None
         self._locks = defaultdict(asyncio.Lock)
         self._holds = Counter()
+        self._ready_operations: set[str] = set()
         self._fault_since: dict[str, tuple[OpenCodeFault, float]] = {}
         _private_directory(self.storage)
         with self.store.connect() as db:
@@ -187,6 +189,7 @@ class CloudOpencodePool:
 
     def _recycle(self, row):
         updated = self._transition(row, "NEW", recycled=True)
+        self._ready_operations.discard(row["operation_id"])
         self._fault_since.pop(row["operation_id"], None)
         try:
             shutil.rmtree(self.storage / row["binding_id"] / row["operation_id"])
@@ -359,6 +362,34 @@ class CloudOpencodePool:
                 return False
         return True
 
+    async def _wait_until_ready(self, row, plan):
+        ready_check = self.ready_check
+        lease = self._lease(row, plan)
+        operation = row["operation_id"]
+
+        async def probe():
+            if await ready_check(lease):
+                self._ready_operations.add(operation)
+                return True
+            return False
+
+        async def confirm_unreported_ready(info):
+            return self._matches(plan, info) and await probe()
+
+        async with asyncio.timeout(self.ready_timeout):
+            if ready_check is None:
+                info = await self.yuanrong.wait_until_running(lease.instance_id)
+            else:
+                info = await self.yuanrong.wait_until_running(
+                    lease.instance_id, confirm_unreported_ready=confirm_unreported_ready,
+                )
+            if not self._matches(plan, info):
+                raise EnvironmentUnavailable("OpenCode Provider ownership could not be verified")
+            # YuanRong can report RUNNING before OpenCode can answer through its relay.
+            if ready_check is not None and operation not in self._ready_operations:
+                while not await probe():
+                    await asyncio.sleep(READY_RETRY_SECONDS)
+
     @asynccontextmanager
     async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False):
         current = self._check_account(account)
@@ -385,16 +416,7 @@ class CloudOpencodePool:
                 if row["state"] != "ALLOCATED":
                     row = await self._allocate(row, plan)
 
-                ready_options = {}
-                if (ready_check := self.ready_check) is not None:
-                    async def confirm_unreported_ready(info):
-                        return self._matches(plan, info) and await ready_check(self._lease(row, plan))
-
-                    ready_options["confirm_unreported_ready"] = confirm_unreported_ready
-                async with asyncio.timeout(self.ready_timeout):
-                    info = await self.yuanrong.wait_until_running(row["instance_id"], **ready_options)
-                if not self._matches(plan, info):
-                    raise EnvironmentUnavailable("OpenCode Provider ownership could not be verified")
+                await self._wait_until_ready(row, plan)
                 self._check_account(account)
                 self._holds[key] += 1
         except PermissionError:
