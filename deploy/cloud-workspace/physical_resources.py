@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import http.client
+from ipaddress import IPv4Address
 import json
 import os
 from pathlib import Path
@@ -329,13 +330,42 @@ class PhysicalResources:
             self.write(receipt_path, receipt)
             yield receipt_path, receipt, urlsplit(path).path + "?" + urlencode(query)
 
-    def confirm_deleted(self, request: dict) -> dict:
-        if set(request) != {"workspace", "identity", "image", "user", "instance_id"}:
+    def _confirmation_scope(self, request: dict) -> tuple[dict, str]:
+        if not isinstance(request, dict) or set(request) != {"workspace", "identity", "image", "user", "instance_id"}:
             raise ValueError("invalid physical confirmation fields")
         scope = self.scope(request["workspace"], request["identity"], request["image"], request["user"])
         instance = request["instance_id"]
         if not isinstance(instance, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", instance):
             raise ValueError("invalid instance reference")
+        return scope, instance
+
+    def confirm_opencode_unavailable(self, request: dict) -> dict:
+        scope, _ = self._confirmation_scope(request)
+        if scope.get("role") != "opencode":
+            raise ValueError("physical fault checks require an OpenCode scope")
+        with self.locked(scope) as directory:
+            receipt = self.read(directory / (scope["key"] + ".json"))
+            if (receipt is None or receipt.get("state") != "CREATED" or receipt.get("observed") is not True
+                    or any(receipt.get(key) != value for key, value in scope.items())):
+                raise ValueError("OpenCode fault check requires a matching physical receipt")
+            value = self.inspect(scope)
+            identifier = receipt.get("container_id")
+            if (not isinstance(identifier, str) or not CONTAINER_ID.fullmatch(identifier)
+                    or value is None or value.get("Id") != identifier
+                    or value.get("State", {}).get("Running") is not True):
+                raise ValueError("OpenCode container is not a confirmed running instance")
+            bridge = value.get("NetworkSettings", {}).get("Networks", {}).get("bridge", {})
+            address = IPv4Address(bridge.get("IPAddress", ""))
+            if not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified:
+                raise ValueError("OpenCode container bridge address is not private")
+            try:
+                with socket.create_connection((str(address), 4096), timeout=min(2, self.timeout)):
+                    return {"unavailable": False}
+            except ConnectionRefusedError:
+                return {"unavailable": True}
+
+    def confirm_deleted(self, request: dict) -> dict:
+        scope, instance = self._confirmation_scope(request)
         with self.locked(scope) as directory:
             # Recheck the original authority before a physical compensation.
             try:

@@ -65,6 +65,32 @@ def _client(app, auth=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "body", "expected"), [
+    (502, "failed to dial sandbox\n", True),
+    (502, "bad gateway", False),
+    (404, "sandbox not found", False),
+    (401, "", False),
+    (200, '{"healthy":true}', False),
+    (httpx.ConnectTimeout, "", False),
+    (httpx.RemoteProtocolError, "", True),
+])
+async def test_fault_probe_classifies_frontend_dial_failure_and_disconnect(relay, status, body, expected):
+    broker, *_ = relay
+
+    async def upstream(request):
+        assert request.url.path == "/serverless/v1/http/global/health"
+        assert request.url.params["instance"] == "scoped-instance"
+        if isinstance(status, type):
+            raise status("transport failed")
+        return httpx.Response(status, text=body)
+
+    lease = SimpleNamespace(instance_id="scoped-instance", directory=DIRECTORY, password="test")
+    async with broker._client, httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        broker._client = client
+        assert await broker.pool.unavailable_check(lease) is expected
+
+
+@pytest.mark.asyncio
 async def test_query_auth_keeps_the_credential_off_the_client_request_and_logs(caplog):
     password = "isolated-opencode-credential"
     expected = base64.b64encode(f"opencode:{password}".encode()).decode()

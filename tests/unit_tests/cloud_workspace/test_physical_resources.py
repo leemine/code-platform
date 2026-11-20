@@ -1,5 +1,6 @@
 """Durable dispatch/confirmation tests over real Unix HTTP sockets."""
 import copy
+from contextlib import nullcontext
 import http.client
 import http.server
 import importlib.util
@@ -284,6 +285,47 @@ def test_provider_confirmation_validates_observed_id_before_orphan_delete(provid
     response["container"]["Id"] = "1" * 64
     assert resources.confirm_deleted(payload)["absent"] is True
     assert response["deletes"] == ["/containers/" + "1" * 64 + "?force=false&v=false"]
+
+
+def test_provider_fault_check_uses_only_the_confirmed_running_container_bridge(provider, monkeypatch):
+    resources, request, payload, _, response = provider
+    scope, rewritten = _prepare_provider(resources, request)
+    with resources.dispatch(rewritten, "/containers/create", scope=scope) as (journal, receipt, _):
+        receipt.update(state="CREATED", observed=True, container_id="1" * 64)
+        resources.write(journal, receipt)
+    container = response["container"] = {
+        "Id": "1" * 64, "Image": scope["image"], "Config": rewritten,
+        "State": {"Status": "running", "Running": True},
+        "NetworkSettings": {"Networks": {"bridge": {"IPAddress": "172.18.0.3"}}},
+        "Mounts": [{"Type": "bind", "Source": mount["Source"], "Destination": mount["Target"],
+                    "RW": not mount.get("ReadOnly", False)} for mount in rewritten["HostConfig"]["Mounts"]],
+    }
+    outcome = None
+    checks = []
+
+    def connect(address, *, timeout):
+        checks.append(address)
+        assert 0 < timeout <= 2
+        if outcome is not None:
+            raise outcome
+        return nullcontext()
+
+    monkeypatch.setattr(physical.socket, "create_connection", connect)
+    assert resources.confirm_opencode_unavailable(payload) == {"unavailable": False}
+    outcome = ConnectionRefusedError()
+    assert resources.confirm_opencode_unavailable(payload) == {"unavailable": True}
+    outcome = TimeoutError()
+    with pytest.raises(TimeoutError):
+        resources.confirm_opencode_unavailable(payload)
+    container["Id"] = "2" * 64
+    with pytest.raises(ValueError, match="confirmed running instance"):
+        resources.confirm_opencode_unavailable(payload)
+    container["Id"] = "1" * 64
+    container["NetworkSettings"]["Networks"]["bridge"]["IPAddress"] = "127.0.0.1"
+    with pytest.raises(ValueError, match="not private"):
+        resources.confirm_opencode_unavailable(payload)
+    assert checks == [("172.18.0.3", 4096)] * 3
+    assert response["deletes"] == [] and resources.read(journal)["state"] == "CREATED"
 
 
 def test_lost_create_response_recovered_without_replay_and_fences_late_request(stack):

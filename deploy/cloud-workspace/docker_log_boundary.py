@@ -345,7 +345,9 @@ class ConfirmationHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.close_connection = True
         try:
-            if (self.path != "/v1/confirm-deleted" or self.headers.get("Transfer-Encoding")
+            operations = {"/v1/confirm-deleted": self.server.resources.confirm_deleted,
+                          "/v1/confirm-opencode-unavailable": self.server.resources.confirm_opencode_unavailable}
+            if (self.path not in operations or self.headers.get("Transfer-Encoding")
                     or len(self.headers.get_all("Content-Length", [])) != 1):
                 raise ValueError("invalid confirmation request")
             size = int(self.headers["Content-Length"])
@@ -354,7 +356,7 @@ class ConfirmationHandler(http.server.BaseHTTPRequestHandler):
             raw = self.rfile.read(size)
             if len(raw) != size:
                 raise ValueError("incomplete confirmation")
-            value = self.server.resources.confirm_deleted(json.loads(raw))
+            value = operations[self.path](json.loads(raw))
             payload = json.dumps(value).encode()
         except (ValueError, TypeError, KeyError, OSError, http.client.HTTPException):
             self.send_error(503, "Physical completion remains unconfirmed")

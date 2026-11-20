@@ -116,6 +116,7 @@ class CloudOpencodeRelay:
                                          transport=transport, timeout=httpx.Timeout(15, read=75))
         pool.ready_check = self._ready
         pool.idle_check = self._idle
+        pool.unavailable_check = self._unavailable
 
     async def close(self):
         await self._client.aclose()
@@ -149,6 +150,18 @@ class CloudOpencodeRelay:
         return isinstance(states, dict) and all(
             isinstance(state, dict) and state.get("type") == "idle" for state in states.values()
         )
+
+    async def _unavailable(self, lease) -> bool:
+        url, query = self._route(lease, "global/health")
+        try:
+            result = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
+        except httpx.RemoteProtocolError:
+            # YuanRong can close the response without headers on a refused sandbox tunnel.
+            # The pool also requires a refusal from the exact container's own port.
+            return True
+        except httpx.HTTPError:
+            return False
+        return result.status_code == 502 and result.content.strip() == b"failed to dial sandbox"
 
     def _account(self, request, body: bytes, supplied_dir: str):
         claims, signature = parse_assertion(request.headers.get(HEADER, ""))

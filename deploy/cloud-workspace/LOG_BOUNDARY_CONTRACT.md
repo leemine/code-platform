@@ -102,7 +102,7 @@ python3 deploy/cloud-workspace/docker_log_boundary.py \
 
 Gateway的 `resource_reconciler_socket` 指向容器内该确认socket。该配置使新绑定固定 `physical_verification=true`，绑定比较禁止静默启用、关闭或切换回不验证模式；地址属于部署配置，不写入业务绑定。原未启用绑定保持旧兼容行为，不自动迁移；因此不能将升级应用镜像等同于完成物理保护。
 
-受限接口只支持 `POST /v1/confirm-deleted`，字段恰为 `workspace/identity/image/user/instance_id`，请求体最多8192字节；成功200且 `absent=true`，未证明完成返回503。不支持任意Docker转发、强制删除、卷删除、列出其他环境。Gateway使用15秒超时、无重试的既有HTTP客户端；创建/回收SDK不改。
+受限接口支持 `POST /v1/confirm-deleted` 和 OpenCode 专用的 `POST /v1/confirm-opencode-unavailable`。请求字段为 `workspace/identity/image/user/instance_id`，请求体最多 8192 字节。删除确认返回 `absent=true`。OpenCode 故障检查返回 `unavailable` 布尔值。无法验证时返回 503。接口不转发任意 Docker 请求，也不提供强制删除、卷删除或列出其他环境的操作。Gateway 沿用 15 秒超时、无重试的既有 HTTP 客户端和创建、回收 SDK。
 
 适配器从已审核的创建请求提取工作区及只读凭据挂载，以工作区hash生成唯一Docker名字，以工作区和凭据目录hash标记epoch归属。同一工作区持有非阻塞文件锁；转发前持久化最小 `NOT_SENT→SENT` 回执，收到有效201后先落 `CREATED` 再回复。既有同代回执、未结束旧代或占用物理名字时拒绝再次派发。回执只含路径、镜像、用户和物理标识，不存口令、令牌、环境变量或命令，不取代平台环境数据库。
 
@@ -138,6 +138,9 @@ Gateway 写入私有 `scope.json`，将 Provider 实例的稳定状态根绑定�
 每个耐久状态绑定只有一个物理 Docker 名称。既有持久回执机制先写派发意图
 再转交 Docker。元戎返回 404 后，受限确认入口再次核对元戎结果及 Docker
 容器身份。Docker 名称改变或缺失时，仍按已观察的容器 ID 检查旧实例。
+OpenCode 故障检查先核对同一代次的创建回执和运行中容器。地址来自 Docker 检查结果，
+只连接默认 bridge 上该容器的私有 IPv4 地址与固定端口 4096。明确的连接拒绝表明
+监听已停止。连接成功保留实例，超时及无法核实的地址返回 503。此检查只读。
 确认入口只允许补偿永未启动的、归属匹配的孤儿容器。已启动容器须由元戎
 原生命周期移除。回执确认完成后，Gateway 才能清理本代配置并使用原状态卷
 启用下一代。

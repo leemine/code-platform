@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 PROVIDER = "opencode"
 PORT = 4096
 WORKER_ROOT = PurePosixPath("/data/agent/workspace")
+FAULT_GRACE_SECONDS = 30.0
 _INFRASTRUCTURE_ERRORS = (YuanrongAgentApiError, OSError, TimeoutError)
 _RECLAIM_ERRORS = (*_INFRASTRUCTURE_ERRORS, EnvironmentUnavailable, httpx.HTTPError, ValueError)
 
@@ -72,8 +73,10 @@ class CloudOpencodePool:
         self.idle_seconds = float(self.options.get("idle_seconds", 300))
         self.ready_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
         self.idle_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
+        self.unavailable_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
         self._locks = defaultdict(asyncio.Lock)
         self._holds = Counter()
+        self._unavailable_since: dict[str, float] = {}
         _private_directory(self.storage)
         with self.store.connect() as db:
             db.execute("""
@@ -150,6 +153,7 @@ class CloudOpencodePool:
 
     def _recycle(self, row):
         updated = self._transition(row, "NEW", recycled=True)
+        self._unavailable_since.pop(row["operation_id"], None)
         try:
             shutil.rmtree(self.storage / row["binding_id"] / row["operation_id"])
         except FileNotFoundError:
@@ -257,17 +261,36 @@ class CloudOpencodePool:
             raise
         return self._transition(row, "ALLOCATED", instance_id=instance.sandbox_id)
 
+    @staticmethod
+    def _physical_claim(row, plan):
+        _, workspace, spec, mounts, _ = plan
+        identity = next(mount["source"] for mount in mounts if mount["target"] == "/run/opencode")
+        return {"workspace": workspace, "identity": identity, "image": spec["rootfs"]["imageurl"],
+                "user": spec["rootfs"]["user"], "instance_id": row["instance_id"]}
+
     async def _confirm_retired(self, row, plan):
         if self.resources is not None:
-            _, workspace, spec, mounts, _ = plan
-            identity = next(mount["source"] for mount in mounts if mount["target"] == "/run/opencode")
             try:
-                await self.resources.confirm_deleted(
-                    workspace=workspace, identity=identity, image=spec["rootfs"]["imageurl"],
-                    user=spec["rootfs"]["user"], instance_id=row["instance_id"],
-                )
+                await self.resources.confirm_deleted(**self._physical_claim(row, plan))
             except RuntimeError as exc:
                 raise EnvironmentUnavailable("OpenCode Provider physical deletion remains unconfirmed") from exc
+
+    async def _confirmed_fault(self, row, plan):
+        operation = row["operation_id"]
+        if self.resources is None or self.unavailable_check is None:
+            return False
+        if not await self.unavailable_check(self._lease(row, plan)):
+            self._unavailable_since.pop(operation, None)
+            return False
+        now = time.monotonic()
+        first = self._unavailable_since.setdefault(operation, now)
+        if now - first < max(FAULT_GRACE_SECONDS, self.ready_timeout):
+            return False
+        self._unavailable_since.pop(operation, None)
+        try:
+            return await self.resources.confirm_opencode_unavailable(**self._physical_claim(row, plan))
+        except RuntimeError as exc:
+            raise EnvironmentUnavailable("OpenCode Provider physical fault remains unconfirmed") from exc
 
     @staticmethod
     def _lease(row, plan):
@@ -322,9 +345,11 @@ class CloudOpencodePool:
                                (time.time(), row["binding_id"], row["generation"]))
 
     async def reclaim_idle(self) -> int:
+        observe_faults = self.resources is not None and self.unavailable_check is not None
         with self.store.connect() as db:
             keys = [tuple(row) for row in db.execute("""SELECT account_id, project_id, provider FROM provider_bindings
-                WHERE state='DELETING' OR (state='ALLOCATED' AND used_at<=?)""", (time.time() - self.idle_seconds,))]
+                WHERE state='DELETING' OR (state='ALLOCATED' AND (? OR used_at<=?))""",
+                (observe_faults, time.time() - self.idle_seconds))]
         reclaimed = 0
         for key in keys:
             try:
@@ -336,18 +361,22 @@ class CloudOpencodePool:
 
     async def _reclaim(self, key):
         row = self._get(key)
-        if row is None or self._holds[key] or row["state"] not in {"ALLOCATED", "DELETING"}:
+        if row is None or row["state"] not in {"ALLOCATED", "DELETING"}:
             return 0
-        if row["state"] == "ALLOCATED" and row["used_at"] > time.time() - self.idle_seconds:
+        if self._holds[key]:
+            self._unavailable_since.pop(row["operation_id"], None)
             return 0
+        idle_due = row["used_at"] <= time.time() - self.idle_seconds
         instance = row["instance_id"]
         plan = self._plan(row)
         absent = await self.yuanrong.instance_absent(instance)
         if not absent:
             if not self._matches(plan, await self.yuanrong.get_agent_info(instance)):
+                self._unavailable_since.pop(row["operation_id"], None)
                 raise EnvironmentUnavailable("OpenCode Provider ownership changed before deletion")
             if row["state"] == "ALLOCATED":
-                if self.idle_check is None or not await self.idle_check(self._lease(row, plan)):
+                idle = idle_due and self.idle_check is not None and await self.idle_check(self._lease(row, plan))
+                if not idle and not await self._confirmed_fault(row, plan):
                     return 0
                 row = self._transition(row, "DELETING", instance_id=instance)
             await self.yuanrong.delete_sandbox(instance)

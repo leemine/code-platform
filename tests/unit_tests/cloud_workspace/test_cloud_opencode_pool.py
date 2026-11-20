@@ -1,11 +1,13 @@
 import asyncio
 from copy import deepcopy
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentUnavailable
+from gateway.services import cloud_opencode_pool
 from gateway.services.cloud_opencode_pool import CloudOpencodePool
 
 
@@ -332,3 +334,67 @@ async def test_missing_frontend_metadata_cannot_trigger_a_later_busy_delete(sand
     pool.idle_check = busy
     assert await pool.reclaim_idle() == 0
     assert not frontend.deleted
+
+
+@pytest.mark.asyncio
+async def test_fresh_fault_reclaim_waits_for_grace_and_scoped_physical_proofs(sandbox, monkeypatch):
+    original, frontend, account, config = sandbox
+    owner = account("tenant-one")
+    now = 0
+    monkeypatch.setattr(cloud_opencode_pool, "time", SimpleNamespace(time=time.time, monotonic=lambda: now))
+    fault, physical_fault, deletion_confirmed = True, False, False
+    physical_checks = []
+
+    async def unavailable(_lease):
+        return fault
+
+    async def confirm_fault(**claim):
+        physical_checks.append(claim)
+        return physical_fault
+
+    async def confirm_deleted(**claim):
+        assert claim == physical_checks[-1]
+        if not deletion_confirmed:
+            raise RuntimeError("physical deletion not confirmed")
+
+    pool = CloudOpencodePool(original.store, frontend, config, resources=SimpleNamespace(
+        confirm_opencode_unavailable=confirm_fault, confirm_deleted=confirm_deleted,
+    ))
+    pool.idle_seconds = 300
+    pool.unavailable_check = unavailable
+    key = (owner["account_id"], "project", "opencode")
+    async with pool.hold(owner, "project", PROJECT_DIR) as first:
+        state = Path(frontend.created[0]["workspace"])
+        marker = state / "native-session-id"
+        marker.write_text("original")
+        assert await pool.reclaim_idle() == 0
+    assert await pool.reclaim_idle() == 0
+    now = 29
+    assert await pool.reclaim_idle() == 0
+    fault = False
+    assert await pool.reclaim_idle() == 0
+    now = 30
+    fault = True
+    assert await pool.reclaim_idle() == 0 and physical_checks == []
+    now = 60
+    assert await pool.reclaim_idle() == 0 and len(physical_checks) == 1
+    assert frontend.deleted == [] and pool._get(key)["state"] == "ALLOCATED"
+
+    now = 61
+    physical_fault = True
+    assert await pool.reclaim_idle() == 0
+    now = 91
+    assert await pool.reclaim_idle() == 0 and len(physical_checks) == 2
+    assert frontend.deleted == [first.instance_id]
+    assert pool._get(key)["state"] == "DELETING" and pool._get(key)["generation"] == 1
+    with pytest.raises(EnvironmentUnavailable, match="physical deletion remains unconfirmed"):
+        async with pool.hold(owner, "project", PROJECT_DIR):
+            pytest.fail("The original physical generation has not been removed")
+    assert len(frontend.created) == 1
+
+    deletion_confirmed = True
+    assert await pool.reclaim_idle() == 1
+    async with pool.hold(owner, "project", PROJECT_DIR) as second:
+        assert second.instance_id != first.instance_id and second.binding_id == first.binding_id
+    assert pool._get(key)["generation"] == 2
+    assert frontend.created[1]["workspace"] == str(state) and marker.read_text() == "original"
