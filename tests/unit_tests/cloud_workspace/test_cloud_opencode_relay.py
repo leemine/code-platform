@@ -11,6 +11,7 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 
 from gateway.common.security.opencode_relay_auth import HEADER, OpenCodeRelayAuth
+from gateway.services.cloud_opencode_pool import OpenCodeFault
 from gateway.services.cloud_opencode_relay import CloudOpencodeRelay, _OpenCodeQueryAuthTransport
 
 
@@ -66,15 +67,19 @@ def _client(app, auth=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("status", "body", "expected"), [
-    (502, "failed to dial sandbox\n", True),
-    (502, "bad gateway", False),
-    (404, "sandbox not found", False),
-    (401, "", False),
-    (200, '{"healthy":true}', False),
-    (httpx.ConnectTimeout, "", False),
-    (httpx.RemoteProtocolError, "", True),
+    (502, "failed to dial sandbox\n", OpenCodeFault.LISTENER_UNAVAILABLE),
+    (502, "bad gateway", None),
+    (504, "", None),
+    (404, "sandbox not found", None),
+    (401, "", None),
+    (200, '{"healthy":true}', None),
+    (httpx.ConnectTimeout, "", None),
+    (httpx.WriteTimeout, "", None),
+    (httpx.PoolTimeout, "", None),
+    (httpx.ReadTimeout, "", OpenCodeFault.HEALTH_STALLED),
+    (httpx.RemoteProtocolError, "", OpenCodeFault.LISTENER_UNAVAILABLE),
 ])
-async def test_fault_probe_classifies_frontend_dial_failure_and_disconnect(relay, status, body, expected):
+async def test_fault_probe_distinguishes_frontend_read_timeout_and_connection_failure(relay, status, body, expected):
     broker, *_ = relay
 
     async def upstream(request):
@@ -87,7 +92,7 @@ async def test_fault_probe_classifies_frontend_dial_failure_and_disconnect(relay
     lease = SimpleNamespace(instance_id="scoped-instance", directory=DIRECTORY, password="test")
     async with broker._client, httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
         broker._client = client
-        assert await broker.pool.unavailable_check(lease) is expected
+        assert await broker.pool.fault_check(lease) is expected
 
 
 @pytest.mark.asyncio

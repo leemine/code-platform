@@ -345,8 +345,11 @@ class ConfirmationHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.close_connection = True
         try:
-            operations = {"/v1/confirm-deleted": self.server.resources.confirm_deleted,
-                          "/v1/confirm-opencode-unavailable": self.server.resources.confirm_opencode_unavailable}
+            operations = {
+                "/v1/confirm-deleted": self.server.resources.confirm_deleted,
+                "/v1/confirm-opencode-unavailable": self.server.resources.confirm_opencode_unavailable,
+                "/v1/confirm-opencode-stalled": self.server.resources.confirm_opencode_stalled,
+            }
             if (self.path not in operations or self.headers.get("Transfer-Encoding")
                     or len(self.headers.get_all("Content-Length", [])) != 1):
                 raise ValueError("invalid confirmation request")

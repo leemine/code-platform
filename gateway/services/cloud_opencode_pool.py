@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from enum import Enum
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ PROVIDER = "opencode"
 PORT = 4096
 WORKER_ROOT = PurePosixPath("/data/agent/workspace")
 FAULT_GRACE_SECONDS = 30.0
+STALL_GRACE_SECONDS = 60.0
 _INFRASTRUCTURE_ERRORS = (YuanrongAgentApiError, OSError, TimeoutError)
 _RECLAIM_ERRORS = (*_INFRASTRUCTURE_ERRORS, EnvironmentUnavailable, httpx.HTTPError, ValueError)
 
@@ -37,6 +39,11 @@ class OpenCodeLease:
     directory: str
     password: str = field(repr=False)
     binding_id: str
+
+
+class OpenCodeFault(Enum):
+    LISTENER_UNAVAILABLE = "listener_unavailable"
+    HEALTH_STALLED = "health_stalled"
 
 
 def _initial_file(path: Path, content: bytes) -> bytes:
@@ -73,10 +80,10 @@ class CloudOpencodePool:
         self.idle_seconds = float(self.options.get("idle_seconds", 300))
         self.ready_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
         self.idle_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
-        self.unavailable_check: Callable[[OpenCodeLease], Awaitable[bool]] | None = None
+        self.fault_check: Callable[[OpenCodeLease], Awaitable[OpenCodeFault | None]] | None = None
         self._locks = defaultdict(asyncio.Lock)
         self._holds = Counter()
-        self._unavailable_since: dict[str, float] = {}
+        self._fault_since: dict[str, tuple[OpenCodeFault, float]] = {}
         _private_directory(self.storage)
         with self.store.connect() as db:
             db.execute("""
@@ -153,7 +160,7 @@ class CloudOpencodePool:
 
     def _recycle(self, row):
         updated = self._transition(row, "NEW", recycled=True)
-        self._unavailable_since.pop(row["operation_id"], None)
+        self._fault_since.pop(row["operation_id"], None)
         try:
             shutil.rmtree(self.storage / row["binding_id"] / row["operation_id"])
         except FileNotFoundError:
@@ -277,19 +284,33 @@ class CloudOpencodePool:
 
     async def _confirmed_fault(self, row, plan):
         operation = row["operation_id"]
-        if self.resources is None or self.unavailable_check is None:
+        if self.resources is None or self.fault_check is None:
             return False
-        if not await self.unavailable_check(self._lease(row, plan)):
-            self._unavailable_since.pop(operation, None)
+        fault = await self.fault_check(self._lease(row, plan))
+        if fault is None:
+            self._fault_since.pop(operation, None)
             return False
-        now = time.monotonic()
-        first = self._unavailable_since.setdefault(operation, now)
-        if now - first < max(FAULT_GRACE_SECONDS, self.ready_timeout):
-            return False
-        self._unavailable_since.pop(operation, None)
+        stalled = fault is OpenCodeFault.HEALTH_STALLED
         try:
+            # A slow upstream alone cannot accumulate stall time. The same
+            # running container must also stop answering local HTTP on each observation.
+            if stalled and not await self.resources.confirm_opencode_stalled(**self._physical_claim(row, plan)):
+                self._fault_since.pop(operation, None)
+                return False
+            now = time.monotonic()
+            previous, first = self._fault_since.get(operation, (None, now))
+            if previous is not fault:
+                self._fault_since[operation] = fault, now
+                return False
+            grace = STALL_GRACE_SECONDS if stalled else FAULT_GRACE_SECONDS
+            if now - first < max(grace, self.ready_timeout):
+                return False
+            self._fault_since.pop(operation, None)
+            if stalled:
+                return True
             return await self.resources.confirm_opencode_unavailable(**self._physical_claim(row, plan))
         except RuntimeError as exc:
+            self._fault_since.pop(operation, None)
             raise EnvironmentUnavailable("OpenCode Provider physical fault remains unconfirmed") from exc
 
     @staticmethod
@@ -345,7 +366,7 @@ class CloudOpencodePool:
                                (time.time(), row["binding_id"], row["generation"]))
 
     async def reclaim_idle(self) -> int:
-        observe_faults = self.resources is not None and self.unavailable_check is not None
+        observe_faults = self.resources is not None and self.fault_check is not None
         with self.store.connect() as db:
             keys = [tuple(row) for row in db.execute("""SELECT account_id, project_id, provider FROM provider_bindings
                 WHERE state='DELETING' OR (state='ALLOCATED' AND (? OR used_at<=?))""",
@@ -364,7 +385,7 @@ class CloudOpencodePool:
         if row is None or row["state"] not in {"ALLOCATED", "DELETING"}:
             return 0
         if self._holds[key]:
-            self._unavailable_since.pop(row["operation_id"], None)
+            self._fault_since.pop(row["operation_id"], None)
             return 0
         idle_due = row["used_at"] <= time.time() - self.idle_seconds
         instance = row["instance_id"]
@@ -372,7 +393,7 @@ class CloudOpencodePool:
         absent = await self.yuanrong.instance_absent(instance)
         if not absent:
             if not self._matches(plan, await self.yuanrong.get_agent_info(instance)):
-                self._unavailable_since.pop(row["operation_id"], None)
+                self._fault_since.pop(row["operation_id"], None)
                 raise EnvironmentUnavailable("OpenCode Provider ownership changed before deletion")
             if row["state"] == "ALLOCATED":
                 idle = idle_due and self.idle_check is not None and await self.idle_check(self._lease(row, plan))

@@ -328,6 +328,54 @@ def test_provider_fault_check_uses_only_the_confirmed_running_container_bridge(p
     assert response["deletes"] == [] and resources.read(journal)["state"] == "CREATED"
 
 
+@pytest.mark.parametrize(("connect_error", "write_error", "read_result", "stalled"), [
+    (TimeoutError, None, None, None),
+    (ConnectionRefusedError, None, None, None),
+    (None, TimeoutError, None, None),
+    (None, None, TimeoutError, True),
+    (None, None, ConnectionResetError, None),
+    (None, None, b"H", False),
+    (None, None, b"", False),
+])
+def test_provider_stall_requires_successful_connect_and_write_before_read_timeout(
+    provider, monkeypatch, connect_error, write_error, read_result, stalled,
+):
+    resources, _, payload, _, _ = provider
+    address = ("172.18.0.3", 4096)
+    monkeypatch.setattr(resources, "_opencode_probe_address", lambda request: nullcontext(address))
+
+    class Connection:
+        def sendall(self, raw):
+            assert raw.startswith(b"GET /global/health HTTP/1.1\r\n")
+            assert b"Authorization" not in raw
+            if write_error:
+                raise write_error()
+
+        def recv(self, size):
+            assert size == 1
+            if isinstance(read_result, type):
+                raise read_result()
+            return read_result
+
+    def connect(target, *, timeout):
+        assert target == address and 0 < timeout <= 2
+        if connect_error:
+            raise connect_error()
+        return nullcontext(Connection())
+
+    monkeypatch.setattr(physical.socket, "create_connection", connect)
+    if stalled is None:
+        with pytest.raises(OSError):
+            resources.confirm_opencode_stalled(payload)
+    else:
+        assert resources.confirm_opencode_stalled(payload) == {"stalled": stalled}
+
+
+def test_opencode_stall_confirmation_rejects_worker_scope(stack):
+    _, _, _, _, restricted, payload = stack
+    assert call(restricted, "POST", "/v1/confirm-opencode-stalled", payload)[0] == 503
+
+
 def test_lost_create_response_recovered_without_replay_and_fences_late_request(stack):
     resources, request, state, proxy, restricted, payload = stack
     state["drop"] = True

@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from gateway.common.security.opencode_relay_auth import HEADER, parse_assertion, verify_assertion
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable
+from gateway.services.cloud_opencode_pool import OpenCodeFault
 
 logger = logging.getLogger(__name__)
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,159}\Z")
@@ -116,7 +117,7 @@ class CloudOpencodeRelay:
                                          transport=transport, timeout=httpx.Timeout(15, read=75))
         pool.ready_check = self._ready
         pool.idle_check = self._idle
-        pool.unavailable_check = self._unavailable
+        pool.fault_check = self._fault
 
     async def close(self):
         await self._client.aclose()
@@ -151,17 +152,21 @@ class CloudOpencodeRelay:
             isinstance(state, dict) and state.get("type") == "idle" for state in states.values()
         )
 
-    async def _unavailable(self, lease) -> bool:
+    async def _fault(self, lease) -> OpenCodeFault | None:
         url, query = self._route(lease, "global/health")
         try:
             result = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
         except httpx.RemoteProtocolError:
             # YuanRong can close the response without headers on a refused sandbox tunnel.
             # The pool also requires a refusal from the exact container's own port.
-            return True
+            return OpenCodeFault.LISTENER_UNAVAILABLE
+        except httpx.ReadTimeout:
+            return OpenCodeFault.HEALTH_STALLED
         except httpx.HTTPError:
-            return False
-        return result.status_code == 502 and result.content.strip() == b"failed to dial sandbox"
+            return None
+        if result.status_code == 502 and result.content.strip() == b"failed to dial sandbox":
+            return OpenCodeFault.LISTENER_UNAVAILABLE
+        return None
 
     def _account(self, request, body: bytes, supplied_dir: str):
         claims, signature = parse_assertion(request.headers.get(HEADER, ""))

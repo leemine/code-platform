@@ -17,6 +17,11 @@ class ResourceReconciler:
                                      workspace, identity, image, user, instance_id)
         return result.get("unavailable") is True
 
+    async def confirm_opencode_stalled(self, *, workspace, identity, image, user, instance_id):
+        result = await self._inspect("confirm-opencode-stalled", "physical stall remains unconfirmed",
+                                     workspace, identity, image, user, instance_id)
+        return result.get("stalled") is True
+
     async def _inspect(self, operation, error_message, workspace, identity, image, user, instance_id):
         transport = httpx.AsyncHTTPTransport(uds=self.socket_path, retries=0)
         try:

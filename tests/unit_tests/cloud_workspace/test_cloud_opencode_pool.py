@@ -8,7 +8,7 @@ import pytest
 
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentUnavailable
 from gateway.services import cloud_opencode_pool
-from gateway.services.cloud_opencode_pool import CloudOpencodePool
+from gateway.services.cloud_opencode_pool import CloudOpencodePool, OpenCodeFault
 
 
 PROJECT_DIR = "/data/agent/workspace/code/sample"
@@ -346,7 +346,7 @@ async def test_fresh_fault_reclaim_waits_for_grace_and_scoped_physical_proofs(sa
     physical_checks = []
 
     async def unavailable(_lease):
-        return fault
+        return OpenCodeFault.LISTENER_UNAVAILABLE if fault else None
 
     async def confirm_fault(**claim):
         physical_checks.append(claim)
@@ -361,7 +361,7 @@ async def test_fresh_fault_reclaim_waits_for_grace_and_scoped_physical_proofs(sa
         confirm_opencode_unavailable=confirm_fault, confirm_deleted=confirm_deleted,
     ))
     pool.idle_seconds = 300
-    pool.unavailable_check = unavailable
+    pool.fault_check = unavailable
     key = (owner["account_id"], "project", "opencode")
     async with pool.hold(owner, "project", PROJECT_DIR) as first:
         state = Path(frontend.created[0]["workspace"])
@@ -398,3 +398,65 @@ async def test_fresh_fault_reclaim_waits_for_grace_and_scoped_physical_proofs(sa
         assert second.instance_id != first.instance_id and second.binding_id == first.binding_id
     assert pool._get(key)["generation"] == 2
     assert frontend.created[1]["workspace"] == str(state) and marker.read_text() == "original"
+
+
+@pytest.mark.asyncio
+async def test_stall_grace_requires_repeated_scoped_http_timeouts(sandbox, monkeypatch):
+    original, frontend, account, config = sandbox
+    owner = account("tenant-one")
+    now = 0
+    local_stall = False
+    fault = OpenCodeFault.HEALTH_STALLED
+    claims = []
+    monkeypatch.setattr(cloud_opencode_pool, "time", SimpleNamespace(time=time.time, monotonic=lambda: now))
+
+    async def fault_check(_lease):
+        return fault
+
+    async def confirm_stall(**claim):
+        claims.append(claim)
+        return local_stall
+
+    async def confirm_deleted(**claim):
+        assert claim == claims[-1]
+        assert await frontend.instance_absent(claim["instance_id"])
+
+    pool = CloudOpencodePool(original.store, frontend, config, resources=SimpleNamespace(
+        confirm_opencode_stalled=confirm_stall, confirm_deleted=confirm_deleted,
+    ))
+    pool.idle_seconds = 300
+    pool.fault_check = fault_check
+    async with pool.hold(owner, "project", PROJECT_DIR) as first:
+        assert await pool.reclaim_idle() == 0 and not claims
+
+    assert await pool.reclaim_idle() == 0 and len(claims) == 1
+    now = 70
+    local_stall = True
+    assert await pool.reclaim_idle() == 0
+    now = 100
+    assert await pool.reclaim_idle() == 0
+    fault = None
+    assert await pool.reclaim_idle() == 0
+
+    now = 130
+    fault = OpenCodeFault.HEALTH_STALLED
+    assert await pool.reclaim_idle() == 0
+    now = 190
+    fault = OpenCodeFault.LISTENER_UNAVAILABLE
+    assert await pool.reclaim_idle() == 0
+
+    now = 200
+    fault = OpenCodeFault.HEALTH_STALLED
+    assert await pool.reclaim_idle() == 0
+    now = 260
+    local_stall = False
+    assert await pool.reclaim_idle() == 0
+
+    now = 270
+    local_stall = True
+    assert await pool.reclaim_idle() == 0
+    now = 329.99
+    assert await pool.reclaim_idle() == 0 and frontend.deleted == []
+    now = 330
+    assert await pool.reclaim_idle() == 1
+    assert frontend.deleted == [first.instance_id] and all(claim == claims[0] for claim in claims)

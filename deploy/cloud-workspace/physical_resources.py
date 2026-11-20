@@ -27,6 +27,7 @@ CONTAINER_ID = re.compile(r"[a-f0-9]{64}")
 PROJECT_ROOT = Path("/data/agent/workspace")
 STATE_TARGET = "/state"
 PROVIDER_IDENTITY_TARGET = "/run/opencode"
+OPENCODE_PORT = 4096
 
 
 class PhysicalResources:
@@ -339,7 +340,8 @@ class PhysicalResources:
             raise ValueError("invalid instance reference")
         return scope, instance
 
-    def confirm_opencode_unavailable(self, request: dict) -> dict:
+    @contextmanager
+    def _opencode_probe_address(self, request: dict):
         scope, _ = self._confirmation_scope(request)
         if scope.get("role") != "opencode":
             raise ValueError("physical fault checks require an OpenCode scope")
@@ -358,11 +360,26 @@ class PhysicalResources:
             address = IPv4Address(bridge.get("IPAddress", ""))
             if not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified:
                 raise ValueError("OpenCode container bridge address is not private")
+            yield str(address), OPENCODE_PORT
+
+    def confirm_opencode_unavailable(self, request: dict) -> dict:
+        with self._opencode_probe_address(request) as address:
             try:
-                with socket.create_connection((str(address), 4096), timeout=min(2, self.timeout)):
+                with socket.create_connection(address, timeout=min(2, self.timeout)):
                     return {"unavailable": False}
             except ConnectionRefusedError:
                 return {"unavailable": True}
+
+    def confirm_opencode_stalled(self, request: dict) -> dict:
+        with self._opencode_probe_address(request) as address:
+            with socket.create_connection(address, timeout=min(2, self.timeout)) as connection:
+                connection.sendall(b"GET /global/health HTTP/1.1\r\nHost: opencode\r\nConnection: close\r\n\r\n")
+                try:
+                    # Any reply, including an auth challenge, establishes HTTP responsiveness.
+                    connection.recv(1)
+                except TimeoutError:
+                    return {"stalled": True}
+                return {"stalled": False}
 
     def confirm_deleted(self, request: dict) -> dict:
         scope, instance = self._confirmation_scope(request)
