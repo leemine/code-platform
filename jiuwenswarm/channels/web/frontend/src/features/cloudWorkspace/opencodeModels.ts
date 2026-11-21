@@ -1,4 +1,5 @@
 import type { ModelEntry, ModelSelection } from '../../types';
+import { cloudRequest } from './client';
 
 const nativePrefix = 'opencode:';
 
@@ -33,6 +34,11 @@ export function managedOpenCodeReason(policy: ManagedOpenCodeModels, selection: 
     return selection.id === policy.default?.id ? null : 'opencode_model_not_registered';
   }
   return Object.prototype.hasOwnProperty.call(policy.reasons, selection.id) ? policy.reasons[selection.id] : null;
+}
+
+export function reportManagedOpenCodeRejection(reason: string): void {
+  // Keep the local selection rejection independent of telemetry delivery.
+  void cloudRequest('observations/opencode-model-rejection', { reason }, 3000).catch(() => {});
 }
 
 export function openCodeDefaultOption(policy: ManagedOpenCodeModels): ModelEntry | null {

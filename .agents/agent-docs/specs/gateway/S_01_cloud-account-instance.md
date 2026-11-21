@@ -12,6 +12,8 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 
 独立 OpenCode Provider 在核对元戎实例归属后，按分配代次确认应用就绪。带认证的 `/global/health` 返回 HTTP 200 且 `healthy: true` 才能获得该代首次中继租约。元戎报告 `RUNNING` 后，在同一就绪时限内重试健康 GET。超时保留原分配，会话创建和消息请求没有内部重放。运行状态缺失时，仍以归属校验和带认证健康结果共同确认就绪。
 
+就绪观测记录首次等待与失败复核，区分元戎 RUNNING 和认证健康检查，按账号、绑定及代次归因。观测不增加等待或更改生命周期。正式 Web 的选模拦截通过原账号认证上报固定原因码，记录 Gateway 生成的事件 ID、认证账号 ID 和原因。两个日志事件都可按事件 ID 去重。上报不写会话，不分配 Provider，Worker 准入保持独立。
+
 独立账号服务是账号库唯一写者；环境库只保存账号引用、固定镜像、注册意图、实例操作回执和代次。注册operation_id在账号权威与环境意图间闭合，密码不进入环境库。首版单控制面写者，不声称分布式租约。
 
 插件保留原HTTP路径及cloud.environment两项兼容RPC，并注册S_04规定的GitHub/GitCode项目操作；原装配层注入服务，不覆盖session.execution.options，不另建创建/轮询/执行连接。原Router/AgentManager唯一持有物理生命周期；通用生命周期策略只注入启动快照、回执和认证。Core、协议、Runtime状态机不复制。

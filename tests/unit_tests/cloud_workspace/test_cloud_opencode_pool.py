@@ -235,7 +235,7 @@ async def test_running_shared_provider_retries_health_before_dispatch_once_per_g
 
 
 @pytest.mark.asyncio
-async def test_running_provider_health_deadline_leaves_allocation_available_for_retry(sandbox, monkeypatch):
+async def test_running_provider_health_deadline_leaves_allocation_available_for_retry(sandbox, monkeypatch, caplog):
     pool, frontend, account, _ = sandbox
     owner = account("tenant-one")
     probes = []
@@ -248,6 +248,8 @@ async def test_running_provider_health_deadline_leaves_allocation_available_for_
     monkeypatch.setattr(cloud_opencode_pool, "READY_RETRY_SECONDS", 0.001)
     pool.ready_timeout = 0.04
     pool.ready_check = healthy
+    caplog.set_level("INFO", logger=cloud_opencode_pool.__name__)
+    monkeypatch.setattr(cloud_opencode_pool.logger, "handlers", [caplog.handler])
     with pytest.raises(EnvironmentUnavailable, match="allocation unavailable"):
         async with pool.hold(owner, "project", PROJECT_DIR):
             pytest.fail("A failed health check must withhold the lease")
@@ -258,6 +260,32 @@ async def test_running_provider_health_deadline_leaves_allocation_available_for_
         assert lease.instance_id == probes[-1] == "provider-1"
     assert len(frontend.created) == 1
     assert not frontend.deleted
+    events = [record.getMessage() for record in caplog.records if record.msg.startswith("opencode_provider_readiness")]
+    assert len(events) == 2
+    assert "account_id=tenant-one" in events[0] and "generation=1 attempt=initial" in events[0]
+    assert "stage=authenticated_health outcome=timeout" in events[0]
+    assert "stage=authenticated_health outcome=ready" in events[1]
+    assert len({line.split()[1] for line in events}) == 2
+    async with pool.hold(owner, "project", PROJECT_DIR):
+        pass
+    assert len([record for record in caplog.records if record.msg.startswith("opencode_provider_readiness")]) == 2
+
+
+@pytest.mark.asyncio
+async def test_readiness_timeout_identifies_yuanrong_running_stage(sandbox, monkeypatch, caplog):
+    pool, frontend, account, _ = sandbox
+    owner = account("tenant-one")
+    monkeypatch.setattr(cloud_opencode_pool.logger, "handlers", [caplog.handler])
+
+    async def waiting(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(frontend, "wait_until_running", waiting)
+    pool.ready_timeout = 0.01
+    with pytest.raises(EnvironmentUnavailable, match="allocation unavailable"):
+        async with pool.hold(owner, "project", PROJECT_DIR):
+            pytest.fail("A pending YuanRong instance must withhold the lease")
+    assert "stage=yuanrong_running outcome=timeout" in caplog.text
 
 
 @pytest.mark.asyncio

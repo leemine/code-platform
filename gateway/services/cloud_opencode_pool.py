@@ -370,29 +370,64 @@ class CloudOpencodePool:
         ready_check = self.ready_check
         lease = self._lease(row, plan)
         operation = row["operation_id"]
+        initial = operation not in self._ready_operations
+        health_confirmed = not initial
+        started = time.monotonic()
+        stage = "yuanrong_running"
+        outcome = "failed"
+        attempts = 0
 
         async def probe():
+            nonlocal attempts, health_confirmed
+            attempts += 1
             if await ready_check(lease):
-                self._ready_operations.add(operation)
+                health_confirmed = True
                 return True
             return False
 
         async def confirm_unreported_ready(info):
-            return self._matches(plan, info) and await probe()
-
-        async with asyncio.timeout(self.ready_timeout):
-            if ready_check is None:
-                info = await self.yuanrong.wait_until_running(lease.instance_id)
-            else:
-                info = await self.yuanrong.wait_until_running(
-                    lease.instance_id, confirm_unreported_ready=confirm_unreported_ready,
-                )
+            nonlocal stage
             if not self._matches(plan, info):
-                raise EnvironmentUnavailable("OpenCode Provider ownership could not be verified")
-            # YuanRong can report RUNNING before OpenCode can answer through its relay.
-            if ready_check is not None and operation not in self._ready_operations:
-                while not await probe():
-                    await asyncio.sleep(READY_RETRY_SECONDS)
+                return False
+            stage = "authenticated_health"
+            if await probe():
+                return True
+            stage = "yuanrong_running"
+            return False
+
+        try:
+            async with asyncio.timeout(self.ready_timeout):
+                if ready_check is None:
+                    info = await self.yuanrong.wait_until_running(lease.instance_id)
+                else:
+                    info = await self.yuanrong.wait_until_running(
+                        lease.instance_id, confirm_unreported_ready=confirm_unreported_ready,
+                    )
+                if not self._matches(plan, info):
+                    raise EnvironmentUnavailable("OpenCode Provider ownership could not be verified")
+                # YuanRong can report RUNNING before OpenCode answers its authenticated probe.
+                if ready_check is not None:
+                    stage = "authenticated_health"
+                    while not health_confirmed and not await probe():
+                        await asyncio.sleep(READY_RETRY_SECONDS)
+            self._ready_operations.add(operation)
+            outcome = "ready"
+        except TimeoutError:
+            outcome = "timeout"
+            raise
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            if initial or outcome != "ready":
+                logger.log(
+                    logging.WARNING if outcome in {"timeout", "failed"} else logging.INFO,
+                    "opencode_provider_readiness event_id=%s account_id=%s binding_id=%s operation_id=%s "
+                    "generation=%d attempt=%s stage=%s outcome=%s elapsed_ms=%d timeout_ms=%d health_attempts=%d",
+                    secrets.token_hex(12), row["account_id"], row["binding_id"], operation, row["generation"],
+                    "initial" if initial else "recheck", stage, outcome,
+                    round((time.monotonic() - started) * 1000), round(self.ready_timeout * 1000), attempts,
+                )
 
     @asynccontextmanager
     async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False):
