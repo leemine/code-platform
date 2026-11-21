@@ -29,16 +29,21 @@ STATE_TARGET = "/state"
 PROVIDER_IDENTITY_TARGET = "/run/opencode"
 OPENCODE_PORT = 4096
 
+from opencode_runtime_asset import RUNTIME_TARGET, asset_rules, runtime_identity, tree_digest
+
 
 class PhysicalResources:
     def __init__(self, boundary, journal_root: Path, identity_root: Path, identity_target: str,
-                 upstream: str, frontend: str, timeout: float = 10, *, provider_root=None, provider_images=()):
+                 upstream: str, frontend: str, timeout: float = 10, *, provider_root=None, provider_images=(), runtime_assets=()):
         self.boundary = boundary
         self.root, self.identity_root = Path(journal_root), Path(identity_root)
         self.identity_target = identity_target
         self.upstream, self.frontend, self.timeout = upstream, frontend.rstrip("/"), timeout
         self.provider_root = Path(provider_root) if provider_root is not None else None
         self.provider_images = frozenset(provider_images)
+        self.runtime_assets = asset_rules(runtime_assets, self.provider_images)
+        self._verified_runtime_assets = {}
+
         for path, uid in [(self.root, os.getuid()), (self.identity_root, boundary.uid)]:
             self._private(path, uid)
         if (self.root.is_relative_to(boundary.workspace_root)
@@ -100,15 +105,31 @@ class PhysicalResources:
             raise ValueError("invalid OpenCode physical scope")
         for directory in (binding, state, generation):
             self._private(directory, self.boundary.uid)
-        definition = self._read_provider_definition(binding / "scope.json", binding.name, image, user)
+        operation_scope = generation / "scope.json"
+        if operation_scope.exists() or operation_scope.is_symlink():
+            anchor = self._read_provider_definition(binding / "scope.json", binding.name, None, user)
+            definition = self._read_provider_definition(operation_scope, binding.name, image, user, generation=True)
+            if any(anchor[key] != definition[key] for key in anchor if key != "image"):
+                raise ValueError("OpenCode generation workspace differs from its binding")
+        else:
+            definition = self._read_provider_definition(binding / "scope.json", binding.name, image, user)
+        expected_asset = self.runtime_assets.get(image)
+        if definition.get("shared_runtime") != (str(expected_asset) if expected_asset else None):
+            raise ValueError("OpenCode image runtime asset differs from node policy")
+
         slot = hashlib.sha256(str(state).encode()).hexdigest()
         key = hashlib.sha256((str(state) + "\0" + str(generation)).encode()).hexdigest()
-        return {"workspace": str(state), "identity": str(generation), "image": image,
+        scope = {"workspace": str(state), "identity": str(generation), "image": image,
                 "user": user, "slot": slot, "key": key, "name": "cpo-" + slot,
                 "role": "opencode", "account_workspace": definition["account_workspace"],
                 "project_source": definition["project_source"], "project_target": definition["project_target"]}
+        if expected_asset:
+            scope["shared_runtime"] = str(expected_asset)
+        return scope
 
-    def _read_provider_definition(self, path: Path, binding_id: str, image: str, user: str) -> dict:
+
+    def _read_provider_definition(self, path: Path, binding_id: str, image: str | None, user: str,
+                                  *, generation=False) -> dict:
         with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as record:
             info = os.fstat(record.fileno())
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.boundary.uid
@@ -118,10 +139,13 @@ class PhysicalResources:
         if len(raw) > 8192:
             raise ValueError("OpenCode scope definition too large")
         value = json.loads(raw)
-        if (not isinstance(value, dict) or set(value) != {"version", "binding_id", "account_workspace",
-                "project_source", "project_target", "image", "user"} or type(value["version"]) is not int
+        fields = {"version", "binding_id", "account_workspace", "project_source", "project_target", "image", "user"}
+        if generation and isinstance(value, dict) and "shared_runtime" in value:
+            fields.add("shared_runtime")
+        if (not isinstance(value, dict) or set(value) != fields or type(value["version"]) is not int
                 or value["version"] not in (1, 2) or value["binding_id"] != binding_id
-                or value["image"] != image or value["user"] != user):
+                or not isinstance(value["image"], str) or not IMAGE_DIGEST.fullmatch(value["image"])
+                or (image is not None and value["image"] != image) or value["user"] != user):
             raise ValueError("OpenCode scope definition differs")
         account, project, target = (Path(value[field]) for field in ("account_workspace", "project_source", "project_target"))
         if (account.parent != self.boundary.workspace_root or not self.boundary.workspace_name_pattern.fullmatch(account.name)
@@ -144,6 +168,10 @@ class PhysicalResources:
             target = mount["Target"]
             if target in mounts or type(readonly) is not bool:
                 raise ValueError("ambiguous OpenCode physical mount")
+            if target == RUNTIME_TARGET:
+                options = mount.get("BindOptions") or {}
+                if set(options) - {"Propagation"} or options.get("Propagation") not in (None, "", "rprivate"):
+                    raise ValueError("OpenCode shared runtime mount must use private propagation")
             mounts[target] = (mount["Source"], readonly)
         for bind in host.get("Binds", []):
             parts = bind.split(":")
@@ -158,6 +186,8 @@ class PhysicalResources:
     def _check_provider_mounts(self, scope: dict, mounts: dict, *, private_logs: bool) -> None:
         required = {STATE_TARGET: (scope["workspace"], False), PROVIDER_IDENTITY_TARGET: (scope["identity"], True),
                     scope["project_target"]: (scope["project_source"], False)}
+        if "shared_runtime" in scope:
+            required[RUNTIME_TARGET] = (scope["shared_runtime"], True)
         if any(mounts.get(target) != value for target, value in required.items()):
             raise ValueError("OpenCode physical project, state or generation mount differs")
         home_alias = f'/home/{scope["user"]}'
@@ -186,6 +216,19 @@ class PhysicalResources:
             else:
                 raise ValueError("unexpected OpenCode physical mount")
 
+    def _verify_runtime_asset(self, scope: dict) -> None:
+        if "shared_runtime" not in scope:
+            return
+        path = Path(scope["shared_runtime"])
+        try:
+            stamp = runtime_identity(path)
+            if self._verified_runtime_assets.get(path) != stamp:
+                if tree_digest(path) != path.name or runtime_identity(path) != stamp:
+                    raise ValueError("OpenCode runtime asset digest mismatch")
+                self._verified_runtime_assets[path] = stamp
+        except FileNotFoundError as error:
+            raise ValueError("OpenCode runtime asset is not provisioned on this node") from error
+
     def create_scope(self, request: dict) -> dict:
         if self.is_provider_image(request.get("Image")):
             mounts = self._provider_create_mounts(request)
@@ -199,6 +242,7 @@ class PhysicalResources:
             if not project.is_dir() or project.stat().st_uid != self.boundary.uid:
                 raise ValueError("OpenCode project workspace is unavailable")
             self._check_provider_mounts(scope, mounts, private_logs=False)
+            self._verify_runtime_asset(scope)
             return scope
         host = request.get("HostConfig", {})
         mounts = [(m.get("Source"), m.get("Target"), m.get("ReadOnly", False))
@@ -206,6 +250,13 @@ class PhysicalResources:
         for bind in host.get("Binds", []):
             parts = bind.split(":")
             mounts.append((parts[0], parts[1], len(parts) == 3 and "ro" in parts[2].split(",")))
+        for source, target, _ in mounts:
+            if any(Path(source).is_relative_to(path.parent) or path.parent.is_relative_to(Path(source))
+                   for path in self.runtime_assets.values()):
+                raise ValueError("OpenCode runtime asset is restricted to its Provider image")
+            if self.runtime_assets and (Path(target).is_relative_to(RUNTIME_TARGET)
+                                       or Path(RUNTIME_TARGET).is_relative_to(Path(target))):
+                raise ValueError("OpenCode runtime mount is restricted to its Provider image")
         work = [m for m in mounts if m[1] == "/data"]
         identity = [m for m in mounts if m[1] == self.identity_target]
         if len(work) != 1 or len(identity) != 1 or identity[0][2] is not True:
@@ -293,6 +344,8 @@ class PhysicalResources:
                 target = mount["Destination"]
                 if mount.get("Type") != "bind" or type(mount.get("RW")) is not bool or target in actual:
                     raise ValueError("physical ownership differs; no deletion permitted")
+                if target == RUNTIME_TARGET and mount.get("Propagation") != "rprivate":
+                    raise ValueError("OpenCode shared runtime mount propagation differs")
                 actual[target] = (mount["Source"], not mount["RW"])
             self._check_provider_mounts(scope, actual, private_logs=True)
         elif (not any(m.get("Source") == scope["workspace"] and m.get("Destination") == "/data" for m in mounts)

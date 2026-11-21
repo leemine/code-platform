@@ -16,6 +16,8 @@ For a shared execution pool, configure `opencode_provider.admit_new_bindings`. W
 
 Route the fixed `/api/v1/auth/organization/provider/managed/` prefix to the pool's Gateway, with the deployment's configured API prefix. Preserve the complete signed request path and headers. Gateway verifies the Worker identity and project ownership. Existing deployments can continue to use `account_allowlist` and the original routes. Remove `account_allowlist` when explicitly configuring the switch. Managed session recovery accepts the two known route forms on the same origin and API prefix.
 
+Set `opencode_provider.shared_runtime` to use a host-provisioned startup stack with a pinned image. Each binding stores its image and read-only asset path. A node without the asset refuses launch. After confirmed physical recycling, an operator can migrate or roll back the binding while keeping its original state volume. See the [shared startup stack runbook](../../deploy/cloud-workspace/README.md#独立-opencode-共享启动栈).
+
 Managed OpenCode syncs endpoints, resolved credentials, and configured context limits for compatible models saved by the account when sending a message. The context limit is expressed in tokens, such as 1,048,576 for a 1M context configured at 1,048,576 tokens. Changing the limit keeps the model identifier and uses the existing idle recycling flow for that binding.
 
 Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW; environment ensure or the existing connection warmup invokes the sole Router creator. The plugin contributes only cloud environment RPCs and leaves `session.execution.options` in place.

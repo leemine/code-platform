@@ -21,6 +21,7 @@ import uuid
 import httpx
 
 from gateway.common.opencode_model_policy import account_models_revision, base_permission_rules, deployment_model_policy
+from gateway.common.opencode_runtime import RUNTIME_TARGET, runtime_source
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
 
@@ -279,6 +280,8 @@ class CloudOpencodePool:
                 "account_workspace": account["workspace"], "physical_verification": self.resources is not None,
                 "cpu": int(self.options.get("cpu", 1000)), "memory": int(self.options.get("memory", 1024)),
             }
+            if "shared_runtime" in self.options:
+                profile["shared_runtime"] = runtime_source(self.options["shared_runtime"])
             with self.store.connect() as db:
                 db.execute("""INSERT INTO provider_bindings VALUES
                     (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
@@ -329,11 +332,19 @@ class CloudOpencodePool:
                 "version": 2 if row["directory"] == str(WORKER_ROOT) else 1,
                 "account_workspace": profile["account_workspace"],
                 "project_source": row["project_source"], "project_target": row["directory"],
-                "binding_id": row["binding_id"], "image": profile["image"], "user": profile["user"],
+                "binding_id": row["binding_id"], "image": profile.get("initial_image", profile["image"]),
+                "user": profile["user"],
             }
             encoded = json.dumps(manifest, sort_keys=True).encode()
             if _initial_file(root / "scope.json", encoded) != encoded:
                 raise EnvironmentUnavailable("OpenCode Provider physical scope changed")
+            if profile["image"] != manifest["image"] or "shared_runtime" in profile:
+                generation = {**manifest, "image": profile["image"]}
+                if "shared_runtime" in profile:
+                    generation["shared_runtime"] = runtime_source(profile["shared_runtime"])
+                encoded_generation = json.dumps(generation, sort_keys=True).encode()
+                if _initial_file(config / "scope.json", encoded_generation) != encoded_generation:
+                    raise EnvironmentUnavailable("OpenCode Provider generation scope changed")
         model = json.dumps(self._effective_config(root)).encode()
         password = _initial_file(root / "password", secrets.token_hex(24).encode())
         _initial_file(config / "opencode.json", model)
@@ -343,6 +354,11 @@ class CloudOpencodePool:
             {"source": str(state), "target": "/state", "readonly": False},
             {"source": str(config), "target": "/run/opencode", "readonly": True},
         ]
+        if "shared_runtime" in profile:
+            if self.resources is None:
+                raise EnvironmentUnavailable("OpenCode shared runtime requires physical admission")
+            mounts.append({"source": runtime_source(profile["shared_runtime"]), "target": RUNTIME_TARGET,
+                           "readonly": True})
         spec = {
             "sandbox_type": "docker", "runtime": profile["runtime"],
             "rootfs": {"imageurl": profile["image"], "user": profile["user"], "ports": [str(PORT)]},

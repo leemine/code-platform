@@ -593,6 +593,11 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
         with pytest.raises(ValueError, match="account_allowlist"):
             replace(managed, opencode_provider={**managed.opencode_provider, "account_allowlist": allowlist}).validate()
     replace(managed, opencode_provider={"image": managed.opencode_provider["image"]}).validate()
+    runtime_digest = "e" * 64
+    shared = {**managed.opencode_provider, "shared_runtime": f"/opt/runtime-assets/{runtime_digest}"}
+    replace(managed, opencode_provider=shared).validate()
+    with pytest.raises(ValueError, match="outside account"):
+        replace(managed, opencode_provider={**shared, "shared_runtime": str(config.workspace_root / runtime_digest)}).validate()
     query_auth = replace(managed, opencode_provider={**managed.opencode_provider, "auth_transport": "query"})
     replace(query_auth, frontend_endpoint="http://127.0.0.1:19888").validate()
     with pytest.raises(ValueError, match="loopback YuanRong Frontend"):

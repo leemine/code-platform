@@ -166,3 +166,27 @@ Gateway 在该根目录下写入私有绑定说明。宿主准入据此核验旧
 Worker 项目根、稳定的 `/state` 和本代只读 `/run/opencode`，并改写元戎注入的共享日志挂载。
 确认旧实例退出前保留绑定说明及本代目录。部署和故障边界见
 [日志与物理确认契约](LOG_BOUNDARY_CONTRACT.md)。
+
+## 独立 OpenCode 共享启动栈
+
+OpenCode 镜像保留原 OpenCode 二进制、系统依赖、项目工具和指向 `/opt/yuanrong-python` 的 Python 入口。将经过验收的 Python 3.11、元戎容器 Runtime 与 Agent DX Executor 装配目录作为独立发布资产。宿主元戎集群与镜像内启动依赖各自按已验证的版本发布。
+
+### 节点预置
+
+1. 从已验证的 Provider 构建候选导出 `/opt/yuanrong-python`，保留文件内容、执行权限和树内符号链接。资产根及所有内容由 `root:root` 持有，常规目录与可执行文件用 `0555`，其他常规文件用 `0444`。通过 `python3 deploy/cloud-workspace/opencode_runtime_asset.py /绝对路径/待发布目录` 计算树摘要。
+2. 将同一资产发布到承接该镜像的所有节点。部署在同一个绝对路径，例如 `/opt/code-platform/runtime-assets/<树SHA-256>`。资产祖先目录由 root 持有，禁止组与其他用户写入。在节点上重新计算摘要，核对发布清单后再原子重命名到版本目录。版本目录只允许整棵替换，不原地更新。
+3. 将同一 Provider 镜像预拉到各节点。为每个节点上的 Docker 边界保留原 `--opencode-provider-image` 镜像授权，再为共享版本添加 `--opencode-provider-image sha256:<新镜像ID>` 和 `--opencode-runtime-asset sha256:<新镜像ID>=/opt/code-platform/runtime-assets/<树SHA-256>`。新镜像只有在实际接到调度的节点上通过摘要及只读挂载检查才能创建容器。资产缺失时，该节点在 Docker 创建前拒绝启动。元戎可能已接收异步调度请求，最终状态和节点边界日志可用于定位拒绝。
+4. 在 Gateway 的 `opencode_provider` 中设置 `image` 为同一镜像 ID，`shared_runtime` 为同一版本绝对路径。新建绑定会固定这对值。使用原完整镜像时省略 `shared_runtime`。每个镜像 ID 在一套 Docker 边界配置中只允许对应一个资产版本。
+
+### 迁移既有绑定及回滚
+
+先停止该绑定的新请求，等待元戎空闲回收与 Docker 物理确认完成。记录 binding ID、旧镜像 ID 和原状态卷。停掉持有此环境库写锁的 Gateway，在装载同一环境库与控制目录的维护容器内执行下列命令。维护容器和 Gateway 都使用包含迁移命令的版本，运行身份与 Gateway 一致，配置文件使用目标镜像与对应的启动栈设置。
+
+```sh
+python -m gateway.services.migrate_opencode_binding \
+  --config /private/cloud.json \
+  --binding-id <binding-id> \
+  --expected-image sha256:<当前镜像ID>
+```
+
+命令要求既有绑定启用物理确认，当前代已回收，下一代尚未生成调度文件。成功后重启 Gateway，从原项目打开会话并发送一轮消息。记录新元戎实例、镜像 ID、原状态卷和原 OpenCode 会话 ID。回滚时保留旧镜像及其 Docker 边界授权，等待同样的回收条件，重新运行命令，并把配置和 `--expected-image` 分别设为旧版配置和当前新版镜像 ID。全流程保留绑定 ID、状态卷、项目目录和会话归属。
