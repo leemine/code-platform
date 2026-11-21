@@ -1724,18 +1724,18 @@
   color: var(--color-text-strong);
 }
 
-.chat-mode-select__option:disabled {
+.chat-mode-select__option:is(:disabled, [aria-disabled="true"]) {
   color: var(--color-text-placeholder);
   cursor: not-allowed;
 }
 
-.chat-mode-select__option:disabled:hover,
-.chat-mode-select__option:disabled:focus-visible {
+.chat-mode-select__option:is(:disabled, [aria-disabled="true"]):hover,
+.chat-mode-select__option:is(:disabled, [aria-disabled="true"]):focus-visible {
   background: transparent;
   color: var(--color-text-placeholder);
 }
 
-.chat-mode-select__option:disabled .chat-mode-select__icon {
+.chat-mode-select__option:is(:disabled, [aria-disabled="true"]) .chat-mode-select__icon {
   color: var(--color-text-placeholder);
 }
 

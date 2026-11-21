@@ -16,9 +16,11 @@ import shutil
 import stat
 import tempfile
 import time
+import uuid
 
 import httpx
 
+from gateway.common.opencode_model_policy import base_permission_rules, deployment_model_policy
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
 
@@ -56,13 +58,24 @@ def _initial_file(path: Path, content: bytes) -> bytes:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, path)
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                pass  # Another planner already pinned the snapshot.
         finally:
             Path(temporary).unlink(missing_ok=True)
+    return _read_private_file(path)
+
+
+def _read_private_file(path: Path) -> bytes:
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise PermissionError("OpenCode Provider configuration must be private")
     return path.read_bytes()
+
+
+class OpenCodeConfigurationError(ValueError):
+    """Safe public rejection for the affected managed Provider binding."""
 
 
 class CloudOpencodePool:
@@ -75,12 +88,11 @@ class CloudOpencodePool:
     def __init__(self, store, yuanrong, config, *, resources=None):
         self.store, self.yuanrong, self.resources = store, yuanrong, resources
         self.options = dict(config.opencode_provider)
-        from gateway.common.opencode_model_policy import deployment_model_policy
 
         self.model_config = json.loads(Path(self.options["model_config"]).read_text())
         if not isinstance(self.model_config, dict):
             raise ValueError("OpenCode Provider model configuration must be an object")
-        self.model_policy = deployment_model_policy(self.model_config)
+        deployment_model_policy(self.model_config)
         self.storage = Path(config.state_root) / "opencode-providers"
         self.runtime, self.namespace = config.runtime, config.namespace
         self.ready_timeout = config.ready_timeout
@@ -161,6 +173,72 @@ class CloudOpencodePool:
             raise PermissionError("OpenCode workspace must be an existing canonical project directory")
         return str(source)
 
+    @staticmethod
+    def _new_binding_id(key):
+        # Resolve the first shared snapshot before the Worker starts. A catalog
+        # read never allocates an instance or inserts a Provider binding.
+        if key[1].startswith("@"):
+            return uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(key)).hex
+        return secrets.token_hex(16)
+
+    def _binding_config(self, root):
+        path = root / "opencode.json"
+        content = {**self.model_config, "autoupdate": False, "share": "disabled"}
+        content.setdefault("permission", base_permission_rules("ask"))
+        return _initial_file(path, json.dumps(content).encode())
+
+    @staticmethod
+    def _checked_policy(config):
+        if not isinstance(config, dict):
+            raise OpenCodeConfigurationError("opencode_model_snapshot_stale")
+        permission = config.get("permission")
+        if (permission != base_permission_rules("ask") or next(iter(permission)) != "*"
+                or config.get("tools")):
+            raise OpenCodeConfigurationError("opencode_approval_policy_conflict")
+        for section in ("agent", "mode"):
+            settings = config.get(section, {})
+            if not isinstance(settings, dict) or any(
+                not isinstance(agent, dict) or "permission" in agent or "tools" in agent
+                for agent in settings.values()
+            ):
+                raise OpenCodeConfigurationError("opencode_approval_policy_conflict")
+        try:
+            return deployment_model_policy(config)
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise OpenCodeConfigurationError("opencode_model_snapshot_stale") from exc
+
+    def _bound_model_policy(self, root, row):
+        _private_directory(root)
+        if row and (row["state"] != "NEW" or row["generation"] > 1) and not (root / "opencode.json").is_file():
+            raise OpenCodeConfigurationError("opencode_model_snapshot_stale")
+        snapshot = json.loads(self._binding_config(root))
+        policy = self._checked_policy(snapshot)
+        if row:
+            mounted = root / row["operation_id"] / "opencode.json"
+            if mounted.exists() or mounted.is_symlink():
+                active = json.loads(_read_private_file(mounted))
+                self._checked_policy(active)
+                # The CLI may add its editor schema hint when reading a configuration.
+                active.pop("$schema", None)
+                snapshot.pop("$schema", None)
+                if active != snapshot:
+                    raise OpenCodeConfigurationError("opencode_model_snapshot_stale")
+            elif row["state"] != "NEW":
+                raise OpenCodeConfigurationError("opencode_model_snapshot_stale")
+        return policy
+
+    def worker_model_policy(self, account):
+        key = account["account_id"], "@" + account["environment_id"], PROVIDER
+        row = self._get(key)
+        root = self.storage / (row["binding_id"] if row else self._new_binding_id(key))
+        try:
+            return self._bound_model_policy(root, row)
+        except (ValueError, OSError) as exc:
+            # Keep unrelated execution providers available on this Worker.
+            logger.warning("Managed OpenCode configuration unavailable for this binding")
+            reason = str(exc) if isinstance(exc, OpenCodeConfigurationError) else "opencode_model_snapshot_stale"
+            return {"default": None, "models": {}, "error": reason}
+
     def _binding(self, key, directory, source, account):
         row = self._get(key)
         if row is None:
@@ -172,7 +250,7 @@ class CloudOpencodePool:
             with self.store.connect() as db:
                 db.execute("""INSERT INTO provider_bindings VALUES
                     (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
-                    (*key, secrets.token_hex(16), directory, source, json.dumps(profile),
+                    (*key, self._new_binding_id(key), directory, source, json.dumps(profile),
                      secrets.token_hex(16), time.time()),
                 )
             row = self._get(key)
@@ -224,13 +302,7 @@ class CloudOpencodePool:
             encoded = json.dumps(manifest, sort_keys=True).encode()
             if _initial_file(root / "scope.json", encoded) != encoded:
                 raise EnvironmentUnavailable("OpenCode Provider physical scope changed")
-        model_path = root / "opencode.json"
-        if not model_path.exists():
-            model_config = dict(self.model_config)
-            model_config.setdefault("permission", {"*": "ask", "question": "allow", "task": "deny"})
-            model_config.update(autoupdate=False, share="disabled")
-            _initial_file(model_path, json.dumps(model_config).encode())
-        model = _initial_file(model_path, b"")
+        model = self._binding_config(root)
         password = _initial_file(root / "password", secrets.token_hex(24).encode())
         _initial_file(config / "opencode.json", model)
         _initial_file(config / "password", password)
@@ -445,6 +517,7 @@ class CloudOpencodePool:
             async with self._locks[key]:
                 current = self._check_account(account)
                 row = self._binding(key, mount_target, mount_source, current)
+                self._bound_model_policy(self.storage / row["binding_id"], row)
                 plan = self._plan(row)
                 if row["state"] == "DELETING":
                     if not await self.yuanrong.instance_absent(row["instance_id"]):

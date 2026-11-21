@@ -749,12 +749,16 @@ def _write_metadata_unfenced(
         # Selection has its own authoritative field update. Queued history/title
         # snapshots must not roll a newer selection back (including a clear).
         owns_selection = options.merge_fields is not None and "model_selection" in options.merge_fields
+        if owns_selection and current is not None and to_write.get("model_selection") != current.get("model_selection"):
+            if "model_selection_revision" not in metadata:
+                to_write.pop("model_selection_revision", None)
         if current is not None and not owns_selection:
             to_write = dict(to_write)
-            if "model_selection" in current:
-                to_write["model_selection"] = current["model_selection"]
-            else:
-                to_write.pop("model_selection", None)
+            for field in ("model_selection", "model_selection_revision"):
+                if field in current:
+                    to_write[field] = current[field]
+                else:
+                    to_write.pop(field, None)
         owns_moa = options.owns_moa_enabled or (
             options.merge_fields is not None and "moa_enabled" in options.merge_fields
         )
@@ -794,12 +798,16 @@ def _write_metadata_unfenced(
 
 def update_session_model_selection(
     session_id: str, selection: dict[str, Any] | None, *, expected_selection: tuple[bool, Any] | None = None,
+    confirmed_revision: str | None = None,
 ) -> None:
-    """Update only selection through the shared lifecycle/atomic-write boundary."""
+    """Persist a selection and its explicitly confirmed binding revision together."""
+    fields = {"model_selection": selection}
+    if confirmed_revision is not None:
+        fields["model_selection_revision"] = confirmed_revision
     _write_metadata_sync(
-        session_id, {"model_selection": selection},
+        session_id, fields,
         _MetadataWriteOptions(
-            merge_fields=frozenset({"model_selection"}),
+            merge_fields=frozenset(fields),
             expected_fields={"model_selection": expected_selection} if expected_selection is not None else None,
         ),
     )

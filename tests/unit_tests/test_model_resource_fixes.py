@@ -360,6 +360,15 @@ def test_stale_metadata_snapshot_cannot_erase_selection(tmp_path, monkeypatch, r
     assert latest["title"] == "after"
     assert to_session_info(latest)["model_selection"] == selection
 
+    confirmed = ModelSelection(type="model", id="account-a")
+    store.set_session_model_selection("selection-race", confirmed, confirmed_revision="revision-a")
+    latest = metadata._write_metadata_sync("selection-race", original)
+    assert latest["model_selection_revision"] == "revision-a"
+    store.set_session_model_selection("selection-race", ModelSelection(type="model", id="account-b"))
+    latest = metadata._write_metadata_sync("selection-race", original)
+    assert "model_selection_revision" not in latest
+
+
 
 # A3g：gateway.embedded.runtime 副本已删除，双侧对等校验收敛为 server 单侧。
 @pytest.mark.parametrize("runtime", ["server.runtime"])

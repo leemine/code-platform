@@ -25,3 +25,11 @@ Worker 把共享线路标记和相应配置摘要写入既有远端会话绑定�
 旧版 Worker 创建的会话由升级 Worker 沿用原项目容器、状态卷和原生 ID。共享容器经元戎删除及 Docker 旧 ID 确认后，两个项目在挂载同一共享卷的替代容器各自接回原会话，原生会话数 2 → 2，两个确定性恢复回合分别读到各自的先前上下文。首轮隔离池无法同时调度第三个容器，复验先确认旧卷并按正常生命周期回收旧容器，再同时运行两个账号的共享容器。未测真实负载。
 
 实际依赖、命令、日志及候选来源见管理工作区 `artifacts/platform-opencode-worker-sharing-20261121/evidence/summary.md`。
+
+## 账号选模与既有共享绑定的升级回归
+
+`1b78b34` 上的工作区候选复用原账号目录、选择器和会话元数据写入器。浏览器目录先后到达时保留旧模型。Worker 取已有绑定的启动快照，新绑定在首次规划时固定配置。共享服务与会话自管服务复用审批基础规则。运行中的 OpenCode 可添加编辑器用的 `$schema`，比较启动配置时忽略该字段。
+
+隔离实测使用 `4e53964` 的 Gateway 实例池与 Worker 创建原生会话，再切换到候选 Worker 和绑定规划器。真实 OpenCode 1.18.18、认证 WebSocket、中继及新旧 Worker 覆盖按旧 ID 续聊、账号默认与原生默认首发、显式改选后的续聊和一次审批的工具副作用。Chrome 检查同一选择器的历史值和主动写回。元戎分配与模型回复在本次以本机夹具替代。候选、命令与证据见管理工作区 `artifacts/platform-opencode-binding-p1-20261121/evidence/summary.md`。
+
+[Chrome 验收截图：历史模型不可用时的账号模型选择器](../../../docs/assets/images/managed-opencode-account-model-picker.png)

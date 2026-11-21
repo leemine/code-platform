@@ -88,6 +88,7 @@ import { readAgentTemplateName } from './features/agentIdentity';
 import { normalizeTeamLeaderIdentity } from './features/teamLeaderIdentity';
 import { normalizeTeamGroupIdentity } from './features/teamGroupIdentity';
 import { useWebSocket, mergePersistedGoalCompletionMessages, stampGoalObjectiveMessages, useResponsiveLayout, useResponsivePanelResize } from './hooks';
+import { isOpenCodeNativeModel } from './features/cloudWorkspace/opencodeModels';
 import { webClient, webRequest, isCloudResource } from './services/webClient';
 import { attachTeamSession, resetTeamAttachments } from './services/teamAttach';
 import type { WorkflowRun } from './components/teamArea/workflowTypes';
@@ -287,10 +288,12 @@ function restoreSessionModelSelection(
   sessionId: string,
   modelSelection: unknown,
   modelName?: string | null,
+  provider?: string,
 ): void {
   const store = useSessionStore.getState();
   const restoredSelection = parseModelSelection(modelSelection);
-  if (isCloudResource(sessionId)) {
+  const openCode = (provider ?? store.runtimes[sessionId]?.executionProvider) === 'opencode-direct';
+  if (isCloudResource(sessionId) || openCode || isOpenCodeNativeModel(restoredSelection)) {
     store.setSelectedModelSelection(sessionId, restoredSelection);
     if (modelName && !restoredSelection) store.setSelectedModelName(sessionId, modelName);
     return;
@@ -2052,7 +2055,7 @@ function AppContent({
         // 覆盖"targetSession 为空、走 loadSessionMetadata"这条恢复路径（如从 cron 触发
         // 会话列表点进来的占位 session 之后补全元数据的场景，bug002）。
         // Prefer stable model_selection when present; never restore a group from active_model/model name.
-        restoreSessionModelSelection(targetSessionId, session?.model_selection, session?.model);
+        restoreSessionModelSelection(targetSessionId, session?.model_selection, session?.model, session?.execution_provider);
         // 恢复会话时同步 swarmflow 开关 + budget：后端 metadata 里的
         // session_swarmflow_config 是上次会话持久化的配置，刷新/重进后读回。
         const sfConfig = (session as unknown as Record<string, unknown> | null)?.session_swarmflow_config;
@@ -3981,7 +3984,7 @@ function AppContent({
         // 由后端落盘），写进 runtime.selectedModelName——单 Agent 与集群（team）会话
         // 同样恢复，保证刷新页面后模型选择不回退到默认模型。
         // Prefer stable model_selection when present; never restore a group from active_model/model name.
-        restoreSessionModelSelection(targetSessionId, targetSession.model_selection, targetSession.model);
+        restoreSessionModelSelection(targetSessionId, targetSession.model_selection, targetSession.model, targetSession.execution_provider);
       } else {
         setCurrentSession(null);
       }

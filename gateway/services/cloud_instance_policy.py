@@ -57,7 +57,7 @@ class CloudInstancePolicy:
         if self.opencode_relay_url:
             env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
             if self.opencode_model_policy is not None:
-                env[MODEL_POLICY_ENV] = json.dumps(self.opencode_model_policy)
+                env[MODEL_POLICY_ENV] = json.dumps(self.opencode_model_policy(row))
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

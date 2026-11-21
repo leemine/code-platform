@@ -411,8 +411,8 @@ def managed_opencode(providers, monkeypatch, tmp_path):
 
     def respond(request):
         assert request.url.host == 'gateway.example.invalid'
-        assert request.url.path.startswith('/api/provider/opencode/')
-        project_id, endpoint = request.url.path[len('/api/provider/opencode/'):].split('/', 1)
+        assert request.url.path.startswith('/api/provider/opencode-worker/')
+        project_id, endpoint = request.url.path[len('/api/provider/opencode-worker/'):].split('/', 1)
         assert request.url.params['directory'] == str(tmp_path / project_id)
         claims = json.loads(request.headers[HEADER])['claims']
         calls.append((project_id, request.method, endpoint, claims['epoch']))

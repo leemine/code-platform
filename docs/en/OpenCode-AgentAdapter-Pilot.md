@@ -12,6 +12,10 @@ This pilot uses a startup snapshot for supported OpenAI-compatible individual mo
 
 `JIUWENSWARM_AGENT_SDK` remains a legacy default. Active sessions retain their connection. With a fixed `opencode.url`, the Worker saves the binding between the Swarm and native OpenCode sessions. After a Worker restart, it can reattach to the original idle native session using the original configuration, workspace and model. Runtime release retains the binding and remote session. Recovery fails if the legacy binding is missing, creation had an unknown outcome or the native session is unavailable.
 
+### Model selection on managed Workers
+
+Managed OpenCode uses the account model picker. A matching default uses its account model ID. When no account entry matches, the picker offers one native default. History keeps its saved selection and shows a reason when the model is unavailable. An explicit choice updates the conversation after the Worker accepts it. The Worker derives admission from the bound service configuration. OpenCode verifies the runtime model and requests tool approval through the existing interaction channel.
+
 ## Validation and remaining scope
 
 The actual Swarm browser→Gateway→Front→Worker/Runtime→OpenCode flow passed two-model selection, replies, existing approval/rejection UI, exit7 failure history/UI, cancellation while awaiting approval followed by another turn, default Native execution, and binding/history restoration after navigation and refresh. A separate environment with no Core distribution also passed real execution with both models without loading Core modules. Component previews do not count as channel acceptance.

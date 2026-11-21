@@ -88,6 +88,8 @@ def managed_model_binding(policy, selection=None, *, model_name=None, catalog=No
     from gateway.common.opencode_model_policy import native_model_binding, native_model_reference
     from jiuwenswarm.common.model_routing_registry import ModelExecutionContext
 
+    if policy.get("error"):
+        raise ValueError(policy["error"])
     reference = native_model_reference(selection)
     if reference is not None:
         return native_model_binding(reference, policy)
@@ -101,19 +103,25 @@ def public_managed_model_policy(config, policy):
     from jiuwenswarm.common.model_errors import ModelSelectionError
 
     catalog = ModelCatalog(config)
+    default = policy["default"]
+    default_account_id = None
     reasons = {}
     for entry in catalog.list_public_models():
         model_id = entry["model_id"]
         try:
-            managed_model_binding(policy, ModelSelection(type="model", id=model_id), catalog=catalog)
+            binding = managed_model_binding(policy, ModelSelection(type="model", id=model_id), catalog=catalog)
+            if default_account_id is None and default == f"{binding['providerID']}/{binding['modelID']}":
+                default_account_id = model_id
         except (ValueError, ModelSelectionError) as error:
             reason = str(error)
             reasons[model_id] = reason if reason in {
                 "opencode_shared_model_protocol_unsupported", "opencode_shared_model_options_unsupported",
                 "opencode_model_not_registered",
             } else "opencode_model_unavailable"
-    default = policy["default"]
     return {
+        "registered": list(policy["models"]),
+        "error": policy.get("error"),
+        "default_account_id": default_account_id,
         "default": ({"id": NATIVE_MODEL_PREFIX + default, "label": policy["models"][default]} if default else None),
         "reasons": reasons,
     }

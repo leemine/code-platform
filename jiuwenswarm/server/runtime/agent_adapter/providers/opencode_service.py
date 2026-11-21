@@ -17,6 +17,8 @@ import socket
 import tempfile
 from pathlib import Path
 
+from gateway.common.opencode_model_policy import base_permission_rules
+
 from . import opencode_transport as transport
 from .opencode_models import build_server_model_config
 
@@ -29,7 +31,7 @@ def permission_config(equipment, profile):
     if profile not in {"default", "full_access"}:
         raise ValueError("Unsupported OpenCode permission profile")
     action = "allow" if profile == "full_access" else "ask"
-    return {"*": action, "task": "deny", "question": "allow",
+    return {**base_permission_rules(action),
             "skill": {"*": "deny", **{name: action for name in equipment.skills}}}
 
 

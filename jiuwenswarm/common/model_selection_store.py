@@ -51,10 +51,12 @@ def get_session_model_selection(session_id: str) -> ModelSelection | None:
         raise ModelSelectionError(MODEL_GROUP_INVALID, "cannot read the session's model selection") from exc
 
 
-def set_session_model_selection(session_id: str, selection: ModelSelection) -> None:
+def set_session_model_selection(session_id: str, selection: ModelSelection, *, confirmed_revision: str | None = None) -> None:
     from jiuwenswarm.common.external_providers import provider
 
     _metadata_path(session_id)  # Validate before entering the shared writer.
-    provider("session_metadata").update_session_model_selection(
-        session_id, selection.model_dump()
-    )
+    write = provider("session_metadata").update_session_model_selection
+    if confirmed_revision is None:
+        write(session_id, selection.model_dump())
+    else:
+        write(session_id, selection.model_dump(), confirmed_revision=confirmed_revision)

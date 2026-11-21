@@ -61,6 +61,8 @@ function ConversationModelSelector({
   const cloud = useCloudCatalog(boundSessionId || NEW_CONVERSATION_ID);
   const provider = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.executionProvider);
   const managed = provider === 'opencode-direct' ? readManagedOpenCodeModels(cloud.catalog?.config) : null;
+  const loadingOpenCode = provider === 'opencode-direct' && !cloud.catalog;
+  const preserveSelection = cloud.active || loadingOpenCode || managed !== null;
   const defaultOption = managed ? openCodeDefaultOption(managed) : null;
   const availableModels = cloud.active ? cloud.catalog?.models ?? [] : localModels;
   const models = defaultOption ? [defaultOption, ...availableModels] : availableModels;
@@ -83,6 +85,7 @@ function ConversationModelSelector({
   const setSelectedModelName = useSessionStore((state) => state.setSelectedModelName);
   const setSelectedModelSelection = useSessionStore((state) => state.setSelectedModelSelection);
   const [selectionError, setSelectionError] = useState('');
+  const [saving, setSaving] = useState(false);
   useEffect(() => setSelectionError(''), [provider, boundSessionId]);
   const mode = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.mode);
   const cronId = useSessionStore((state) =>
@@ -103,7 +106,7 @@ function ConversationModelSelector({
 
   // Deleted/disabled model groups must fall back and be written back (#5424).
   useEffect(() => {
-    if (selectedChildTeam || cloud.active) return;
+    if (selectedChildTeam || preserveSelection || isOpenCodeNativeModel(selectedModelSelection)) return;
     if (!boundSessionId || disabled) return;
     if (groupBlocked && allowModelGroups) return;
     if (!selectedModelSelection) return;
@@ -120,12 +123,6 @@ function ConversationModelSelector({
       return;
     }
     setSelectedModelSelection(boundSessionId, next);
-    if (cloud.active) {
-      const state = useSessionStore.getState(), runtime = state.runtimes[boundSessionId];
-      if (runtime) useSessionStore.setState({ runtimes: { ...state.runtimes, [boundSessionId]: {
-        ...runtime, selectedModelName: next.type === 'model' ? models.find(m => m.model_id === next.id)?.model_name ?? null : null,
-      } } });
-    }
     if (boundSessionId === NEW_CONVERSATION_ID) return;
     void webRequest('session.selection.set', {
       session_id: boundSessionId,
@@ -142,7 +139,7 @@ function ConversationModelSelector({
     groupBlocked,
     selectedModelSelection,
     selectedChildTeam,
-    cloud.active,
+    preserveSelection,
     models,
     selectableGroups,
     setSelectedModelSelection,
@@ -157,7 +154,7 @@ function ConversationModelSelector({
     ?? selectionFromModel(selected)
     ?? null;
   const catalogPending = isModelCatalogPending(models, modelGroups);
-  const healedSelection = cloud.active ? selectedModelSelection : selectedModelSelection
+  const healedSelection = preserveSelection || isOpenCodeNativeModel(selectedModelSelection) ? selectedModelSelection : selectedModelSelection
     && !catalogPending
     && !isModelSelectionAvailable(selectedModelSelection, models, selectableGroups)
     ? resolveAvailableModelSelection(selectedModelSelection, models, selectableGroups)
@@ -186,27 +183,41 @@ function ConversationModelSelector({
       }
     }
     setSelectionError('');
-    setSelectedModelSelection(boundSessionId, next);
-    if (cloud.active) {
-      const state = useSessionStore.getState(), runtime = state.runtimes[boundSessionId];
-      if (runtime) useSessionStore.setState({ runtimes: { ...state.runtimes, [boundSessionId]: {
-        ...runtime, selectedModelName: next.type === 'model' ? models.find(m => m.model_id === next.id)?.model_name ?? null : null,
-      } } });
-    }
+    const applySelection = () => {
+      setSelectedModelSelection(boundSessionId, next);
+      if (cloud.active) {
+        const state = useSessionStore.getState(), runtime = state.runtimes[boundSessionId];
+        if (runtime) useSessionStore.setState({ runtimes: { ...state.runtimes, [boundSessionId]: {
+          ...runtime, selectedModelName: next.type === 'model' ? models.find(m => m.model_id === next.id)?.model_name ?? null : null,
+        } } });
+      }
+    };
+    const waitForSave = managed !== null && boundSessionId !== NEW_CONVERSATION_ID;
+    if (!waitForSave) applySelection();
     if (boundSessionId === NEW_CONVERSATION_ID) return;
+    if (waitForSave) setSaving(true);
     try {
       await webRequest('session.selection.set', {
         session_id: boundSessionId,
         model_selection: next,
       });
+      if (waitForSave) applySelection();
     } catch (error) {
       setSelectionError(
         error instanceof Error && error.message ? error.message : t('chat.modelSelector.selectionFailed'),
       );
+    } finally {
+      if (waitForSave) setSaving(false);
     }
   };
 
-  const admissionError = selectionError || (managed && !managed.default && !selectedModelSelection
+  const savedReason = managed && selectedModelSelection && (
+    managedOpenCodeReason(managed, selectedModelSelection)
+    || (!isOpenCodeNativeModel(selectedModelSelection) && !models.some(model => model.model_id === selectedModelSelection.id)
+      && !isModelCatalogPending(models, modelGroups) ? 'opencode_model_unavailable' : null)
+  );
+  const admissionError = selectionError || (managed?.error ? t(`chat.modelSelector.managedOpenCode.${managed.error}`) : '')
+    || (savedReason ? t(`chat.modelSelector.managedOpenCode.${savedReason}`) : '') || (managed && !managed.default && !selectedModelSelection
     ? t('chat.modelSelector.managedOpenCode.opencode_default_model_unconfigured') : '');
   return (
     <div className="chat-model-selector" data-testid="chat-panel-model-selector-wrap">
@@ -216,9 +227,19 @@ function ConversationModelSelector({
         value={selectedChildTeam?.execution_model_name ?? selected?.model_name ?? selectedModelName}
         selection={selectedChildTeam?.execution_model_selection ?? pickerSelection}
         includeModelGroups={includeModelGroups}
+        modelRejection={managed ? (model) => {
+          const reason = model.model_id ? managedOpenCodeReason(managed, { type: 'model', id: model.model_id })
+            : 'opencode_model_not_registered';
+          return reason ? {
+            message: t(`chat.modelSelector.managedOpenCode.${reason}`),
+            onSelect: () => rejectManagedSelection(reason),
+          } : undefined;
+        } : undefined}
         unavailableSelectionLabel={groupBlocked ? t('chat.modelSelector.selectOrdinaryModel')
           : managed && isOpenCodeNativeModel(pickerSelection) && pickerSelection?.id === managed.default?.id
-            ? t('chat.modelSelector.managedOpenCode.default', { model: managed.default?.label }) : undefined}
+            ? t('chat.modelSelector.managedOpenCode.default', { model: managed.default?.label })
+            : preserveSelection && pickerSelection?.type === 'model' && !models.some(model => model.model_id === pickerSelection.id)
+              ? pickerSelection.id : undefined}
         onChange={(modelName) => {
           if (selectedChildTeam) return;
           if (!boundSessionId || disabled || useChatStore.getState().getRuntime(boundSessionId)?.isProcessing) return;
@@ -232,7 +253,7 @@ function ConversationModelSelector({
         onSelectionChange={(next) => {
           void persistSelection(next);
         }}
-        disabled={disabled || Boolean(selectedChildTeam) || cloud.active && !cloud.catalog}
+        disabled={disabled || saving || Boolean(selectedChildTeam) || loadingOpenCode || (cloud.active && !cloud.catalog)}
         onAddModel={cloud.active ? undefined : openModelSettings}
       />
       {admissionError ? (

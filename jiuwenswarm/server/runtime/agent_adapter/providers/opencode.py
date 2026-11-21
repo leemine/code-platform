@@ -584,7 +584,11 @@ class OpenCodeAdapter:
                 raise RuntimeError("Session already has an active producer; use Runtime scheduling")
             model_revision = recovery.revision(selected_model)
             if session.restored and session.model_revision and session.model_revision != model_revision:
-                raise ValueError("OpenCode model configuration changed; restore the original configuration before resuming")
+                from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+                confirmed = (get_session_metadata(sid, cache_bust=True, enable_writeback=False)
+                             .get("model_selection_revision") if self._relay_url else None)
+                if confirmed != model_revision:
+                    raise ValueError("OpenCode model configuration changed; restore the original configuration before resuming")
             await self._apply_permissions(session)
             session.model_revision = model_revision
             self._save_binding(session)
