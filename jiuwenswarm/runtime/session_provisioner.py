@@ -797,6 +797,21 @@ class RuntimeSessionProvisioner:
                     if provision_input.moa_enabled or (selection is not None and selection.type == "model_group"):
                         raise ValueError("external_provider_model_group_unsupported")
                     moa_enabled = False
+                if selected_provider == "opencode-direct" and not existing_metadata:
+                    from gateway.common.opencode_model_policy import NATIVE_MODEL_PREFIX, worker_model_policy
+
+                    policy = worker_model_policy()
+                    if policy is not None:
+                        from jiuwenswarm.common.model_catalog import ModelCatalog
+                        from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import managed_model_binding
+
+                        if selection is None and not provision_input.model_name:
+                            default_model = policy["default"]
+                            if not default_model:
+                                raise ValueError("opencode_default_model_unconfigured")
+                            selection = ModelSelection(type="model", id=NATIVE_MODEL_PREFIX + default_model)
+                        managed_model_binding(policy, selection, model_name=provision_input.model_name,
+                                              catalog=ModelCatalog(config_snapshot))
                 if moa_enabled:
                     resolve_moa_settings(config_snapshot, selection)
             except (ValueError, RuntimeError) as exc:
@@ -909,7 +924,7 @@ class RuntimeSessionProvisioner:
                 if not explicit_tui_session:
                     self._agent_manager.activate_session_prewarm(session_id)
 
-            if provision_input.model_selection is not None:
+            if selection is not None and (session_created or provision_input.model_selection is not None):
                 from jiuwenswarm.server.runtime.session.model_selection_store import set_session_model_selection
 
                 set_session_model_selection(session_id, selection)

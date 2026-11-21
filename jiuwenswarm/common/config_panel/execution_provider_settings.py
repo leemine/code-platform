@@ -52,7 +52,19 @@ def public_fields(config):
             # Never expose import errors: they can include local paths or credentials.
             pass
         catalog.append(row)
-    return {"opencode_adapter_available": "true" if any(
+    fields = {"opencode_adapter_available": "true" if any(
                 row["id"] == "opencode-direct" and row["available"] for row in catalog) else "false",
             "execution_provider_catalog": json.dumps(catalog),
             "execution_provider_permission_profiles": json.dumps(profiles)}
+    from gateway.common.opencode_model_policy import worker_model_policy
+
+    policy = worker_model_policy()
+    if policy is not None and "opencode-direct" in profiles:
+        profiles["opencode-direct"] = ["default"]
+        fields["execution_provider_permission_profiles"] = json.dumps(profiles)
+    if policy is not None:
+        from jiuwenswarm.common.config import get_config
+        from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import public_managed_model_policy
+
+        fields["managed_opencode_models"] = json.dumps(public_managed_model_policy(get_config(), policy))
+    return fields

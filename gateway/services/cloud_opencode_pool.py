@@ -75,6 +75,12 @@ class CloudOpencodePool:
     def __init__(self, store, yuanrong, config, *, resources=None):
         self.store, self.yuanrong, self.resources = store, yuanrong, resources
         self.options = dict(config.opencode_provider)
+        from gateway.common.opencode_model_policy import deployment_model_policy
+
+        self.model_config = json.loads(Path(self.options["model_config"]).read_text())
+        if not isinstance(self.model_config, dict):
+            raise ValueError("OpenCode Provider model configuration must be an object")
+        self.model_policy = deployment_model_policy(self.model_config)
         self.storage = Path(config.state_root) / "opencode-providers"
         self.runtime, self.namespace = config.runtime, config.namespace
         self.ready_timeout = config.ready_timeout
@@ -220,9 +226,7 @@ class CloudOpencodePool:
                 raise EnvironmentUnavailable("OpenCode Provider physical scope changed")
         model_path = root / "opencode.json"
         if not model_path.exists():
-            model_config = json.loads(Path(self.options["model_config"]).read_text())
-            if not isinstance(model_config, dict):
-                raise ValueError("OpenCode Provider model configuration must be an object")
+            model_config = dict(self.model_config)
             model_config.setdefault("permission", {"*": "ask", "question": "allow", "task": "deny"})
             model_config.update(autoupdate=False, share="disabled")
             _initial_file(model_path, json.dumps(model_config).encode())

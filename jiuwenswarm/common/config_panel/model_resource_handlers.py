@@ -111,7 +111,16 @@ async def session_selection_handler(channel, ws, req_id, params, session_id):
         params = params or {}
         target = str(params.get("session_id") or session_id or "")
         selection = ModelSelection.model_validate(params.get("model_selection"))
-        ModelSelectionResolver().resolve(selection)
+        from gateway.common.opencode_model_policy import worker_model_policy
+        from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+        policy = worker_model_policy()
+        if policy is not None and get_session_metadata(target, enable_writeback=False).get("execution_provider") == "opencode-direct":
+            from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import managed_model_binding
+
+            managed_model_binding(policy, selection)
+        else:
+            ModelSelectionResolver().resolve(selection)
         set_session_model_selection(target, selection)
         await channel.send_response(ws, req_id, ok=True, payload={"model_selection": selection.model_dump()})
     except Exception as exc:  # noqa: BLE001

@@ -22,14 +22,16 @@ def assemble(config, client):
     resources = ResourceReconciler(config.resource_reconciler_socket) if config.resource_reconciler_socket else None
     relay_url = None
     relay = None
+    model_policy = None
     if config.opencode_provider:
         from gateway.services.cloud_opencode_pool import CloudOpencodePool
         from gateway.services.cloud_opencode_relay import CloudOpencodeRelay
         pool = CloudOpencodePool(store, client._yuanrong, config, resources=resources)
+        model_policy = pool.model_policy
         relay = CloudOpencodeRelay(store, pool, auth_transport=config.opencode_provider.get("auth_transport", "basic"))
         relay_url = config.public_origin.rstrip("/") + config.api_prefix + OPENCODE_RELAY_PATH
     policy = CloudInstancePolicy(
-        store, ready_timeout=config.ready_timeout, resources=resources, opencode_relay_url=relay_url,
+        store, ready_timeout=config.ready_timeout, resources=resources, opencode_relay_url=relay_url, opencode_model_policy=model_policy,
     )
     client.configure_instance_lifecycle(policy, authenticator)
     return accounts, authenticator, EnvironmentService(store, accounts, client, opencode_relay=relay)

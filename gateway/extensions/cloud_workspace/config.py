@@ -10,6 +10,8 @@ import stat
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
+
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
 OPENCODE_RELAY_ENV = "JIUWENSWARM_OPENCODE_RELAY_URL"
 OPENCODE_RELAY_PATH = "/provider/opencode"
@@ -108,7 +110,7 @@ class CloudConfig:
             if not target.startswith("/") or any(Path(target) == Path(x) or Path(target).is_relative_to(x) or Path(x).is_relative_to(target)
                                                     for x in ("/data", "/run/jiuwenswarm")):
                 raise ValueError("extra mount overlaps isolated runtime storage")
-        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV}:
+        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV, MODEL_POLICY_ENV}:
             raise ValueError("runtime environment overrides isolated paths")
         public = urlsplit(self.public_origin)
         if (public.scheme != "https" or not public.hostname or public.username or public.password

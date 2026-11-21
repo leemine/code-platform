@@ -1,12 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Cpu, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSessionStore } from '../../stores/sessionStore';
-import { webRequest } from '../../services/webClient';
 import { NEW_CONVERSATION_ID } from '../../multi-session/state/newConversationLifecycle';
-import { SETTINGS_CONFIG_CHANGED_EVENT } from '../../features/settings/services/settingsContract';
 import { parseExecutionProviderCatalog, type ExecutionProviderOption } from '../../services/executionProviderCatalog';
+import { isOpenCodeNativeModel, readManagedOpenCodeModels } from '../../features/cloudWorkspace/opencodeModels';
 import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
 import './ExecutionPicker.css';
 
@@ -16,35 +15,21 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
   const draft = sessionId === NEW_CONVERSATION_ID;
   const selectedId = useSessionStore((s) => s.runtimes[sessionId]?.executionProvider ?? 'harness');
   const mode = useSessionStore((s) => s.runtimes[sessionId]?.mode ?? 'agent');
-  const [options, setOptions] = useState<ExecutionProviderOption[] | null>(null);
-  const [error, setError] = useState(false);
-  const [reload, setReload] = useState(0);
+  const options = useMemo(() => {
+    if (!cloud.catalog) return null;
+    try {
+      return parseExecutionProviderCatalog(cloud.catalog.config.execution_provider_catalog);
+    } catch {
+      return null;
+    }
+  }, [cloud.catalog]);
+  const error = cloud.error || (cloud.catalog !== null && options === null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<CSSProperties>({ visibility: 'hidden' });
   const anchor = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const refresh = () => setReload((value) => value + 1);
-    window.addEventListener(SETTINGS_CONFIG_CHANGED_EVENT, refresh);
-    return () => window.removeEventListener(SETTINGS_CONFIG_CHANGED_EVENT, refresh);
-  }, []);
-  useEffect(() => {
-    let active = true;
-    setOptions(null);
-    setError(false);
-    setOpen(false);
-    if (cloud.active) {
-      if (cloud.catalog) setOptions(parseExecutionProviderCatalog(cloud.catalog.config.execution_provider_catalog));
-      setError(cloud.error);
-      return;
-    }
-    void webRequest<Record<string, unknown>>('config.get').then((config) => {
-      if (active) setOptions(parseExecutionProviderCatalog(config.execution_provider_catalog));
-    }).catch(() => { if (active) setError(true); });
-    return () => { active = false; };
-  }, [sessionId, reload, cloud.active, cloud.catalog, cloud.error]);
-  useEffect(() => { setOpen(false); }, [mode, disabled]);
+  useEffect(() => { setOpen(false); }, [mode, disabled, sessionId, cloud.catalog]);
 
   useEffect(() => {
     if (!open) return;
@@ -79,7 +64,15 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
 
   function choose(option: ExecutionProviderOption) {
     if (!draft || disabled || !option.available || !option.modes.includes(mode)) return;
-    useSessionStore.getState().setExecutionProvider(sessionId, option.id);
+    const state = useSessionStore.getState();
+    const current = state.runtimes[sessionId];
+    const policy = readManagedOpenCodeModels(cloud.catalog?.config);
+    state.setExecutionProvider(sessionId, option.id);
+    if (option.id === 'opencode-direct' && policy && current?.executionProvider !== option.id) {
+      state.setSelectedModelSelection(sessionId, policy.default ? { type: 'model', id: policy.default.id } : null);
+    } else if (option.id !== 'opencode-direct' && isOpenCodeNativeModel(current?.selectedModelSelection)) {
+      state.setSelectedModelSelection(sessionId, null);
+    }
     setOpen(false);
     anchor.current?.querySelector('button')?.focus();
   }
@@ -164,7 +157,7 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
                 type="button"
                 className="chat-mode-select__option"
                 data-testid="chat-panel-execution-retry"
-                onClick={() => { if (cloud.active) cloud.retry(); else setReload((n) => n + 1); }}
+                onClick={cloud.retry}
               >
                 <RefreshCw size={14} />
                 {t('chat.executionProvider.retry')}

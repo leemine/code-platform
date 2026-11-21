@@ -30,7 +30,7 @@ class MockWebSocket {
     const request = JSON.parse(rawMessage);
     if (![
       'agent_groups.list', 'commands.list', 'skills.list', 'command.compact',
-      'session.assets.list', 'session.assets.register',
+      'session.assets.list', 'session.assets.register', 'config.get',
     ].includes(request.method)) {
       throw new Error(`Unexpected WebSocket request: ${request.method}`);
     }
@@ -46,7 +46,13 @@ class MockWebSocket {
         },
       ],
     };
-    if (request.method === 'commands.list') {
+    if (request.method === 'config.get') {
+      payload = {
+        execution_provider_catalog: [
+          { id: 'harness', label: 'Deepagent', available: true, modes: ['agent', 'team', 'code'], reason: null },
+        ],
+      };
+    } else if (request.method === 'commands.list') {
       payload = {
         commands: ['fork', 'compact', 'plan', 'goal', 'persist'].map((name) => ({
           name,

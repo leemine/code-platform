@@ -82,3 +82,38 @@ def validate_request_model(model) -> tuple[ResolvedModel, dict[str, str]]:
         raise ValueError('opencode_shared_model_group_unsupported')
     provider_config(model)
     return model, model_binding(model)
+
+
+def managed_model_binding(policy, selection=None, *, model_name=None, catalog=None):
+    from gateway.common.opencode_model_policy import native_model_binding, native_model_reference
+    from jiuwenswarm.common.model_routing_registry import ModelExecutionContext
+
+    reference = native_model_reference(selection)
+    if reference is not None:
+        return native_model_binding(reference, policy)
+    resolved = _resolver(catalog).resolve(selection, ModelExecutionContext(legacy_model_name=model_name))
+    _, binding = validate_request_model(resolved)
+    return native_model_binding(f"{binding['providerID']}/{binding['modelID']}", policy)
+
+
+def public_managed_model_policy(config, policy):
+    from gateway.common.opencode_model_policy import NATIVE_MODEL_PREFIX
+    from jiuwenswarm.common.model_errors import ModelSelectionError
+
+    catalog = ModelCatalog(config)
+    reasons = {}
+    for entry in catalog.list_public_models():
+        model_id = entry["model_id"]
+        try:
+            managed_model_binding(policy, ModelSelection(type="model", id=model_id), catalog=catalog)
+        except (ValueError, ModelSelectionError) as error:
+            reason = str(error)
+            reasons[model_id] = reason if reason in {
+                "opencode_shared_model_protocol_unsupported", "opencode_shared_model_options_unsupported",
+                "opencode_model_not_registered",
+            } else "opencode_model_unavailable"
+    default = policy["default"]
+    return {
+        "default": ({"id": NATIVE_MODEL_PREFIX + default, "label": policy["models"][default]} if default else None),
+        "reasons": reasons,
+    }
