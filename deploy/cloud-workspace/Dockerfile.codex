@@ -1,0 +1,17 @@
+FROM debian@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+
+# YuanRong's sealed fnruntime extension dynamically loads libcurl during bootstrap.
+RUN apt-get update && apt-get install -y --no-install-recommends libcurl4 ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY codex_cli_bin/ /opt/codex/
+COPY codex_model_bridge.py /opt/codex-candidate/model_bridge.py
+RUN groupadd --gid 1000 agentos && \
+    useradd --uid 1000 --gid 1000 --home-dir /state/home --no-create-home agentos && \
+    mkdir -p /state /usr/local/bin /opt/yuanrong-python && chown 1000:1000 /state && \
+    ln -s /opt/yuanrong-python/cpython-3.11.16-linux-x86_64-gnu/bin/python3.11 /usr/local/bin/python3.11
+
+ENV PATH=/opt/codex/bin:/opt/codex/codex-path:/usr/local/bin:/usr/bin:/bin HOME=/state/home
+WORKDIR /state
+USER 1000:1000
+CMD ["/bin/sleep", "infinity"]

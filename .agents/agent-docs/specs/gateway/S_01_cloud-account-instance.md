@@ -5,7 +5,7 @@ id: S_01_cloud-account-instance
 title: 云账号与原实例链契约
 type: S
 modules: [gateway, server/front]
-files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
+files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
 ---
 
 # 云账号与原实例链契约
@@ -21,6 +21,10 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 启用 `opencode_provider.shared_runtime` 后，绑定固定启动栈的版本路径。Docker 边界按镜像 ID 校验本节点的授权和资产摘要，只允许只读的 `/opt/yuanrong-python` 挂载。缺失资产的节点在 Docker 创建前拒绝启动。操作员可在完成物理回收且下一代尚未计划时，停写并比较当前镜像后更新绑定快照。迁移或回滚保留绑定、项目授权、原生会话索引和状态卷。
 
 共享版 OpenCode 发布清单同时固定新镜像 ID、启动栈树摘要和原完整镜像 ID。发布工具在所有指定元戎节点完成预置与核验后才输出 Gateway 配置及 Docker 边界参数。新节点先核验同一清单再接入调度。原完整镜像在节点保留，可按现有离线迁移流程回滚。
+
+独立 Codex 按认证账号、项目工作区和 Swarm 会话固定执行卷。账号 Worker 继续拥有模型选择、原生线程映射、审批及取消，通过单一签名 WSS 连接使用独立容器的官方 App Server。Gateway 保留每代连接令牌和选中模型的 API Key。容器只接收令牌摘要及限定模型的 Unix socket。已分配的实例必须通过元戎归属、Docker 物理证明和带令牌的应用握手才能接受 Worker 连接。
+
+托管 Codex 完成或确认取消一轮后释放传输租约。物理回收前检查已载入的原生线程空闲，元戎和 Docker 均确认删除后才推进代次。下一代重用状态卷，原适配器按保存的原生线程恢复。镜像变更使用同一离线比较并交换流程，保留项目、会话和原卷。
 
 就绪观测记录首次等待与失败复核，区分元戎 RUNNING 和认证健康检查，按账号、绑定及代次归因。观测不增加等待或更改生命周期。正式 Web 的选模拦截通过原账号认证上报固定原因码，记录 Gateway 生成的事件 ID、认证账号 ID 和原因。两个日志事件都可按事件 ID 去重。上报不写会话，不分配 Provider，Worker 准入保持独立。
 

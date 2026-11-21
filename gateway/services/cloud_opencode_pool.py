@@ -24,6 +24,9 @@ from gateway.common.opencode_model_policy import account_models_revision, base_p
 from gateway.common.opencode_runtime import RUNTIME_TARGET, runtime_source
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
+from gateway.services.cloud_provider_allocation import (
+    allocate_provider, ensure_bindings_table, matches_allocation, read_binding,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -107,16 +110,8 @@ class CloudOpencodePool:
         self._ready_operations: set[str] = set()
         self._fault_since: dict[str, tuple[OpenCodeFault, float]] = {}
         _private_directory(self.storage)
+        ensure_bindings_table(self.store)
         with self.store.connect() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS provider_bindings (
-                    account_id TEXT NOT NULL, project_id TEXT NOT NULL, provider TEXT NOT NULL,
-                    binding_id TEXT NOT NULL UNIQUE, directory TEXT NOT NULL, project_source TEXT NOT NULL,
-                    profile_json TEXT NOT NULL, generation INTEGER NOT NULL, operation_id TEXT NOT NULL UNIQUE,
-                    state TEXT NOT NULL, instance_id TEXT, used_at REAL NOT NULL,
-                    PRIMARY KEY (account_id, project_id, provider)
-                )
-            """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS opencode_session_owners (
                     binding_id TEXT NOT NULL, native_id TEXT NOT NULL,
@@ -150,9 +145,7 @@ class CloudOpencodePool:
         return row["account_id"], row["project_id"], row["provider"]
 
     def _get(self, key):
-        with self.store.connect() as db:
-            row = db.execute("SELECT * FROM provider_bindings WHERE account_id=? AND project_id=? AND provider=?", key).fetchone()
-            return dict(row) if row else None
+        return read_binding(self.store, key)
 
     def _check_account(self, account):
         current = self.store.by_user(account["account_id"])
@@ -368,60 +361,18 @@ class CloudOpencodePool:
         }
         return f'opencode-{row["operation_id"]}', str(state), spec, mounts, password.decode()
 
-    @staticmethod
-    def _matches(plan, info):
-        name, workspace, spec, mounts, _ = plan
-        root = info.get("rootfs") or {}
-        user = spec["rootfs"]["user"]
-        if (not isinstance(root, dict) or (info.get("name") and info["name"] != name)
-                or root.get("imageurl") != spec["rootfs"]["imageurl"]
-                or root.get("user", info.get("host_user")) != user
-                or info.get("host_user", user) != user or not isinstance(root.get("mounts"), list)):
-            return False
-        actual = {}
-        for mount in root["mounts"]:
-            if not isinstance(mount, dict):
-                return False
-            target, readonly = mount.get("target"), mount.get("readonly", False)
-            if not isinstance(target, str) or target in actual or type(readonly) is not bool:
-                return False
-            actual[target] = (mount.get("source"), readonly)
-
-        # YuanRong 0.10.0 reports host_user and a workspace home bind in GET.
-        home_target = f"/home/{user}"
-        has_workspace_alias = actual.get(home_target) == (workspace, False)
-        if has_workspace_alias:
-            del actual[home_target]
-        expected = {mount["target"]: (mount["source"], mount["readonly"]) for mount in mounts}
-        workspace_matches = (root["workspace"] == workspace if "workspace" in root else has_workspace_alias)
-        return workspace_matches and actual == expected
+    _matches = staticmethod(matches_allocation)
 
     async def _allocate(self, row, plan):
-        if row["state"] in {"CREATING", "UNKNOWN"}:
-            matching = []
-            for item in await self.yuanrong.list_agent_instances():
-                if self._matches(plan, await self.yuanrong.get_agent_info(item["instance_id"])):
-                    matching.append(item["instance_id"])
-            if len(matching) != 1:
-                raise EnvironmentUnavailable("OpenCode Provider creation outcome remains unknown")
-            return self._transition(row, "ALLOCATED", instance_id=matching[0])
-
-        name, workspace, spec, mounts, _ = plan
-        row = self._transition(row, "CREATING")
-        try:
-            instance = await self.yuanrong.create_sandbox(
-                namespace=self.namespace, name=name, workspace=workspace, runtime_spec=spec, mounts=mounts,
-                env_vars={"HOME": "/state", "XDG_CONFIG_HOME": "/state/config", "XDG_DATA_HOME": "/state/data",
-                          "XDG_CACHE_HOME": "/state/cache", "XDG_STATE_HOME": "/state/runtime",
-                          "OPENCODE_CONFIG": "/run/opencode/opencode.json", "OPENCODE_DISABLE_AUTOUPDATE": "1",
-                          "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
-                          "OPENCODE_DISABLE_MODELS_FETCH": "1", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
-                          "OPENCODE_DISABLE_LSP_DOWNLOAD": "1"},
-            )
-        except BaseException:
-            self._transition(row, "UNKNOWN")
-            raise
-        return self._transition(row, "ALLOCATED", instance_id=instance.sandbox_id)
+        return await allocate_provider(
+            self.yuanrong, self.namespace, row, plan, self._transition, provider_name="OpenCode",
+            env_vars={"HOME": "/state", "XDG_CONFIG_HOME": "/state/config", "XDG_DATA_HOME": "/state/data",
+                      "XDG_CACHE_HOME": "/state/cache", "XDG_STATE_HOME": "/state/runtime",
+                      "OPENCODE_CONFIG": "/run/opencode/opencode.json", "OPENCODE_DISABLE_AUTOUPDATE": "1",
+                      "OPENCODE_DISABLE_PROJECT_CONFIG": "1", "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+                      "OPENCODE_DISABLE_MODELS_FETCH": "1", "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
+                      "OPENCODE_DISABLE_LSP_DOWNLOAD": "1"},
+        )
 
     @staticmethod
     def _physical_claim(row, plan):
@@ -643,8 +594,8 @@ class CloudOpencodePool:
         observe_faults = self.resources is not None and self.fault_check is not None
         with self.store.connect() as db:
             keys = [tuple(row) for row in db.execute("""SELECT account_id, project_id, provider FROM provider_bindings
-                WHERE state='DELETING' OR (state='ALLOCATED' AND (? OR used_at<=?))""",
-                (observe_faults, time.time() - self.idle_seconds))]
+                WHERE provider=? AND (state='DELETING' OR (state='ALLOCATED' AND (? OR used_at<=?)))""",
+                (PROVIDER, observe_faults, time.time() - self.idle_seconds))]
         reclaimed = 0
         for key in keys:
             try:

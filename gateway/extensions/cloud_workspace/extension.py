@@ -19,7 +19,12 @@ from gateway.extensions.cloud_workspace.config import (
     OPENCODE_MANAGED_RELAY_PATH, OPENCODE_MANAGED_WORKER_RELAY_PATH,
 )
 from gateway.services.cloud_environments import EnvironmentUnavailable
-from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution
+from gateway.common.managed_codex import RELAY_PATH as CODEX_RELAY_PATH
+from gateway.extensions.sdk.application_plugin import (
+    ApplicationPluginExtension,
+    HTTPRouteContribution,
+    WebSocketRouteContribution,
+)
 
 logger = logging.getLogger(__name__)
 COOKIE = "jiuwenswarm_organization"
@@ -47,6 +52,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
         self.config = config
         self.accounts = self.environments = self.authenticator = None
         self._opencode_reaper = None
+        self._codex_reaper = None
         self._password_slots = asyncio.Semaphore(2)
         self.set_extension_dir(Path(__file__).parent)
 
@@ -60,16 +66,26 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
             self.config = CloudConfig.load()
         self.accounts, self.authenticator, self.environments = assemble(self.config, services.require_agent_client())
         if self.environments.opencode_relay:
-            self._opencode_reaper = asyncio.create_task(self._reap_opencode(self.environments.opencode_relay.pool))
+            self._opencode_reaper = asyncio.create_task(
+                self._reap_provider(self.environments.opencode_relay.pool, "OpenCode"))
+        if self.environments.codex_relay:
+            self._codex_reaper = asyncio.create_task(
+                self._reap_provider(self.environments.codex_relay.pool, "Codex"))
 
     @staticmethod
-    async def _reap_opencode(pool):
+    async def _reap_provider(pool, provider):
         while True:
             await asyncio.sleep(max(1.0, min(30.0, pool.idle_seconds)))
             try:
                 await pool.reclaim_idle()
             except Exception as exc:
-                logger.warning("Managed OpenCode idle sweep failed (%s)", type(exc).__name__)
+                logger.warning("Managed %s idle sweep failed (%s)", provider, type(exc).__name__)
+
+    def websocket_routes(self):
+        relay = getattr(self.environments, "codex_relay", None)
+        if relay is None:
+            return ()
+        return (WebSocketRouteContribution(self.config.api_prefix + CODEX_RELAY_PATH, relay.handle),)
 
     def http_routes(self):
         routes = tuple(HTTPRouteContribution(self.config.api_prefix + path, self.http, methods) for path, methods in (
@@ -222,6 +238,10 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
             self._opencode_reaper.cancel()
             await asyncio.gather(self._opencode_reaper, return_exceptions=True)
             await self.environments.opencode_relay.close()
+        if self._codex_reaper is not None:
+            self._codex_reaper.cancel()
+            await asyncio.gather(self._codex_reaper, return_exceptions=True)
+            await self.environments.codex_relay.pool.close()
         if hasattr(self, "projects"):
             await self.projects.close()
 

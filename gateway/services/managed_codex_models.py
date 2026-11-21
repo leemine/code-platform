@@ -1,0 +1,154 @@
+"""Serve a single authorized Responses model to a Codex generation."""
+from __future__ import annotations
+
+from contextlib import ExitStack
+from dataclasses import dataclass, field
+import hashlib
+import http.client
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import os
+from pathlib import Path
+import socket
+from socketserver import ThreadingMixIn
+from threading import Thread
+from urllib.parse import urlsplit
+
+from gateway.common.managed_codex import MAX_FRAME_BYTES
+from gateway.common.security.service_auth import canonical
+
+
+def model_endpoint(value: str) -> str:
+    url = urlsplit(value)
+    if (url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment
+            or not url.path.startswith("/") or "\\" in url.path or ".." in url.path.split("/")
+            or any(ord(char) <= 32 for char in value)):
+        raise ValueError("Managed Codex needs an explicit HTTPS model endpoint")
+    if url.port not in (None, 443):
+        raise ValueError("Managed Codex model endpoint must use standard HTTPS")
+    return url._replace(path=url.path.rstrip("/")).geturl()
+
+
+@dataclass(frozen=True)
+class ManagedModel:
+    name: str
+    endpoint: str
+    key: str = field(repr=False)
+
+    @property
+    def revision(self) -> str:
+        return hashlib.sha256(canonical([self.name, self.endpoint, self.key])).hexdigest()
+
+    @classmethod
+    def parse(cls, data, allowed_endpoints):
+        if not isinstance(data, dict) or set(data) != {"model", "base_url", "api_key"}:
+            raise ValueError("Managed Codex model fields differ")
+        name, base, key = (data[k] for k in ("model", "base_url", "api_key"))
+        if (not isinstance(name, str) or not name.strip() or len(name) > 200
+                or not isinstance(base, str) or not isinstance(key, str) or not key.strip()
+                or len(key) > 8192 or any(not 32 < ord(char) < 127 for char in key)):
+            raise ValueError("Managed Codex model is not configured")
+        endpoint = model_endpoint(base)
+        if endpoint not in allowed_endpoints:
+            raise ValueError("Selected model endpoint is outside managed Codex admission")
+        return cls(name, endpoint, key)
+
+
+class _Responses(BaseHTTPRequestHandler):
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(15)
+
+    def log_message(self, *_args):
+        pass
+
+    def do_POST(self):
+        if self.path != "/v1/responses":
+            self.send_error(404)
+            return
+        try:
+            if self.headers.get("Transfer-Encoding"):
+                raise ValueError("chunked requests are unsupported")
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= MAX_FRAME_BYTES:
+                raise ValueError("model request size outside limit")
+            raw = self.rfile.read(size)
+            payload = json.loads(raw)
+            if len(raw) != size or not isinstance(payload, dict):
+                raise ValueError("invalid model request")
+        except (OSError, ValueError):
+            self.send_error(400)
+            return
+        model = self.server.model
+        if payload.get("model") != model.name:
+            self.send_error(403)
+            return
+        endpoint = urlsplit(model.endpoint)
+        client = http.client.HTTPSConnection(endpoint.hostname, endpoint.port, timeout=125)
+        started = False
+        try:
+            client.request("POST", endpoint.path + "/responses", body=raw, headers={
+                "Authorization": "Bearer " + model.key,
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            })
+            with client.getresponse() as response:
+                if not 200 <= response.status < 300:
+                    self.send_error(502)
+                    return
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.getheader("Content-Type", "application/json"))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                started = True
+                while chunk := response.read1(65536):
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except (OSError, http.client.HTTPException):
+            if not started:
+                self.send_error(502)
+        finally:
+            client.close()
+            self.close_connection = True
+
+
+class _UnixHTTPServer(ThreadingMixIn, HTTPServer):
+    address_family = socket.AF_UNIX
+    daemon_threads = True
+
+    def server_bind(self):
+        self.socket.bind(self.server_address)
+
+
+class CodexModelBroker:
+    """Only the serving Gateway process holds the upstream credential."""
+
+    def __init__(self, directory: Path, model: ManagedModel):
+        self.path = directory / "model.sock"
+        with ExitStack() as scope:
+            fd = os.open(directory, os.O_DIRECTORY | os.O_NOFOLLOW)
+            scope.callback(os.close, fd)
+            # The canonical state path can exceed Linux's AF_UNIX address limit.
+            address = f"/proc/self/fd/{fd}/model.sock"
+            if self.path.exists() or self.path.is_symlink():
+                if self.path.is_symlink() or not self.path.is_socket():
+                    raise PermissionError("Invalid managed Codex model socket")
+                previous = scope.enter_context(socket.socket(socket.AF_UNIX))
+                previous.settimeout(1)
+                try:
+                    previous.connect(address)
+                except ConnectionRefusedError:
+                    self.path.unlink()
+                else:
+                    raise PermissionError("Managed Codex model broker still has a listener")
+            self.server = _UnixHTTPServer(address, _Responses)
+        self.server.model = model
+        os.chmod(self.path, 0o600)
+        self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=1)
+        self.path.unlink(missing_ok=True)

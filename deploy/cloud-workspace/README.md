@@ -75,6 +75,10 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 
 新增可选独立安全装配及无模型探针，见[配置、验收与退出契约](RUNTIME_SECURITY_CONTRACT.md)／[English](RUNTIME_SECURITY_CONTRACT.en.md)。原日志／物理确认入口仅补调用，不新增创建回收链，SDK及产品默认权限不变。当前真实探针显示命名空间可用、写边界生效，但同UID工作区外合成控制文件仍可读，因此不能启用于真实账号；未修改现有systemd或113运行配置。
 
+## 独立 Codex 执行实例
+
+托管 Codex 执行容器和配置仅在所选账号启用。镜像、共享启动栈摘要、物理确认及回滚见[独立 Codex 发布](CODEX_RELEASE.md)。
+
 ## 独立 OpenCode 执行实例
 
 在云工作区配置加入可选的 `opencode_provider`。启用后，Gateway 通过原元戎

@@ -22,6 +22,14 @@ class ResourceReconciler:
                                      workspace, identity, image, user, instance_id)
         return result.get("stalled") is True
 
+    async def confirm_codex_address(self, *, workspace, identity, image, user, instance_id):
+        result = await self._inspect("confirm-codex-address", "physical Codex address remains unconfirmed",
+                                     workspace, identity, image, user, instance_id)
+        address = result.get("address")
+        if not isinstance(address, str):
+            raise RuntimeError("physical Codex address remains unconfirmed")
+        return address
+
     async def _inspect(self, operation, error_message, workspace, identity, image, user, instance_id):
         transport = httpx.AsyncHTTPTransport(uds=self.socket_path, retries=0)
         try:
