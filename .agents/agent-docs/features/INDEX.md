@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 20 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 21 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -18,7 +18,7 @@ generated: true
 | [.github/workflows](#module-1) | 1 |
 | [agent_adapter](#module-2) | 4 |
 | [channels/web](#module-3) | 1 |
-| [deploy/cloud-workspace](#module-4) | 3 |
+| [deploy/cloud-workspace](#module-4) | 4 |
 | [deploy/tls](#module-5) | 1 |
 | [desktop](#module-6) | 1 |
 | [gateway](#module-7) | 5 |
@@ -77,6 +77,7 @@ generated: true
 | [F_20261109_2205_cloud-original-instance-chain](F_20261109_2205_cloud-original-instance-chain.md) | F | 云账号提炼与原实例链收敛 | leemine | gateway, server/front, deploy/cloud-workspace, channels/web | deploy/cloud-workspace/runtime_security.py, deploy/cloud-workspace/codex_sandbox_probe.py, tests/unit_tests/cloud_workspace/test_runtime_security.py, tests/unit_tests/cloud_workspace/test_codex_sandbox_probe.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, deploy/cloud-workspace/CANDIDATE_HANDOFF.md, deploy/cloud-workspace/physical_resources.py, gateway/services/resource_reconciler.py, tests/unit_tests/cloud_workspace/test_physical_resources.py, deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_docker_log_boundary.py, gateway/extensions/cloud_workspace/config.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py, gateway/channel_manager/web/web_channel_app.py, gateway/channel_manager/web/web_connect.py, gateway/extensions/application_host.py, deploy/cloud-workspace/Dockerfile, deploy/cloud-workspace/Dockerfile.yuanrong, gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_workspace_assembly.py, gateway/auth/account_http.py, gateway/auth/account_authenticator.py, gateway/auth/request_scope.py, gateway/extensions/agentos/agentos_router/router_client.py, tests/unit_tests/cloud_workspace/test_integration_boundaries.py, tests/unit_tests/server/test_gateway_adapter.py | 无独立 D：依据管理仓 PLATFORM_CANDIDATE_DISPOSITION_20261109（M01-M12/C01-C22）及用户本会话授权；无独立D编号。 |
 | [F_20261121_0233_opencode-worker-shared-provider](F_20261121_0233_opencode-worker-shared-provider.md) | F | 同一 Worker 的 OpenCode 共享实例与旧会话兼容 | leemine | gateway/services, gateway/extensions/cloud_workspace, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/extensions/cloud_workspace/extension.py, deploy/cloud-workspace/physical_resources.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/session_recovery.py | 无独立 D：用户确认 Worker 内共享与旧会话沿用原状态卷，设计边界登记在管理仓任务表。 |
 | [F_20261121_2219_opencode-shared-runtime](F_20261121_2219_opencode-shared-runtime.md) | F | 独立 OpenCode 复用宿主启动栈 | leemine | deploy/cloud-workspace, gateway/services, gateway/extensions/cloud_workspace | deploy/cloud-workspace/docker_log_boundary.py, deploy/cloud-workspace/opencode_runtime_asset.py, deploy/cloud-workspace/physical_resources.py, gateway/common/opencode_runtime.py, gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_opencode_pool.py, gateway/services/migrate_opencode_binding.py | 无独立 D：沿现有元戎调度、Docker 物理围栏和绑定回收流程扩展。 |
+| [F_20261121_2313_opencode-release-assets](F_20261121_2313_opencode-release-assets.md) | F | OpenCode 发布与共享启动栈预置 | leemine | deploy/cloud-workspace | deploy/cloud-workspace/release_opencode.py, deploy/cloud-workspace/OPENCODE_RELEASE.md, tests/unit_tests/cloud_workspace/test_opencode_release.py | 无独立 D：沿独立 OpenCode 的固定镜像、节点 Docker 边界与原回收迁移流程扩展发布步骤。 |
 
 <a id="module-5"></a>
 

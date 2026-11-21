@@ -171,6 +171,8 @@ Worker 项目根、稳定的 `/state` 和本代只读 `/run/opencode`，并改�
 
 OpenCode 镜像保留原 OpenCode 二进制、系统依赖、项目工具和指向 `/opt/yuanrong-python` 的 Python 入口。将经过验收的 Python 3.11、元戎容器 Runtime 与 Agent DX Executor 装配目录作为独立发布资产。宿主元戎集群与镜像内启动依赖各自按已验证的版本发布。
 
+发布时使用发布工具为全池导入并校验新旧镜像与启动栈。以所有节点的校验结果为切换前置条件。下列步骤说明发布工具所需的目录、镜像授权与 Gateway 配置。见[独立 OpenCode 发布与节点预置](OPENCODE_RELEASE.md)。
+
 ### 节点预置
 
 1. 从已验证的 Provider 构建候选导出 `/opt/yuanrong-python`，保留文件内容、执行权限和树内符号链接。资产根及所有内容由 `root:root` 持有，常规目录与可执行文件用 `0555`，其他常规文件用 `0444`。通过 `python3 deploy/cloud-workspace/opencode_runtime_asset.py /绝对路径/待发布目录` 计算树摘要。
