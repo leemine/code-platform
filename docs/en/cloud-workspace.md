@@ -12,6 +12,8 @@ The environment SQLite store has a single-writer file lock. Private directories/
 
 ## Recovery and authorization
 
+For a shared execution pool, configure `opencode_provider.account_allowlist` with `user_id` values issued by the account authority. An empty list stops new OpenCode Provider bindings. Existing bindings can recreate the Provider with their original state volumes. General account registration remains controlled by `registration_enabled`. Dedicated OpenCode deployments can continue to omit the field. The Gateway reads the configuration at startup. A newly registered account can be added after it receives its ID and before its Worker first starts. An already running Worker receives the managed OpenCode configuration on its next launch.
+
 Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW; environment ensure or the existing connection warmup invokes the sole Router creator. The plugin contributes only cloud environment RPCs and leaves `session.execution.options` in place.
 
 An ambiguous create is reconciled through bounded inventory and exact instance details, never another POST. Startup cleanup protects account instances. A DELETE acknowledgement is insufficient: an authoritative instance GET returning 404 is required. Bindings with physical_verification additionally require physical completion before DELETED permits a new epoch. Pending deletion may retry only the known instance. Rebuild retains image and data; network loss closes the cloud connection without deleting the binding.

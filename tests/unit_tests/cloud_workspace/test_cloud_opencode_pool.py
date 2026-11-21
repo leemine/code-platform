@@ -1,14 +1,21 @@
 import asyncio
 from copy import deepcopy
+import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
+from unittest.mock import Mock, call
 
+import httpx
 import pytest
+from starlette.applications import Starlette
+from starlette.routing import Route
 
+from gateway.common.security.opencode_relay_auth import OpenCodeRelayAuth
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentUnavailable
 from gateway.services import cloud_opencode_pool
 from gateway.services.cloud_opencode_pool import CloudOpencodePool, OpenCodeFault
+from gateway.services.cloud_opencode_relay import CloudOpencodeRelay
 
 
 PROJECT_DIR = "/data/agent/workspace/code/sample"
@@ -107,6 +114,95 @@ async def test_concurrent_project_requests_and_gateway_restart_reuse_one_instanc
     assert mount[2]["target"] == "/run/opencode" and mount[2]["readonly"]
     assert original.password not in str(frontend.created[0])
     assert original.password not in repr(original)
+
+
+@pytest.mark.asyncio
+async def test_allowlist_blocks_new_bindings_and_preserves_an_idle_shared_binding(sandbox):
+    initial, frontend, account, config = sandbox
+    pilot = account("pilot-account")
+    other = account("ordinary-account")
+    config.opencode_provider["account_allowlist"] = [pilot["account_id"]]
+    pool = CloudOpencodePool(initial.store, frontend, config)
+
+    assert pool.worker_model_policy(other) is None
+    with pytest.raises(PermissionError):
+        await pool.sync_models(other, "project", PROJECT_DIR, "0" * 64, shared=True)
+    with pytest.raises(PermissionError):
+        async with pool.hold(other, "project", PROJECT_DIR, shared=True):
+            pytest.fail("Unlisted account received a Provider")
+    assert not frontend.created and not list(pool.storage.iterdir())
+
+    assert pool.worker_model_policy(pilot)["account_model_sync"]
+    async with pool.hold(pilot, "project", PROJECT_DIR, shared=True) as first:
+        pool.register_session(first, "project", "original-native-id")
+
+    async def idle(_lease):
+        return True
+
+    pool.idle_check = idle
+    assert await pool.reclaim_idle() == 1
+
+    config.opencode_provider["account_allowlist"] = []
+    closed = CloudOpencodePool(pool.store, frontend, config)
+    assert closed.worker_model_policy(pilot)["account_model_sync"]
+    assert closed.worker_model_policy(other) is None
+    async with closed.hold(pilot, "project", PROJECT_DIR, shared=True) as resumed:
+        assert resumed.binding_id == first.binding_id and resumed.instance_id != first.instance_id
+        assert closed.owns_session(resumed, "project", "original-native-id")
+    assert frontend.created[0]["workspace"] == frontend.created[1]["workspace"]
+    with pytest.raises(PermissionError):
+        async with closed.hold(pilot, "project", PROJECT_DIR):
+            pytest.fail("Previously admitted account received a new project-scoped binding")
+    assert len(frontend.created) == 2
+
+
+@pytest.mark.asyncio
+async def test_allowlist_keeps_an_existing_project_scoped_relay_after_restart(sandbox):
+    pool, frontend, account, config = sandbox
+    owner = account("legacy-account")
+    async with pool.hold(owner, "project", PROJECT_DIR) as original:
+        pass
+    config.opencode_provider["account_allowlist"] = []
+    closed = CloudOpencodePool(pool.store, frontend, config)
+    assert closed.worker_model_policy(owner)["account_model_sync"]
+    async with closed.hold(owner, "project", PROJECT_DIR) as resumed:
+        assert resumed.binding_id == original.binding_id
+    with pytest.raises(PermissionError):
+        async with closed.hold(owner, "project", PROJECT_DIR, shared=True):
+            pytest.fail("Existing project admission enabled a new shared binding")
+    assert len(frontend.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_worker_cannot_create_a_binding_outside_the_allowlist(sandbox):
+    original, frontend, account, config = sandbox
+    ordinary = account("ordinary-account")
+    Path(ordinary["workspace"], "agent/projects.json").write_text(json.dumps({
+        "projects": [{"project_id": "project", "project_dir": PROJECT_DIR}],
+    }))
+    config.opencode_provider["account_allowlist"] = []
+    frontend.frontend_endpoint = "https://yuanrong.test"
+    pool = CloudOpencodePool(original.store, frontend, config)
+    admission = Mock(wraps=pool._admits_new_binding)
+    pool._admits_new_binding = admission
+    relay = CloudOpencodeRelay(pool.store, pool)
+    app = Starlette(routes=[
+        Route("/scoped/{project_id}/{path:path}", relay.handle, methods=["POST"]),
+        Route("/shared/{project_id}/{path:path}", relay.handle_shared, methods=["POST"]),
+    ])
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://gateway.test",
+                                     auth=OpenCodeRelayAuth(ordinary["auth_file"])) as worker:
+            for route in ("/scoped/project", "/shared/project"):
+                for path, body in (("/session", {}), ("/account-models/sync", {"revision": "0" * 64})):
+                    response = await worker.post(route + path, json=body)
+                    assert response.status_code == 403 and response.json()["code"] == "OPENCODE_FORBIDDEN"
+        assert admission.call_args_list == [call(ordinary["account_id"])] * 4
+        with pool.store.connect() as db:
+            assert db.execute("SELECT count(*) FROM provider_bindings").fetchone()[0] == 0
+        assert not frontend.created and not list(pool.storage.iterdir())
+    finally:
+        await relay.close()
 
 
 @pytest.mark.asyncio

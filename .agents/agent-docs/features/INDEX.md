@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 16 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 17 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -21,12 +21,12 @@ generated: true
 | [deploy/cloud-workspace](#module-4) | 2 |
 | [deploy/tls](#module-5) | 1 |
 | [desktop](#module-6) | 1 |
-| [gateway](#module-7) | 3 |
+| [gateway](#module-7) | 4 |
 | [gateway/channel_manager/web](#module-8) | 1 |
 | [gateway/common](#module-9) | 1 |
-| [gateway/extensions/cloud_workspace](#module-10) | 2 |
+| [gateway/extensions/cloud_workspace](#module-10) | 3 |
 | [gateway/extensions/data_sync](#module-11) | 3 |
-| [gateway/services](#module-12) | 4 |
+| [gateway/services](#module-12) | 5 |
 | [gateway/services/data_sync](#module-13) | 1 |
 | [jiuwenswarm/channels/web](#module-14) | 2 |
 | [jiuwenswarm/channels/web/frontend](#module-15) | 5 |
@@ -102,6 +102,7 @@ generated: true
 | [F-20261112-1320-platform-code-workspace](F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [F_20261030_1939_external-desktop-builds](F_20261030_1939_external-desktop-builds.md) | F | 可选 Native 与外部 Provider 桌面测试包 | leemine | agent_adapter, desktop, gateway | pyproject.toml, uv.lock, scripts/jiuwenswarm.spec, scripts/build-electron-linux.sh, scripts/assemble-electron-linux.py, scripts/verify_external_bundle.py, jiuwenswarm/common/native_integration.py, gateway/extensions/registry.py, .github/workflows/windows-external.yml, .github/scripts/transfer-release-assets.py, .github/workflows/stable.yml, tests/unit_tests/test_release_asset_transfer.py | 无独立 D：用户确认两种安装组合和先 Linux 后 Windows/macOS 的实施范围；管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 第24节及 EXTERNAL_DESKTOP_BUILD_20261030 记录来源与验证。 |
 | [F_20261109_2205_cloud-original-instance-chain](F_20261109_2205_cloud-original-instance-chain.md) | F | 云账号提炼与原实例链收敛 | leemine | gateway, server/front, deploy/cloud-workspace, channels/web | deploy/cloud-workspace/runtime_security.py, deploy/cloud-workspace/codex_sandbox_probe.py, tests/unit_tests/cloud_workspace/test_runtime_security.py, tests/unit_tests/cloud_workspace/test_codex_sandbox_probe.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/features/auth/LoginPage.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, deploy/cloud-workspace/CANDIDATE_HANDOFF.md, deploy/cloud-workspace/physical_resources.py, gateway/services/resource_reconciler.py, tests/unit_tests/cloud_workspace/test_physical_resources.py, deploy/cloud-workspace/LOG_BOUNDARY_CONTRACT.md, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_docker_log_boundary.py, gateway/extensions/cloud_workspace/config.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py, gateway/channel_manager/web/web_channel_app.py, gateway/channel_manager/web/web_connect.py, gateway/extensions/application_host.py, deploy/cloud-workspace/Dockerfile, deploy/cloud-workspace/Dockerfile.yuanrong, gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_workspace_assembly.py, gateway/auth/account_http.py, gateway/auth/account_authenticator.py, gateway/auth/request_scope.py, gateway/extensions/agentos/agentos_router/router_client.py, tests/unit_tests/cloud_workspace/test_integration_boundaries.py, tests/unit_tests/server/test_gateway_adapter.py | 无独立 D：依据管理仓 PLATFORM_CANDIDATE_DISPOSITION_20261109（M01-M12/C01-C22）及用户本会话授权；无独立D编号。 |
+| [F_20261121_1554_managed-opencode-account-admission](F_20261121_1554_managed-opencode-account-admission.md) | F | 共池部署的托管 OpenCode 账号准入 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py | 无独立 D：依据已确认的原生产元戎池共池方案及边界只读预检，无独立 D 文档。 |
 
 <a id="module-8"></a>
 
@@ -127,6 +128,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [F_20261116_1940_github-cloud-environments](F_20261116_1940_github-cloud-environments.md) | F | GitHub 云端项目环境接入与待验收边界 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/server/control/project_checkout.py, jiuwenswarm/server/runtime/session/project_store.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ProjectGitHubConnection.tsx | [D-20261116-1851-github-cloud-environment-alignment](../designs/active/D-20261116-1851-github-cloud-environment-alignment/design.md) |
 | [F_20261121_0233_opencode-worker-shared-provider](F_20261121_0233_opencode-worker-shared-provider.md) | F | 同一 Worker 的 OpenCode 共享实例与旧会话兼容 | leemine | gateway/services, gateway/extensions/cloud_workspace, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/extensions/cloud_workspace/extension.py, deploy/cloud-workspace/physical_resources.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/session_recovery.py | 无独立 D：用户确认 Worker 内共享与旧会话沿用原状态卷，设计边界登记在管理仓任务表。 |
+| [F_20261121_1554_managed-opencode-account-admission](F_20261121_1554_managed-opencode-account-admission.md) | F | 共池部署的托管 OpenCode 账号准入 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py | 无独立 D：依据已确认的原生产元戎池共池方案及边界只读预检，无独立 D 文档。 |
 
 <a id="module-11"></a>
 
@@ -148,6 +150,7 @@ generated: true
 | [F_20261113_2015_local-cloud-execution](F_20261113_2015_local-cloud-execution.md) | F | 本地页面云会话执行与目录请求期限 | leemine | gateway/services, gateway/extensions/data_sync, jiuwenswarm/channels/web | gateway/services/cloud_execution_bridge.py, gateway/services/cloud_resource_address.py, gateway/extensions/data_sync/ui_extension.py, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useCloudCatalog.ts | 无独立 D：用户明确授权定位旧目录失败并沿用三段式UI接通本地页面云会话，验证后提交CI和合入；本记录保存实施事实，当前契约归S_02_code-workspace-entry。 |
 | [F_20261116_1940_github-cloud-environments](F_20261116_1940_github-cloud-environments.md) | F | GitHub 云端项目环境接入与待验收边界 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/server/control/project_checkout.py, jiuwenswarm/server/runtime/session/project_store.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ProjectGitHubConnection.tsx | [D-20261116-1851-github-cloud-environment-alignment](../designs/active/D-20261116-1851-github-cloud-environment-alignment/design.md) |
 | [F_20261121_0233_opencode-worker-shared-provider](F_20261121_0233_opencode-worker-shared-provider.md) | F | 同一 Worker 的 OpenCode 共享实例与旧会话兼容 | leemine | gateway/services, gateway/extensions/cloud_workspace, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/extensions/cloud_workspace/extension.py, deploy/cloud-workspace/physical_resources.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/session_recovery.py | 无独立 D：用户确认 Worker 内共享与旧会话沿用原状态卷，设计边界登记在管理仓任务表。 |
+| [F_20261121_1554_managed-opencode-account-admission](F_20261121_1554_managed-opencode-account-admission.md) | F | 共池部署的托管 OpenCode 账号准入 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py | 无独立 D：依据已确认的原生产元戎池共池方案及边界只读预检，无独立 D 文档。 |
 
 <a id="module-13"></a>
 

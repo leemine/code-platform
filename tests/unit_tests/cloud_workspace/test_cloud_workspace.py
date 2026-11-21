@@ -579,6 +579,11 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
         managed.validate()
     managed = replace(managed, resource_reconciler_socket=str(tmp_path / "physical.sock"))
     managed.validate()
+    for allowlist in ([], ["u_pilot"]):
+        replace(managed, opencode_provider={**managed.opencode_provider, "account_allowlist": allowlist}).validate()
+    for allowlist in (None, "u_pilot", [7], [""], [" u_pilot "]):
+        with pytest.raises(ValueError, match="account_allowlist"):
+            replace(managed, opencode_provider={**managed.opencode_provider, "account_allowlist": allowlist}).validate()
     replace(managed, opencode_provider={"image": managed.opencode_provider["image"]}).validate()
     query_auth = replace(managed, opencode_provider={**managed.opencode_provider, "auth_transport": "query"})
     replace(query_auth, frontend_endpoint="http://127.0.0.1:19888").validate()
@@ -594,4 +599,6 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
     endpoint = managed.public_origin + managed.api_prefix + "/provider/opencode"
     plan = CloudInstancePolicy(app.store, opencode_relay_url=endpoint).plan(info)
     assert plan.env_vars[OPENCODE_RELAY_ENV] == endpoint
+    scoped = CloudInstancePolicy(app.store, opencode_relay_url=endpoint, opencode_model_policy=lambda row: None)
+    assert OPENCODE_RELAY_ENV not in scoped.plan(info).env_vars
     assert OPENCODE_RELAY_ENV not in app.store.get(actor)["profile"]["runtime_env"]
