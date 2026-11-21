@@ -798,7 +798,7 @@ class RuntimeSessionProvisioner:
                         raise ValueError("external_provider_model_group_unsupported")
                     moa_enabled = False
                 if selected_provider == "opencode-direct" and not existing_metadata:
-                    from gateway.common.opencode_model_policy import NATIVE_MODEL_PREFIX, worker_model_policy
+                    from gateway.common.opencode_model_policy import worker_model_policy
 
                     policy = worker_model_policy()
                     if policy is not None:
@@ -808,11 +808,10 @@ class RuntimeSessionProvisioner:
                         )
 
                         if selection is None and not provision_input.model_name:
-                            default_model = policy["default"]
-                            if not default_model:
+                            public = public_managed_model_policy(config_snapshot, policy)
+                            if not public["default"]:
                                 raise ValueError(policy.get("error") or "opencode_default_model_unconfigured")
-                            account_default = public_managed_model_policy(config_snapshot, policy)["default_account_id"]
-                            selection = ModelSelection(type="model", id=account_default or NATIVE_MODEL_PREFIX + default_model)
+                            selection = ModelSelection(type="model", id=public["default_account_id"] or public["default"]["id"])
                         managed_model_binding(policy, selection, model_name=provision_input.model_name,
                                               catalog=ModelCatalog(config_snapshot))
                 if moa_enabled:

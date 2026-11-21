@@ -80,13 +80,12 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 在云工作区配置加入可选的 `opencode_provider`。启用后，Gateway 通过原元戎
 Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenCode 会话分配实例。
 同一个 Worker 下的多个项目共用 OpenCode 实例；不同账号分别分配。已有会话通过原中继
-和项目绑定继续使用原状态卷。配置示例使用由部署方提供的镜像摘要和模型文件。
+和项目绑定继续使用原状态卷。部署方提供固定镜像摘要。
 
 ```json
 {
   "opencode_provider": {
     "image": "sha256:<OpenCode 容器镜像摘要>",
-    "model_config": "/opt/code-platform/private/opencode-models.json",
     "cpu": 1000,
     "memory": 1024,
     "idle_seconds": 300
@@ -95,11 +94,11 @@ Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenC
 ```
 
 镜像包含官方 `opencode` 和 `sh`，并支持 Worker 现有的 POSIX 运行账号。
-模型文件为运维私有 JSON，包含 OpenCode 可用的模型配置，供独立实例启动。
-给新账号配置默认模型时，在这个文件设置顶层 `"model": "<provider-id>/<model-id>"`，
-并在同一文件的 `provider.<provider-id>.models` 声明该模型。Gateway 首次规划账号 Worker 时固定其共享绑定的启动配置，随后从此绑定向 Worker 提供默认模型和准入信息。更新部署文件只影响尚未固定配置的绑定。模型服务地址和密钥留在私有模型文件及 Provider 启动配置。
-Web 使用原账号模型选择器。默认模型匹配账号条目时使用原模型 ID，缺少匹配时提供一个原生默认项。旧会话保留已存选择，只有用户主动改选才写回。显式选择账号模型时，模型协议与请求参数须兼容，
-且对应映射已在独立 OpenCode 配置登记。Web 在选模时显示失败原因，Worker 在创建会话前独立校验。
+用户在原账号模型设置中保存兼容的 OpenAI 接口模型后，就可以在原选择器中选用。新建或继续会话时，Worker 将最新账号配置转换为 OpenCode 的私有启动配置。Gateway 通过账号认证中继核对摘要，只有配置发生变化才传送模型片段。运行时仍向实际 OpenCode 实例确认所选模型。模型服务地址和凭据保留在服务端。
+
+可选的 `opencode_provider.model_config` 指向运维自有的私有 JSON，可提供已有原生模型及部署默认值。旧绑定继续沿用其原生配置。省略该文件时，新绑定直接采用兼容的账号默认模型，账号默认不可用时采用首个兼容模型。新版本 Gateway 上线后重启账号 Worker，使其获得同步能力。
+
+账号模型变更在当前绑定空闲时应用。执行、审批或问题仍在等待时，Worker 等待到会话初始化超时，用户可在当前操作结束后重试。新进程复用同一状态卷、项目归属和原生会话 ID。历史会话保持原来的账号模型 ID，模型连接设置变化后下一轮使用更新的设置。已删除或不兼容的选择会提示用户改选。
 
 **OpenCode 灰度观测**
 

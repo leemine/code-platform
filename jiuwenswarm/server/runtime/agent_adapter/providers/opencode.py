@@ -360,8 +360,64 @@ class OpenCodeAdapter:
             get_session_model_selection(request.session_id) if request.session_id and not request.params.get("model_name")
             else None
         )
+        if policy.get("account_model_sync") and selection is not None:
+            from .opencode_models import managed_model_binding
+            return managed_model_binding(policy, selection)
         reference = native_model_reference(selection)
         return native_model_binding(reference, policy) if reference is not None else None
+
+    async def _sync_account_models(self, session):
+        from gateway.common.opencode_model_policy import account_models_revision, worker_model_policy
+        from jiuwenswarm.common.model_catalog import ModelCatalog
+        from .opencode_models import account_model_providers
+
+        if not session.relay_client or not (worker_model_policy() or {}).get("account_model_sync"):
+            return
+
+        async def sync(body):
+            response = await session.relay_client.post(
+                "account-models/sync", json=body, params={"directory": session.directory},
+                timeout=self._session_init_timeout,
+            )
+            if response.status_code == 409 and response.json().get("code") in {
+                "opencode_model_sync_busy", "opencode_model_sync_changed",
+            }:
+                await asyncio.sleep(0.5)
+                return None
+            response.raise_for_status()
+            return response.json()["revision"]
+
+        try:
+            async with asyncio.timeout(self._session_init_timeout):
+                while True:
+                    revision = account_models_revision(account_model_providers(ModelCatalog()))
+                    previous = await sync({"revision": revision})
+                    if previous == revision:
+                        return
+                    if previous is not None:
+                        # Read again after the round trip in case the account was edited.
+                        providers = account_model_providers(ModelCatalog())
+                        if await sync({"provider": providers, "previous": previous}) is not None:
+                            return
+        except TimeoutError:
+            raise RuntimeError("Timed out waiting for OpenCode to apply account models; retry when the current turn is idle") from None
+
+    @staticmethod
+    def _confirmed_model_revision(session):
+        if not session.relay_client:
+            return None
+        from gateway.common.model_selection import ModelSelection
+        from gateway.common.opencode_model_policy import native_model_reference, worker_model_policy
+        from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+        from .opencode_models import managed_model_binding
+
+        metadata = get_session_metadata(session.swarm_id, cache_bust=True, enable_writeback=False)
+        policy = worker_model_policy() or {}
+        if policy.get("account_model_sync") and metadata.get("model_selection"):
+            saved = ModelSelection.model_validate(metadata["model_selection"])
+            if saved.type == "model" and native_model_reference(saved) is None:
+                return recovery.revision(managed_model_binding(policy, saved))
+        return metadata.get("model_selection_revision")
 
     def execution_input_policy(self, request):
         from ..execution_input import ExecutionInputPolicy
@@ -424,6 +480,7 @@ class OpenCodeAdapter:
                     await self._apply_permissions(session)
                     if project_id:
                         session.relay_client = self._create_relay_client(project_id, shared_provider=shared_provider)
+                        await self._sync_account_models(session)
                     if not binding:
                         if session.relay_client:
                             # Allocate and check readiness before reserving native creation.
@@ -567,6 +624,8 @@ class OpenCodeAdapter:
         if resolve_selection:
             from .opencode_models import resolve_request_model, validate_request_model
             _, selected_model = validate_request_model(execution.model) if execution else resolve_request_model(request)
+        if sid in self._sessions:
+            await self._sync_account_models(self._sessions[sid])
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
                                    mode=request.params.get("mode", "agent"),
                                    project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
@@ -584,10 +643,7 @@ class OpenCodeAdapter:
                 raise RuntimeError("Session already has an active producer; use Runtime scheduling")
             model_revision = recovery.revision(selected_model)
             if session.restored and session.model_revision and session.model_revision != model_revision:
-                from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
-                confirmed = (get_session_metadata(sid, cache_bust=True, enable_writeback=False)
-                             .get("model_selection_revision") if self._relay_url else None)
-                if confirmed != model_revision:
+                if self._confirmed_model_revision(session) != model_revision:
                     raise ValueError("OpenCode model configuration changed; restore the original configuration before resuming")
             await self._apply_permissions(session)
             session.model_revision = model_revision

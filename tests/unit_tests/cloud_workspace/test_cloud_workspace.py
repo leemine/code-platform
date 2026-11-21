@@ -579,6 +579,7 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
         managed.validate()
     managed = replace(managed, resource_reconciler_socket=str(tmp_path / "physical.sock"))
     managed.validate()
+    replace(managed, opencode_provider={"image": managed.opencode_provider["image"]}).validate()
     query_auth = replace(managed, opencode_provider={**managed.opencode_provider, "auth_transport": "query"})
     replace(query_auth, frontend_endpoint="http://127.0.0.1:19888").validate()
     with pytest.raises(ValueError, match="loopback YuanRong Frontend"):

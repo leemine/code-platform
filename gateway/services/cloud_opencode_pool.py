@@ -20,7 +20,7 @@ import uuid
 
 import httpx
 
-from gateway.common.opencode_model_policy import base_permission_rules, deployment_model_policy
+from gateway.common.opencode_model_policy import account_models_revision, base_permission_rules, deployment_model_policy
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
 
@@ -89,7 +89,8 @@ class CloudOpencodePool:
         self.store, self.yuanrong, self.resources = store, yuanrong, resources
         self.options = dict(config.opencode_provider)
 
-        self.model_config = json.loads(Path(self.options["model_config"]).read_text())
+        model_file = self.options.get("model_config")
+        self.model_config = json.loads(Path(model_file).read_text()) if model_file else {}
         if not isinstance(self.model_config, dict):
             raise ValueError("OpenCode Provider model configuration must be an object")
         deployment_model_policy(self.model_config)
@@ -187,6 +188,15 @@ class CloudOpencodePool:
         content.setdefault("permission", base_permission_rules("ask"))
         return _initial_file(path, json.dumps(content).encode())
 
+    def _effective_config(self, root):
+        config = json.loads(self._binding_config(root))
+        overlay = root / "account-models.json"
+        if overlay.exists() or overlay.is_symlink():
+            models = json.loads(_read_private_file(overlay))["provider"]
+            if models:
+                config["provider"] = {**models, **config.get("provider", {})}
+        return config
+
     @staticmethod
     def _checked_policy(config):
         if not isinstance(config, dict):
@@ -211,7 +221,7 @@ class CloudOpencodePool:
         _private_directory(root)
         if row and (row["state"] != "NEW" or row["generation"] > 1) and not (root / "opencode.json").is_file():
             raise OpenCodeConfigurationError("opencode_model_snapshot_stale")
-        snapshot = json.loads(self._binding_config(root))
+        snapshot = self._effective_config(root)
         policy = self._checked_policy(snapshot)
         if row:
             mounted = root / row["operation_id"] / "opencode.json"
@@ -232,7 +242,8 @@ class CloudOpencodePool:
         row = self._get(key)
         root = self.storage / (row["binding_id"] if row else self._new_binding_id(key))
         try:
-            return self._bound_model_policy(root, row)
+            self._bound_model_policy(root, row)
+            return {**self._checked_policy(json.loads(self._binding_config(root))), "account_model_sync": True}
         except (ValueError, OSError) as exc:
             # Keep unrelated execution providers available on this Worker.
             logger.warning("Managed OpenCode configuration unavailable for this binding")
@@ -302,7 +313,7 @@ class CloudOpencodePool:
             encoded = json.dumps(manifest, sort_keys=True).encode()
             if _initial_file(root / "scope.json", encoded) != encoded:
                 raise EnvironmentUnavailable("OpenCode Provider physical scope changed")
-        model = self._binding_config(root)
+        model = json.dumps(self._effective_config(root)).encode()
         password = _initial_file(root / "password", secrets.token_hex(24).encode())
         _initial_file(config / "opencode.json", model)
         _initial_file(config / "password", password)
@@ -501,18 +512,22 @@ class CloudOpencodePool:
                     round((time.monotonic() - started) * 1000), round(self.ready_timeout * 1000), attempts,
                 )
 
+    def _binding_scope(self, account, project_id, directory, shared):
+        if not isinstance(project_id, str) or not project_id or project_id.startswith("@") or len(project_id) > 200:
+            raise ValueError("OpenCode requires a valid project ID")
+        source = self._project_source(account, directory)
+        # Existing project rows keep their original key. '@' is outside the
+        # project ID alphabet and reserves one allocation per Worker environment.
+        placement = "@" + account["environment_id"] if shared else project_id
+        key = account["account_id"], placement, PROVIDER
+        mount_target = str(WORKER_ROOT) if shared else directory
+        mount_source = str(Path(account["workspace"]) / "agent/workspace") if shared else source
+        return key, mount_target, mount_source
+
     @asynccontextmanager
     async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False):
         current = self._check_account(account)
-        if not isinstance(project_id, str) or not project_id or project_id.startswith("@") or len(project_id) > 200:
-            raise ValueError("OpenCode requires a valid project ID")
-        source = self._project_source(current, directory)
-        # Existing project rows keep their original key. '@' is outside the
-        # project ID alphabet and reserves one allocation per Worker environment.
-        placement = "@" + current["environment_id"] if shared else project_id
-        key = current["account_id"], placement, PROVIDER
-        mount_target = str(WORKER_ROOT) if shared else directory
-        mount_source = str(Path(current["workspace"]) / "agent/workspace") if shared else source
+        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared)
         try:
             async with self._locks[key]:
                 current = self._check_account(account)
@@ -546,6 +561,47 @@ class CloudOpencodePool:
                     db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
                                (time.time(), row["binding_id"], row["generation"]))
 
+    async def sync_models(self, account, project_id, directory, revision, *, shared, models=None, previous=None):
+        """Install a Worker-generated private fragment at an idle generation boundary."""
+        current = self._check_account(account)
+        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared)
+        async with self._locks[key]:
+            current = self._check_account(account)
+            row = self._binding(key, mount_target, mount_source, current)
+            root = self.storage / row["binding_id"]
+            self._bound_model_policy(root, row)
+            base = json.loads(self._binding_config(root)).get("provider", {})
+            path = root / "account-models.json"
+            saved = (json.loads(_read_private_file(path)) if path.exists()
+                     else {"revision": account_models_revision({}), "provider": {}})
+            if saved["revision"] == revision:
+                return revision
+            if self._holds[key]:
+                raise OpenCodeConfigurationError("opencode_model_sync_busy")
+            if models is None:
+                return saved["revision"]
+            if previous != saved["revision"]:
+                raise OpenCodeConfigurationError("opencode_model_sync_changed")
+            desired = {k: v for k, v in models.items() if k not in base}
+            if desired != saved["provider"]:
+                if row["state"] in {"UNKNOWN", "CREATING"}:
+                    row = await self._allocate(row, self._plan(row))
+                if row["state"] == "NEW" and (root / row["operation_id"]).exists():
+                    self._recycle(row)
+                elif row["state"] != "NEW" and not await self._reclaim(key, refresh=True):
+                    raise OpenCodeConfigurationError("opencode_model_sync_busy")
+            self._check_account(account)
+            fd, temporary = tempfile.mkstemp(dir=root)
+            try:
+                with os.fdopen(fd, "w") as out:
+                    json.dump({"revision": revision, "provider": desired}, out)
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+            return revision
+
     async def reclaim_idle(self) -> int:
         observe_faults = self.resources is not None and self.fault_check is not None
         with self.store.connect() as db:
@@ -561,7 +617,7 @@ class CloudOpencodePool:
                 logger.warning("OpenCode Provider reclaim deferred: %s", type(exc).__name__)
         return reclaimed
 
-    async def _reclaim(self, key):
+    async def _reclaim(self, key, *, refresh=False):
         row = self._get(key)
         if row is None or row["state"] not in {"ALLOCATED", "DELETING"}:
             return 0
@@ -577,8 +633,8 @@ class CloudOpencodePool:
                 self._fault_since.pop(row["operation_id"], None)
                 raise EnvironmentUnavailable("OpenCode Provider ownership changed before deletion")
             if row["state"] == "ALLOCATED":
-                idle = idle_due and await self._idle(row, plan)
-                if not idle and not await self._confirmed_fault(row, plan):
+                idle = (refresh or idle_due) and await self._idle(row, plan)
+                if not idle and (refresh or not await self._confirmed_fault(row, plan)):
                     return 0
                 row = self._transition(row, "DELETING", instance_id=instance)
             await self.yuanrong.delete_sandbox(instance)

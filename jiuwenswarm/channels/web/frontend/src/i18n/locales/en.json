@@ -1861,11 +1861,11 @@
         "opencode_approval_policy_conflict": "The OpenCode instance conflicts with the default approval policy. Contact your administrator.",
         "opencode_model_snapshot_stale": "The OpenCode model configuration is inconsistent. Contact your administrator.",
         "default": "OpenCode default · {{model}}",
-        "opencode_default_model_unconfigured": "Managed OpenCode has no default model. Choose a registered model.",
+        "opencode_default_model_unconfigured": "No OpenCode default model is available. Configure a compatible model in account settings.",
         "opencode_shared_model_protocol_unsupported": "Managed OpenCode does not support this model's protocol. Choose a compatible model.",
         "opencode_shared_model_options_unsupported": "This model uses request options that managed OpenCode does not support. Choose a compatible model.",
         "opencode_shared_model_group_unsupported": "Managed OpenCode does not support model groups. Choose an individual model.",
-        "opencode_model_not_registered": "This model is not registered with managed OpenCode. Choose a registered model.",
+        "opencode_model_not_registered": "This OpenCode instance cannot use this model. Choose an available account model.",
         "opencode_model_unavailable": "This model is unavailable. Choose another model."
       },
       "tooltip": "Switch the model used for chat",

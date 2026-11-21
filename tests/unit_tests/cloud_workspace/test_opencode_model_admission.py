@@ -53,6 +53,20 @@ def test_managed_model_projection_uses_the_native_default_and_hides_credentials(
     with pytest.raises(ValueError, match="must be declared"):
         deployment_model_policy({"model": "other/not-declared", "provider": {}})
 
+    # A sync-capable Worker admits configured compatible models without an operator entry.
+    from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import account_model_providers
+    sync = {"models": {}, "default": None, "account_model_sync": True}
+    projected = public_managed_model_policy(config, sync)
+    assert projected["default_account_id"] == "registered"
+    assert managed_model_binding(sync, ModelSelection(type="model", id=projected["default"]["id"]), catalog=catalog) == (
+        managed_model_binding(sync, ModelSelection(type="model", id="registered"), catalog=catalog)
+    )
+    assert projected["reasons"] == {"unsupported": "opencode_shared_model_options_unsupported"}
+    fragment = account_model_providers(catalog)
+    assert fragment == build_server_model_config(config)[0]["provider"]
+    assert managed_model_binding(sync, ModelSelection(type="model", id="unregistered"), catalog=catalog)["providerID"] in fragment
+    assert "private-token" not in json.dumps(projected)
+
 
 @pytest.mark.asyncio
 async def test_managed_worker_inherits_approval_without_changing_account_settings(monkeypatch):
@@ -68,3 +82,23 @@ async def test_managed_worker_inherits_approval_without_changing_account_setting
     status = adapter.runtime_permission_status("new")
     assert status["desired_profile"] == "default"
     assert status["supported_profiles"] == ["default"]
+
+@pytest.mark.parametrize("field", ["module", "permission", "file", "endpoint", "model"])
+def test_sync_validates_only_generated_account_model_fields(field):
+    from gateway.common.opencode_model_policy import validate_account_providers
+    key = "swarm-" + "a" * 24
+    entry = {"npm": "@ai-sdk/openai-compatible", "name": "Swarm configured model",
+             "options": {"baseURL": "https://example.invalid", "apiKey": "fixture"},
+             "models": {"m": {"name": "m"}}}
+    if field == "module":
+        entry["npm"] = "other-module"
+    elif field == "permission":
+        entry["permission"] = {}
+    elif field == "file":
+        entry["options"]["apiKey"] = "{file:example}"
+    elif field == "endpoint":
+        entry["options"]["baseURL"] = "file:///example"
+    else:
+        entry["models"]["m"]["extra"] = "invalid"
+    with pytest.raises(ValueError):
+        validate_account_providers({key: entry})
