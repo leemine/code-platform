@@ -240,6 +240,16 @@ class CloudOpencodePool:
     def worker_model_policy(self, account):
         key = account["account_id"], "@" + account["environment_id"], PROVIDER
         row = self._get(key)
+        if row is None and not self._admits_new_binding(account["account_id"]):
+            # Existing project-scoped bindings also need their relay after a Worker restart.
+            with self.store.connect() as db:
+                inherited = db.execute(
+                    """SELECT 1 FROM provider_bindings
+                       WHERE account_id=? AND provider=? AND substr(project_id, 1, 1)<>'@' LIMIT 1""",
+                    (account["account_id"], PROVIDER),
+                ).fetchone()
+            if inherited is None:
+                return None
         root = self.storage / (row["binding_id"] if row else self._new_binding_id(key))
         try:
             self._bound_model_policy(root, row)
@@ -250,9 +260,15 @@ class CloudOpencodePool:
             reason = str(exc) if isinstance(exc, OpenCodeConfigurationError) else "opencode_model_snapshot_stale"
             return {"default": None, "models": {}, "error": reason}
 
+    def _admits_new_binding(self, account_id):
+        allowlist = self.options.get("account_allowlist")
+        return allowlist is None or account_id in allowlist
+
     def _binding(self, key, directory, source, account):
         row = self._get(key)
         if row is None:
+            if not self._admits_new_binding(account["account_id"]):
+                raise PermissionError("Account is not admitted for a new managed OpenCode binding")
             profile = {
                 "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
                 "account_workspace": account["workspace"], "physical_verification": self.resources is not None,

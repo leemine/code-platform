@@ -55,9 +55,11 @@ class CloudInstancePolicy:
                    JIUWENSWARM_INSTANCE_AUTH_FILE="/run/jiuwenswarm/instance-auth.json",
                    JIUWENSWARM_CONTAINER_FILE_ROOT="/home/agentos")
         if self.opencode_relay_url:
-            env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
-            if self.opencode_model_policy is not None:
-                env[MODEL_POLICY_ENV] = json.dumps(self.opencode_model_policy(row))
+            model_policy = self.opencode_model_policy(row) if self.opencode_model_policy is not None else None
+            if self.opencode_model_policy is None or model_policy is not None:
+                env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
+            if model_policy is not None:
+                env[MODEL_POLICY_ENV] = json.dumps(model_policy)
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

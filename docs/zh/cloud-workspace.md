@@ -11,6 +11,8 @@
 
 ## 行为与恢复
 
+在共用执行池中配置 `opencode_provider.account_allowlist`，使用账号权威返回的 `user_id`。空列表关闭新 OpenCode Provider 绑定，已有绑定可继续使用原状态卷重建。普通账号的注册继续由 `registration_enabled` 控制。现有独占部署可沿用省略此字段的行为。配置在 Gateway 启动时读取。首次加入名单可在账号取得 ID 后、首次启动 Worker 前完成。已经运行的 Worker 在下次启动时收到托管 OpenCode 配置。
+
 原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件仅贡献 `cloud.environment.ensure/status`，不接管 `session.execution.options`。
 
 创建超时或取消后的未知结果保留回执，以有界清单和实例详情精确对账；零匹配、多匹配均不再POST。启动清理保护本控制面已有账号实例。DELETE需原实例查询明确404；启用physical_verification的绑定还须物理完成确认才闭合，未确认时维持DELETING；下次ensure可重试该已知实例删除。重建增加epoch、保持原镜像和数据。普通网络断开仅关闭云连接，不自动删除绑定实例。

@@ -139,10 +139,16 @@ class CloudConfig:
             raise ValueError("Managed OpenCode requires an explicit YuanRong Frontend endpoint")
         profile = self.opencode_provider
         if (not isinstance(profile, dict) or "image" not in profile
-                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport"}
+                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport", "account_allowlist"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
             raise ValueError("Managed OpenCode requires an immutable image")
+        if "account_allowlist" in profile:
+            accounts = profile["account_allowlist"]
+            if not isinstance(accounts, list) or any(
+                not isinstance(account, str) or not account or account.strip() != account for account in accounts
+            ):
+                raise ValueError("Managed OpenCode account_allowlist must contain authenticated account IDs")
         auth_transport = profile.get("auth_transport", "basic")
         if auth_transport not in ("basic", "query"):
             raise ValueError("Unsupported OpenCode authentication transport")
