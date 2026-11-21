@@ -68,6 +68,52 @@ def test_managed_model_projection_uses_the_native_default_and_hides_credentials(
     assert "private-token" not in json.dumps(projected)
 
 
+def test_synced_account_model_preserves_context_and_provider_identity():
+    from gateway.common.opencode_model_policy import account_models_revision
+    from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import account_model_providers
+
+    entry = {
+        "model_id": "account-deepseek",
+        "model_client_config": {
+            "api_key": "isolated-token",
+            "api_base": "https://example.invalid/v1",
+            "model_name": "deepseek-v4.1-flash",
+            "client_provider": "OpenAI",
+        },
+    }
+    config = {"models": {"defaults": [entry]}}
+    original = account_model_providers(ModelCatalog(config))
+    provider_id, = original
+    model_name = "deepseek-v4.1-flash"
+    assert original[provider_id]["models"][model_name] == {"name": model_name}
+
+    entry["model_config_obj"] = {"context_window": 1_048_576}
+    changed = account_model_providers(ModelCatalog(config))
+    assert changed.keys() == original.keys()
+    assert changed[provider_id]["options"] == original[provider_id]["options"]
+    assert changed[provider_id]["models"][model_name] == {
+        "name": model_name, "limit": {"context": 1_048_576, "output": 0},
+    }
+    assert account_models_revision(changed) != account_models_revision(original)
+    assert build_server_model_config(config)[0]["provider"] == original
+
+
+@pytest.mark.parametrize("limit", [
+    None, {"context": 100}, {"context": True, "output": 0},
+    {"context": -100, "output": 0}, {"context": 1_048_576, "output": False},
+    {"context": 1_048_576, "output": 32768},
+    {"context": 1_048_576, "output": 0, "input": 100},
+])
+def test_sync_rejects_invalid_account_model_limits(limit):
+    from gateway.common.opencode_model_policy import validate_account_providers
+
+    entry = {"npm": "@ai-sdk/openai-compatible", "name": "Swarm configured model",
+             "options": {"baseURL": "https://example.invalid", "apiKey": "fixture"},
+             "models": {"m": {"name": "m", "limit": limit}}}
+    with pytest.raises(ValueError, match="opencode_shared_model_options_unsupported"):
+        validate_account_providers({"swarm-" + "a" * 24: entry})
+
+
 @pytest.mark.asyncio
 async def test_managed_worker_inherits_approval_without_changing_account_settings(monkeypatch):
     from jiuwenswarm.server.runtime.agent_adapter.providers.opencode import OpenCodeAdapter

@@ -15,6 +15,8 @@
 
 使用开关的部署把固定前缀 `/api/v1/auth/organization/provider/managed/` 转发到本执行池的 Gateway，其中 API 前缀取部署配置。代理保留完整签名路径和请求头，Gateway 沿用原 Worker 身份和项目验证。现有以 `account_allowlist` 部署的配置和旧中继路径仍可继续使用。切换部署方式时删除 `account_allowlist`，再显式设置开关。同源同 API 前缀的两个托管地址可用于恢复原绑定。
 
+独立 OpenCode 在发送时同步当前账号兼容模型的服务地址、凭据引用解析结果及已配置的上下文上限。上下文按 token 数传给 OpenCode，例如 1 Mi token 为 1,048,576。修改上限沿用已有模型标识，按原绑定的空闲回收流程生效。
+
 原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件仅贡献 `cloud.environment.ensure/status`，不接管 `session.execution.options`。
 
 创建超时或取消后的未知结果保留回执，以有界清单和实例详情精确对账；零匹配、多匹配均不再POST。启动清理保护本控制面已有账号实例。DELETE需原实例查询明确404；启用physical_verification的绑定还须物理完成确认才闭合，未确认时维持DELETING；下次ensure可重试该已知实例删除。重建增加epoch、保持原镜像和数据。普通网络断开仅关闭云连接，不自动删除绑定实例。

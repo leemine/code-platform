@@ -96,6 +96,13 @@ def _managed_entry(model, catalog):
     from gateway.common.opencode_model_policy import validate_account_providers
 
     binding, entry = _provider_entry(model, catalog.config.get("opencode", {}))
+    if model.context_window is not None:
+        # A custom model without an output limit uses OpenCode's native fallback.
+        provider = entry[binding["providerID"]]
+        provider["models"][binding["modelID"]]["limit"] = {
+            "context": model.context_window,
+            "output": 0,
+        }
     validate_account_providers(entry)
     return binding, entry
 
