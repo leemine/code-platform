@@ -1,7 +1,7 @@
 """Translate the existing Swarm model catalog to official OpenCode configuration.
 
-The service owner consumes this snapshot at normal startup. Chat requests never
-write a borrowed server's config or credentials. No second model catalog is kept.
+Owned services consume the projection at startup. Managed Workers reconcile it
+through the account-authenticated Gateway. Fixed-URL services remain operator-managed.
 """
 from __future__ import annotations
 
@@ -49,6 +49,13 @@ def provider_config(model: ResolvedModel, settings=None) -> dict:
     }
 
 
+def _provider_entry(model, settings):
+    if not isinstance(model, ResolvedModel):
+        raise ValueError("opencode_shared_model_group_unsupported")
+    binding = model_binding(model)
+    return binding, {binding["providerID"]: provider_config(model, settings)}
+
+
 def build_server_model_config(config: dict | None = None, *, models=None, settings=None) -> tuple[dict, list[str]]:
     """Return a private official config fragment and unsupported catalog IDs.
 
@@ -64,7 +71,8 @@ def build_server_model_config(config: dict | None = None, *, models=None, settin
     providers, unsupported = {}, []
     for model in models:
         try:
-            providers[model_binding(model)['providerID']] = provider_config(model, settings)
+            _, entry = _provider_entry(model, settings)
+            providers.update(entry)
         except ValueError as exc:
             if str(exc) not in {'opencode_shared_model_protocol_unsupported', 'opencode_shared_model_options_unsupported'}:
                 raise
@@ -84,16 +92,49 @@ def validate_request_model(model) -> tuple[ResolvedModel, dict[str, str]]:
     return model, model_binding(model)
 
 
+def _managed_entry(model, catalog):
+    from gateway.common.opencode_model_policy import validate_account_providers
+
+    binding, entry = _provider_entry(model, catalog.config.get("opencode", {}))
+    validate_account_providers(entry)
+    return binding, entry
+
+
+def account_model_providers(catalog):
+    """Project eligible account entries independently, so an unsupported entry cannot block its peers."""
+    from jiuwenswarm.common.model_errors import ModelSelectionError
+
+    providers = {}
+    resolver = _resolver(catalog)
+    for entry in catalog.list_public_models():
+        try:
+            selection = ModelSelection(type="model", id=entry["model_id"])
+            model = resolver.resolve(selection)
+            _, entry_config = _managed_entry(model, catalog)
+            providers.update(entry_config)
+        except (ValueError, ModelSelectionError):
+            continue
+    return providers
+
+
 def managed_model_binding(policy, selection=None, *, model_name=None, catalog=None):
-    from gateway.common.opencode_model_policy import native_model_binding, native_model_reference
+    from gateway.common.opencode_model_policy import deployment_model_policy, native_model_binding, native_model_reference
     from jiuwenswarm.common.model_routing_registry import ModelExecutionContext
 
     if policy.get("error"):
         raise ValueError(policy["error"])
     reference = native_model_reference(selection)
     if reference is not None:
+        if policy.get("account_model_sync") and reference not in policy["models"]:
+            # Older clients send the native default ID returned by config.get.
+            entries = account_model_providers(catalog or ModelCatalog())
+            return native_model_binding(reference, deployment_model_policy({"provider": entries}))
         return native_model_binding(reference, policy)
+    catalog = catalog or ModelCatalog()
     resolved = _resolver(catalog).resolve(selection, ModelExecutionContext(legacy_model_name=model_name))
+    if policy.get("account_model_sync"):
+        binding, _ = _managed_entry(resolved, catalog)
+        return binding
     _, binding = validate_request_model(resolved)
     return native_model_binding(f"{binding['providerID']}/{binding['modelID']}", policy)
 
@@ -105,12 +146,18 @@ def public_managed_model_policy(config, policy):
     catalog = ModelCatalog(config)
     default = policy["default"]
     default_account_id = None
+    registered = dict.fromkeys(policy["models"])
+    fallback = None
     reasons = {}
-    for entry in catalog.list_public_models():
+    for entry in sorted(catalog.list_public_models(), key=lambda model: not model["is_default"]):
         model_id = entry["model_id"]
         try:
             binding = managed_model_binding(policy, ModelSelection(type="model", id=model_id), catalog=catalog)
-            if default_account_id is None and default == f"{binding['providerID']}/{binding['modelID']}":
+            reference = f"{binding['providerID']}/{binding['modelID']}"
+            registered[reference] = None
+            if policy.get("account_model_sync") and not default and fallback is None:
+                fallback = (model_id, reference, entry["model_name"])
+            if default_account_id is None and default == reference:
                 default_account_id = model_id
         except (ValueError, ModelSelectionError) as error:
             reason = str(error)
@@ -118,10 +165,13 @@ def public_managed_model_policy(config, policy):
                 "opencode_shared_model_protocol_unsupported", "opencode_shared_model_options_unsupported",
                 "opencode_model_not_registered",
             } else "opencode_model_unavailable"
+    label = policy["models"].get(default)
+    if fallback:
+        default_account_id, default, label = fallback
     return {
-        "registered": list(policy["models"]),
+        "registered": list(registered),
         "error": policy.get("error"),
         "default_account_id": default_account_id,
-        "default": ({"id": NATIVE_MODEL_PREFIX + default, "label": policy["models"][default]} if default else None),
+        "default": ({"id": NATIVE_MODEL_PREFIX + default, "label": label} if default else None),
         "reasons": reasons,
     }

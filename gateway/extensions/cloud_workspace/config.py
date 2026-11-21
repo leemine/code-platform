@@ -138,25 +138,26 @@ class CloudConfig:
                 or frontend.username or frontend.password or frontend.query or frontend.fragment):
             raise ValueError("Managed OpenCode requires an explicit YuanRong Frontend endpoint")
         profile = self.opencode_provider
-        if (not isinstance(profile, dict) or not {"image", "model_config"} <= profile.keys()
+        if (not isinstance(profile, dict) or "image" not in profile
                 or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
-            raise ValueError("Managed OpenCode requires an immutable image and model configuration")
+            raise ValueError("Managed OpenCode requires an immutable image")
         auth_transport = profile.get("auth_transport", "basic")
         if auth_transport not in ("basic", "query"):
             raise ValueError("Unsupported OpenCode authentication transport")
         if auth_transport == "query" and frontend.hostname not in ("127.0.0.1", "::1"):
             raise ValueError("OpenCode query authentication requires a loopback YuanRong Frontend")
-        if not isinstance(profile["model_config"], str):
-            raise ValueError("Managed OpenCode requires a model configuration file")
-        path = Path(profile["model_config"])
-        if (not path.is_absolute() or path.is_relative_to(self.workspace_root)
-                or path.resolve() != path or not path.is_file()):
-            raise ValueError("Managed OpenCode model configuration must be outside account workspaces")
-        info = path.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-            raise ValueError("Managed OpenCode model configuration must be private")
+        if "model_config" in profile:
+            if not isinstance(profile["model_config"], str):
+                raise ValueError("Managed OpenCode requires a model configuration file")
+            path = Path(profile["model_config"])
+            if (not path.is_absolute() or path.is_relative_to(self.workspace_root)
+                    or path.resolve() != path or not path.is_file()):
+                raise ValueError("Managed OpenCode model configuration must be outside account workspaces")
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise ValueError("Managed OpenCode model configuration must be private")
         for key in ("cpu", "memory"):
             value = profile.get(key, 1024)
             if type(value) is not int or value <= 0:

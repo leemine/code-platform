@@ -640,3 +640,43 @@ async def test_worker_and_provider_share_first_snapshot_across_gateway_restart(s
         async with new.hold(owner, "project", PROJECT_DIR, shared=True):
             pytest.fail("Conflicting active configuration must block dispatch")
     assert new.worker_model_policy(other)["default"] == "test/b"
+
+
+@pytest.mark.asyncio
+async def test_account_models_refresh_only_an_idle_owned_generation(sandbox):
+    from gateway.common.opencode_model_policy import account_models_revision
+    from gateway.services.cloud_opencode_pool import OpenCodeConfigurationError
+
+    pool, frontend, account, _ = sandbox
+    owner, other = account("owner"), account("other")
+    models = {"swarm-" + "a" * 24: {
+        "npm": "@ai-sdk/openai-compatible", "name": "Swarm configured model",
+        "options": {"baseURL": "https://example.invalid", "apiKey": "fixture"},
+        "models": {"a": {"name": "a"}},
+    }}
+    empty, first = account_models_revision({}), account_models_revision(models)
+
+    async def sync(actor, revision, **changes):
+        return await pool.sync_models(actor, "project", PROJECT_DIR, revision, shared=True, **changes)
+
+    assert await sync(owner, first) == empty
+    assert await sync(owner, first, models=models, previous=empty) == first
+    assert await sync(other, first) == empty
+    assert not frontend.created
+    async with pool.hold(owner, "project", PROJECT_DIR, shared=True) as original:
+        assert await sync(owner, first) == first
+        with pytest.raises(OpenCodeConfigurationError, match="busy"):
+            await sync(owner, empty, models={}, previous=first)
+    with pytest.raises(OpenCodeConfigurationError, match="changed"):
+        await sync(owner, empty, models={}, previous="obsolete")
+    assert not frontend.deleted
+
+    async def idle(_lease):
+        return True
+
+    pool.idle_check = idle
+    assert await sync(owner, empty, models={}, previous=first) == empty
+    async with pool.hold(owner, "project", PROJECT_DIR, shared=True) as after:
+        assert after.binding_id == original.binding_id and after.instance_id != original.instance_id
+    assert frontend.deleted == [original.instance_id]
+    assert frontend.created[0]["workspace"] == frontend.created[1]["workspace"]

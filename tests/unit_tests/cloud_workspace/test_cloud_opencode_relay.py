@@ -296,3 +296,26 @@ async def test_relay_holds_provider_while_sse_response_is_open(relay):
             finally:
                 event.cancel()
                 await asyncio.gather(event, return_exceptions=True)
+
+@pytest.mark.asyncio
+async def test_account_model_sync_requires_worker_and_project_and_keeps_config_private(relay, monkeypatch):
+    from gateway.common.opencode_model_policy import account_models_revision
+    broker, app, credentials, _ = relay
+    calls = []
+
+    async def sync(account, project, directory, revision, **options):
+        calls.append((account["account_id"], project, directory, options["shared"]))
+        return revision
+
+    monkeypatch.setattr(broker.pool, "sync_models", sync, raising=False)
+    path = SHARED_ROUTE + "/private/account-models/sync"
+    revision = account_models_revision({})
+    async with broker._client, _client(app) as anonymous, _client(app, OpenCodeRelayAuth(credentials["two"])) as other:
+        assert (await anonymous.post(path, json={"revision": revision})).status_code == 403
+        assert (await other.post(path, json={"revision": revision})).status_code == 403
+        async with _client(app, OpenCodeRelayAuth(credentials["one"])) as worker:
+            invalid = await worker.post(path, json={"previous": revision, "provider": {"invalid": {}}})
+            assert invalid.status_code == 403 and calls == []
+            response = await worker.post(path, json={"previous": revision, "provider": {}})
+            assert response.json() == {"revision": revision}
+            assert calls == [("one", "private", DIRECTORY + "-private", True)]

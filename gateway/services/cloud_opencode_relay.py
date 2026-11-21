@@ -15,6 +15,7 @@ import httpx
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, StreamingResponse
 
+from gateway.common.opencode_model_policy import account_models_revision, validate_account_providers
 from gateway.common.security.opencode_relay_auth import HEADER, parse_assertion, verify_assertion
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable
@@ -163,11 +164,19 @@ class CloudOpencodeRelay:
             result = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
             result.raise_for_status()
             states = result.json()
+            if not isinstance(states, dict) or not all(
+                isinstance(state, dict) and state.get("type") == "idle" for state in states.values()
+            ):
+                return False
+            for path in ("permission", "question"):
+                url, query = self._route(lease, path)
+                pending = await self._client.get(url, params=query, auth=("opencode", lease.password), timeout=5)
+                pending.raise_for_status()
+                if pending.json() != []:
+                    return False
+            return True
         except (httpx.HTTPError, ValueError):
             return False
-        return isinstance(states, dict) and all(
-            isinstance(state, dict) and state.get("type") == "idle" for state in states.values()
-        )
 
     async def _fault(self, lease) -> OpenCodeFault | None:
         url, query = self._route(lease, "global/health")
@@ -289,7 +298,8 @@ class CloudOpencodeRelay:
 
     async def _handle(self, request: Request, *, shared: bool):
         project_id, path = request.path_params["project_id"], request.path_params["path"]
-        if not ((request.method == "GET" and _GET.fullmatch(path))
+        sync = request.method == "POST" and path == "account-models/sync"
+        if not (sync or (request.method == "GET" and _GET.fullmatch(path))
                 or (request.method == "POST" and _POST.fullmatch(path))):
             return JSONResponse({"code": "NOT_FOUND"}, status_code=404)
         if not request.headers.get(HEADER):
@@ -311,6 +321,21 @@ class CloudOpencodeRelay:
             directory = _project_directory(account, project_id)
             if supplied_dir and supplied_dir != directory:
                 raise PermissionError("Project workspace differs")
+            if sync:
+                change = json.loads(body)
+                providers = None
+                if isinstance(change, dict) and set(change) == {"provider", "previous"}:
+                    providers = change["provider"]
+                    validate_account_providers(providers)
+                    revision = account_models_revision(providers)
+                elif (isinstance(change, dict) and set(change) == {"revision"}
+                      and isinstance(change["revision"], str) and re.fullmatch(r"[0-9a-f]{64}", change["revision"])):
+                    revision = change["revision"]
+                else:
+                    return JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
+                current = await self.pool.sync_models(account, project_id, directory, revision,
+                                                      shared=shared, models=providers, previous=change.get("previous"))
+                return JSONResponse({"revision": current}, headers={"Cache-Control": "no-store"})
             hold = (self.pool.hold(account, project_id, directory, shared=True) if shared
                     else self.pool.hold(account, project_id, directory))
             lease = await scope.enter_async_context(hold)

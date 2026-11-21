@@ -33,3 +33,11 @@ Worker 把共享线路标记和相应配置摘要写入既有远端会话绑定�
 隔离实测使用 `4e53964` 的 Gateway 实例池与 Worker 创建原生会话，再切换到候选 Worker 和绑定规划器。真实 OpenCode 1.18.18、认证 WebSocket、中继及新旧 Worker 覆盖按旧 ID 续聊、账号默认与原生默认首发、显式改选后的续聊和一次审批的工具副作用。Chrome 检查同一选择器的历史值和主动写回。元戎分配与模型回复在本次以本机夹具替代。候选、命令与证据见管理工作区 `artifacts/platform-opencode-binding-p1-20261121/evidence/summary.md`。
 
 [Chrome 验收截图：历史模型不可用时的账号模型选择器](../../../docs/assets/images/managed-opencode-account-model-picker.png)
+
+## 账号模型自动同步
+
+账号设置是兼容模型的唯一录入入口。Worker 与会话自管服务复用模型映射和原生配置生成逻辑。准备会话或发送下一轮时，Worker 先核对私有配置的摘要，发生变化才提交生成的数据。Gateway 校验当前 Worker、项目及模型片段，比较前一版本，等旧实例空闲后沿现有回收流程换代，复用原状态卷与会话归属。部署提供的原生模型继续受其既有绑定管理。
+
+真实 OpenCode 1.18.18 验证了从空部署开始仅在账号保存默认模型即可首发。旧版 Worker 创建的会话在两次账号模型修改后仍可续聊，模型请求到达新地址并携带新测试密钥。等待批准时，配置更新被延迟，原进程继续完成单次审批。Chrome 146 使用实际 Worker 的目录结果验证新增与编辑后的条目均可选，同一账号模型 ID 得以保留。元戎调度使用本地进程夹具。
+
+[修改后仍选中同一账号模型](../../../docs/assets/images/managed-opencode-account-model-edited.png)

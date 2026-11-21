@@ -14,7 +14,7 @@ This pilot uses a startup snapshot for supported OpenAI-compatible individual mo
 
 ### Model selection on managed Workers
 
-Managed OpenCode uses the account model picker. A matching default uses its account model ID. When no account entry matches, the picker offers one native default. History keeps its saved selection and shows a reason when the model is unavailable. An explicit choice updates the conversation after the Worker accepts it. The Worker derives admission from the bound service configuration. OpenCode verifies the runtime model and requests tool approval through the existing interaction channel.
+Save a compatible model in account settings to use it in the existing picker. The independent OpenCode service synchronizes account model additions, edits and removals when a conversation starts or resumes. Updating the endpoint, key or model name for the same account entry preserves its native session and history. A running turn or pending approval defers the configuration change. An optional deployment default takes precedence. Otherwise, the Worker selects a compatible account default.
 
 ## Validation and remaining scope
 

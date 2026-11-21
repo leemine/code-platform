@@ -1861,11 +1861,11 @@
         "opencode_approval_policy_conflict": "独立 OpenCode 实例的权限配置与默认审批冲突，请联系管理员。",
         "opencode_model_snapshot_stale": "独立 OpenCode 实例的模型配置不一致，请联系管理员。",
         "default": "OpenCode 默认模型 · {{model}}",
-        "opencode_default_model_unconfigured": "独立 OpenCode 未配置默认模型，请选择已登记的模型。",
+        "opencode_default_model_unconfigured": "暂无可用的 OpenCode 默认模型，请在账号设置中配置兼容模型。",
         "opencode_shared_model_protocol_unsupported": "该模型的接口协议不受独立 OpenCode 支持，请选择兼容模型。",
         "opencode_shared_model_options_unsupported": "该模型含独立 OpenCode 不支持的请求参数，请选择兼容模型。",
         "opencode_shared_model_group_unsupported": "独立 OpenCode 不支持模型组，请选择单个模型。",
-        "opencode_model_not_registered": "该模型未在独立 OpenCode 中登记，请选择已登记的模型。",
+        "opencode_model_not_registered": "当前 OpenCode 实例无法使用这个模型，请改选可用的账号模型。",
         "opencode_model_unavailable": "该模型不可用，请重新选择。"
       },
       "tooltip": "切换对话使用的模型",
