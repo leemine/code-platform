@@ -1,4 +1,4 @@
-"""Build and provision a digest-pinned managed OpenCode release."""
+"""Build and provision a digest-pinned release for a managed Provider."""
 from __future__ import annotations
 
 import argparse
@@ -43,9 +43,11 @@ def load_manifest(bundle: Path, expected: str | None = None) -> tuple[dict, str]
     if expected is not None and fingerprint != expected:
         raise ValueError("OpenCode release manifest digest mismatch")
     release = json.loads(raw)
-    if (not isinstance(release, dict)
-            or set(release) != {"version", "image", "rollback_image", "runtime_sha256", "archives"}
-            or type(release["version"]) is not int or release["version"] != 1):
+    fields = {"version", "image", "rollback_image", "runtime_sha256", "archives"}
+    if (not isinstance(release, dict) or type(release.get("version")) is not int
+            or (release["version"] == 1 and set(release) != fields)
+            or (release["version"] == 2 and (set(release) != fields | {"provider"} or release["provider"] != "codex"))
+            or release["version"] not in (1, 2)):
         raise ValueError("Invalid OpenCode release manifest")
     validate_pins(release["image"], release["rollback_image"], release["runtime_sha256"])
     archives = release["archives"]
@@ -72,9 +74,11 @@ def image_present(identifier: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() == identifier
 
 
-def pack(output: Path, image: str, rollback: str, source: Path, runtime: str) -> str:
+def pack(output: Path, image: str, rollback: str, source: Path, runtime: str, *, provider="opencode") -> str:
     """Export the two verified images and a sealed startup stack as one release."""
     validate_pins(image, rollback, runtime)
+    if provider not in ("opencode", "codex"):
+        raise ValueError("Unsupported release Provider")
     if not all(map(image_present, (image, rollback))):
         raise ValueError("OpenCode release and rollback images must exist on the publishing host")
     if tree_digest(source) != runtime:
@@ -94,6 +98,8 @@ def pack(output: Path, image: str, rollback: str, source: Path, runtime: str) ->
             archive.add(source, arcname="runtime")
         release = {"version": 1, "image": image, "rollback_image": rollback, "runtime_sha256": runtime,
                    "archives": {name: digest(stage / name) for name in (IMAGES, RUNTIME)}}
+        if provider == "codex":
+            release.update(version=2, provider=provider)
         (stage / MANIFEST).write_text(json.dumps(release, indent=2, sort_keys=True) + "\n")
         # Verify the source stayed sealed while the archive was written.
         if tree_digest(source) != runtime:
@@ -151,8 +157,8 @@ def node_receipt(release: dict, manifest_sha: str, runtime: Path) -> dict:
             "shared_runtime": str(runtime)}
 
 
-def retain_image(identifier: str) -> None:
-    tag = "code-platform-opencode:sha256-" + identifier.split(":", 1)[1]
+def retain_image(identifier: str, *, provider="opencode") -> None:
+    tag = f"code-platform-{provider}:sha256-" + identifier.split(":", 1)[1]
     result = docker("image", "inspect", "--format", "{{.Id}}", tag,
                     capture_output=True, text=True, timeout=30)
     if result.returncode == 0 and result.stdout.strip() != identifier:
@@ -183,7 +189,10 @@ def apply_node(bundle: Path, root: Path, expected: str) -> dict:
             if not all(map(image_present, images)):
                 raise ValueError("OpenCode release or rollback image missing after import")
             for identifier in images:
-                retain_image(identifier)
+                if release.get("provider") == "codex":
+                    retain_image(identifier, provider="codex")
+                else:
+                    retain_image(identifier)
             if incoming != runtime:
                 incoming.rename(runtime)
         return node_receipt(release, manifest_sha, runtime)
@@ -217,6 +226,7 @@ def fleet(bundle: Path, root: Path, hosts: list[str], config: Path | None) -> di
     if not hosts or len(hosts) != len(set(hosts)) or any(not SSH_TARGET.fullmatch(host) for host in hosts):
         raise ValueError("Specify a nonempty unique list of SSH target aliases for the pool")
     release, fingerprint = load_manifest(bundle)
+    provider = release.get("provider", "opencode")
     runtime = asset_source(str(root / release["runtime_sha256"]))
     expected = {"manifest_sha256": fingerprint, "shared_runtime": str(runtime),
                 **{key: release[key] for key in ("image", "rollback_image", "runtime_sha256")}}
@@ -227,7 +237,14 @@ def fleet(bundle: Path, root: Path, hosts: list[str], config: Path | None) -> di
             raise ValueError(f"OpenCode provisioning failed on {host}: {error}") from error
         if receipt != expected:
             raise ValueError(f"OpenCode release receipt differs on {host}")
-        print(f"Verified OpenCode release on {host}", file=sys.stderr, flush=True)
+        print(f"Verified {provider} release on {host}", file=sys.stderr, flush=True)
+    if provider == "codex":
+        return {"manifest_sha256": fingerprint, "verified_nodes": hosts,
+                "codex_provider": {"image": release["image"], "shared_runtime": str(runtime)},
+                "rollback_provider": {"image": release["rollback_image"], "shared_runtime": str(runtime)},
+                "boundary_args": [argument for identifier in (release["image"], release["rollback_image"])
+                                  for argument in ("--codex-provider-image", identifier, "--codex-runtime-asset",
+                                                   identifier + "=" + str(runtime))]}
     return {"manifest_sha256": fingerprint, "verified_nodes": hosts,
             "opencode_provider": {"image": release["image"], "shared_runtime": str(runtime)},
             "rollback_provider": {"image": release["rollback_image"]},
@@ -245,6 +262,7 @@ def main() -> int:
     export.add_argument("--rollback-image", required=True)
     export.add_argument("--runtime-source", type=Path, required=True)
     export.add_argument("--runtime-sha256", required=True)
+    export.add_argument("--provider", choices=("opencode", "codex"), default="opencode")
     for name in ("apply-node", "verify-node", "provision"):
         action = command.add_parser(name)
         action.add_argument("--bundle", type=Path, required=True)
@@ -257,7 +275,8 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "pack":
-            sha = pack(args.output, args.image, args.rollback_image, args.runtime_source, args.runtime_sha256)
+            sha = pack(args.output, args.image, args.rollback_image, args.runtime_source, args.runtime_sha256,
+                       provider=args.provider)
             result = {"manifest_sha256": sha}
         elif args.command == "provision":
             result = fleet(args.bundle, args.runtime_root, args.host, args.ssh_config)

@@ -130,12 +130,12 @@ class LogBoundary:
             audit = {"account": workspace.name}
         else:
             slot = provider_scope.get("slot")
-            if (provider_scope.get("role") != "opencode" or provider_scope.get("image") != value.get("Image")
+            if (provider_scope.get("role") not in {"opencode", "codex"} or provider_scope.get("image") != value.get("Image")
                     or provider_scope.get("user") != self.user
                     or not isinstance(slot, str) or not re.fullmatch(r"[a-f0-9]{64}", slot)):
                 raise ValueError("invalid Provider scope")
             self._protect_provider(value, host)
-            audit = {"provider": "opencode", "slot": slot}
+            audit = {"provider": provider_scope["role"], "slot": slot}
         private = self.log_root / slot
         replacements = []
         for source, target, item in mounts:
@@ -192,6 +192,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if resources is not None and resources.is_provider_image(request.get("Image")):
             scope = resources.create_scope(request)
             value, audit = self.server.boundary.rewrite(request, provider_scope=scope)
+            if scope["role"] == "codex":
+                host = value["HostConfig"]
+                if host.get("NetworkMode", "default") not in {"", "default", "bridge"}:
+                    raise ValueError("Codex requires the private Docker bridge")
+                if any(re.search(r"(?:secret|password|api_key|signing_key|access_token|auth_token)", entry.split("=", 1)[0], re.I)
+                       for entry in (value.get("Env") or [])):
+                    raise ValueError("Codex provider cannot receive control credentials")
+                host["NetworkMode"] = "bridge"
+                host["PortBindings"] = {}
+                host["PublishAllPorts"] = False
+                host.pop("SecurityOpt")
+                value = resources.codex_security.rewrite(value)
             return value, audit, scope
         security = getattr(self.server, "runtime_security", None)
         if security is not None:
@@ -350,6 +362,7 @@ class ConfirmationHandler(http.server.BaseHTTPRequestHandler):
                 "/v1/confirm-deleted": self.server.resources.confirm_deleted,
                 "/v1/confirm-opencode-unavailable": self.server.resources.confirm_opencode_unavailable,
                 "/v1/confirm-opencode-stalled": self.server.resources.confirm_opencode_stalled,
+                "/v1/confirm-codex-address": self.server.resources.confirm_codex_address,
             }
             if (self.path not in operations or self.headers.get("Transfer-Encoding")
                     or len(self.headers.get_all("Content-Length", [])) != 1):
@@ -506,6 +519,11 @@ def main():
     parser.add_argument("--opencode-provider-root", type=Path)
     parser.add_argument("--opencode-provider-image", action="append", default=[])
     parser.add_argument("--opencode-runtime-asset", action="append", default=[], metavar="IMAGE=SOURCE")
+    parser.add_argument("--codex-provider-root", type=Path)
+    parser.add_argument("--codex-provider-image", action="append", default=[])
+    parser.add_argument("--codex-runtime-asset", action="append", default=[], metavar="IMAGE=SOURCE")
+    parser.add_argument("--codex-security-manifest", type=Path)
+    parser.add_argument("--codex-security-sha256")
     parser.add_argument("--runtime-security-manifest", type=Path)
     parser.add_argument("--runtime-security-sha256")
     args = parser.parse_args()
@@ -519,6 +537,10 @@ def main():
         parser.error("OpenCode runtime assets require Provider physical admission")
     if args.opencode_provider_root is not None and args.physical_journal_root is None:
         parser.error("OpenCode Provider admission requires physical confirmation")
+    codex_args = (args.codex_provider_root, args.codex_provider_image, args.codex_runtime_asset,
+                  args.codex_security_manifest, args.codex_security_sha256)
+    if any(codex_args) and (not all(codex_args) or args.physical_journal_root is None):
+        parser.error("Codex Provider admission requires a root, image list, runtime assets and pinned security")
     if args.reconcile_gid is not None and args.reconcile_gid <= 0:
         parser.error("confirmation group must be non-root")
     if (args.runtime_security_manifest is None) != (args.runtime_security_sha256 is None):
@@ -530,10 +552,15 @@ def main():
                                log_root=args.private_log_root, shared_log_dirs=args.shared_log_dir,
                                images=args.image, user=args.user, uid=args.uid)
         security = None
+        codex_security = None
         if args.runtime_security_manifest is not None:
             from runtime_security import RuntimeSecurity
             security = RuntimeSecurity(args.runtime_security_manifest, args.runtime_security_sha256,
                 images=boundary.images, user=boundary.user, workspace_root=boundary.workspace_root)
+        if args.codex_security_manifest is not None:
+            from runtime_security import RuntimeSecurity
+            codex_security = RuntimeSecurity(args.codex_security_manifest, args.codex_security_sha256,
+                images=args.codex_provider_image, user=boundary.user, workspace_root=boundary.workspace_root)
     except (ValueError, TypeError, OSError) as error:
         parser.error(str(error))
     listen = Path(args.listen)
@@ -551,7 +578,9 @@ def main():
                 resources = PhysicalResources(boundary, Path(args.physical_journal_root), Path(args.identity_root),
                     args.identity_target, str(upstream), args.reconcile_frontend,
                     provider_root=args.opencode_provider_root, provider_images=args.opencode_provider_image,
-                    runtime_assets=args.opencode_runtime_asset)
+                    runtime_assets=args.opencode_runtime_asset, codex_root=args.codex_provider_root,
+                    codex_images=args.codex_provider_image, codex_runtime_assets=args.codex_runtime_asset,
+                    codex_security=codex_security)
                 restricted = Path(args.reconcile_listen)
                 if restricted in (listen, upstream):
                     raise ValueError("confirmation endpoint must be distinct")

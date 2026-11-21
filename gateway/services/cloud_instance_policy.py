@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from gateway.common.managed_codex import RELAY_ENV as CODEX_RELAY_ENV
 from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
 from gateway.auth.account_authenticator import current_account
 from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
@@ -12,9 +13,12 @@ from gateway.services.cloud_environments import EnvironmentUnavailable
 
 
 class CloudInstancePolicy:
-    def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None, opencode_model_policy=None):
+    def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None, opencode_model_policy=None,
+                 codex_relay_url=None, codex_admits=None):
         self.opencode_relay_url = opencode_relay_url
         self.opencode_model_policy = opencode_model_policy
+        self.codex_relay_url = codex_relay_url
+        self.codex_admits = codex_admits
         self.resources = resources
         self.store = store
         self.ready_timeout = ready_timeout
@@ -60,6 +64,8 @@ class CloudInstancePolicy:
                 env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
             if model_policy is not None:
                 env[MODEL_POLICY_ENV] = json.dumps(model_policy)
+        if self.codex_relay_url and self.codex_admits(row):
+            env[CODEX_RELAY_ENV] = self.codex_relay_url
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

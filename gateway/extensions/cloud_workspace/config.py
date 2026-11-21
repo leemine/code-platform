@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
+from gateway.common.managed_codex import RELAY_ENV as CODEX_RELAY_ENV
 from gateway.common.opencode_runtime import runtime_source
 from gateway.common.security.opencode_relay_auth import OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH
 
@@ -44,6 +45,7 @@ class CloudConfig:
     resource_pool_id: str | None = None
     resource_reconciler_socket: str | None = None
     opencode_provider: dict | None = None
+    codex_provider: dict | None = None
 
     @classmethod
     def load(cls, path=None):
@@ -107,12 +109,14 @@ class CloudConfig:
         self._runtime_account()
         if self.opencode_provider is not None:
             self._validate_opencode_provider()
+        if self.codex_provider is not None:
+            self._validate_codex_provider()
         for mount in self.extra_mounts:
             target = str(mount.get("target", ""))
             if not target.startswith("/") or any(Path(target) == Path(x) or Path(target).is_relative_to(x) or Path(x).is_relative_to(target)
                                                     for x in ("/data", "/run/jiuwenswarm")):
                 raise ValueError("extra mount overlaps isolated runtime storage")
-        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV, MODEL_POLICY_ENV}:
+        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV, CODEX_RELAY_ENV, MODEL_POLICY_ENV}:
             raise ValueError("runtime environment overrides isolated paths")
         public = urlsplit(self.public_origin)
         if (public.scheme != "https" or not public.hostname or public.username or public.password
@@ -131,6 +135,38 @@ class CloudConfig:
         if self.cpu <= 0 or self.memory <= 0 or self.ready_timeout <= 0:
             raise ValueError("positive resource limits and deadline required")
 
+    def _validate_codex_provider(self):
+        from gateway.services.managed_codex_models import model_endpoint
+
+        profile = self.codex_provider
+        required = {"image", "shared_runtime", "account_allowlist", "model_endpoints"}
+        if (not isinstance(profile, dict) or not required <= profile.keys()
+                or profile.keys() - (required | {"cpu", "memory", "idle_seconds"})):
+            raise ValueError("Managed Codex requires image, shared runtime, model endpoints and account allowlist")
+        if (not self.resource_reconciler_socket or not self.public_origin.startswith("https://")
+                or not isinstance(profile["image"], str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
+            raise ValueError("Managed Codex requires HTTPS, a verified physical boundary and an immutable image")
+        if self.opencode_provider and profile["image"] == self.opencode_provider["image"]:
+            raise ValueError("Managed Provider images must be distinct")
+        source = Path(runtime_source(profile["shared_runtime"]))
+        if any(source.is_relative_to(root) or root.is_relative_to(source)
+               for root in (self.workspace_root, self.state_root)):
+            raise ValueError("Codex shared runtime must be outside account and state directories")
+        accounts = profile["account_allowlist"]
+        if (not isinstance(accounts, list)
+                or any(not isinstance(account, str) or not account or account.strip() != account for account in accounts)):
+            raise ValueError("Managed Codex account_allowlist must contain authenticated account IDs")
+        endpoints = profile["model_endpoints"]
+        if (not isinstance(endpoints, list) or not endpoints
+                or any(not isinstance(value, str) or not model_endpoint(value) for value in endpoints)):
+            raise ValueError("Managed Codex requires explicitly allowed HTTPS model endpoints")
+        for key in ("cpu", "memory"):
+            value = profile.get(key, 1024)
+            if type(value) is not int or value <= 0:
+                raise ValueError("Managed Codex requires a positive resource budget")
+        interval = profile.get("idle_seconds", 300)
+        if type(interval) not in {int, float} or not math.isfinite(interval) or interval <= 0:
+            raise ValueError("Managed Codex requires a positive idle timeout")
 
     def _validate_opencode_provider(self):
         if self.resource_reconciler_socket is None:
