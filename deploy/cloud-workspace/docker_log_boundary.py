@@ -288,6 +288,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "OpenCode scope definition differs", "OpenCode project is outside its account binding",
                 "OpenCode physical project, state or generation mount differs",
                 "unexpected OpenCode physical mount", "invalid OpenCode bind syntax",
+                "OpenCode runtime asset is not provisioned on this node", "OpenCode runtime asset digest mismatch",
                 "unsupported OpenCode bind options", "ambiguous OpenCode physical mount"} else type(error).__name__
             print(json.dumps({"boundary_error": reason}), flush=True)
             # Never include user payload or exception strings in responses.
@@ -504,6 +505,7 @@ def main():
     parser.add_argument("--reconcile-gid", type=int)
     parser.add_argument("--opencode-provider-root", type=Path)
     parser.add_argument("--opencode-provider-image", action="append", default=[])
+    parser.add_argument("--opencode-runtime-asset", action="append", default=[], metavar="IMAGE=SOURCE")
     parser.add_argument("--runtime-security-manifest", type=Path)
     parser.add_argument("--runtime-security-sha256")
     args = parser.parse_args()
@@ -513,6 +515,8 @@ def main():
         parser.error("physical confirmation requires all six explicit deployment parameters")
     if (args.opencode_provider_root is not None) != bool(args.opencode_provider_image):
         parser.error("OpenCode Provider admission requires both its root and image allowlist")
+    if args.opencode_runtime_asset and args.opencode_provider_root is None:
+        parser.error("OpenCode runtime assets require Provider physical admission")
     if args.opencode_provider_root is not None and args.physical_journal_root is None:
         parser.error("OpenCode Provider admission requires physical confirmation")
     if args.reconcile_gid is not None and args.reconcile_gid <= 0:
@@ -546,7 +550,8 @@ def main():
                 from physical_resources import PhysicalResources
                 resources = PhysicalResources(boundary, Path(args.physical_journal_root), Path(args.identity_root),
                     args.identity_target, str(upstream), args.reconcile_frontend,
-                    provider_root=args.opencode_provider_root, provider_images=args.opencode_provider_image)
+                    provider_root=args.opencode_provider_root, provider_images=args.opencode_provider_image,
+                    runtime_assets=args.opencode_runtime_asset)
                 restricted = Path(args.reconcile_listen)
                 if restricted in (listen, upstream):
                     raise ValueError("confirmation endpoint must be distinct")

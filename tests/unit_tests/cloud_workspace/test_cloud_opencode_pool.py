@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import AsyncMock, Mock, call
 
 import httpx
 import pytest
@@ -812,3 +812,48 @@ async def test_account_models_refresh_only_an_idle_owned_generation(sandbox):
         assert after.binding_id == original.binding_id and after.instance_id != original.instance_id
     assert frontend.deleted == [original.instance_id]
     assert frontend.created[0]["workspace"] == frontend.created[1]["workspace"]
+
+
+@pytest.mark.asyncio
+async def test_offline_migrate_and_rollback_preserve_binding_volume_and_generation_identity(sandbox):
+    from gateway.services.migrate_opencode_binding import migrate
+
+    original, frontend, account, config = sandbox
+    owner = account("upgrade-candidate")
+    store = original.store
+    confirm = AsyncMock()
+    pool = CloudOpencodePool(store, frontend, config, resources=SimpleNamespace(confirm_deleted=confirm))
+    pool.idle_check = AsyncMock(return_value=True)
+    old_image = config.opencode_provider["image"]
+    new_image = "sha256:" + "c" * 64
+    runtime = "/opt/assets/" + "e" * 64
+    async with pool.hold(owner, "project", PROJECT_DIR) as first:
+        pool.register_session(first, "project", "native-1")
+    state = Path(frontend.created[0]["workspace"])
+    anchor = state.parent / "scope.json"
+    original_manifest = anchor.read_bytes()
+    (state / "marker").write_text("retained")
+    with pytest.raises(EnvironmentUnavailable, match="offline"):
+        migrate(store, pool.storage, first.binding_id, old_image, new_image, runtime)
+    store.close()
+    with pytest.raises(EnvironmentUnavailable, match="reclaimed"):
+        migrate(store, pool.storage, first.binding_id, old_image, new_image, runtime)
+
+    assert await pool.reclaim_idle() == 1
+    confirm.assert_awaited_once()
+    moved = migrate(store, pool.storage, first.binding_id, old_image, new_image, runtime)
+    assert moved["generation"] == 2
+    async with pool.hold(owner, "project", PROJECT_DIR) as second:
+        assert second.binding_id == first.binding_id and second.password == first.password
+        assert pool.project_sessions(second, "project") == {"native-1"}
+    assert frontend.created[-1]["mounts"][-1] == {"source": runtime, "target": "/opt/yuanrong-python", "readonly": True}
+    generation_scope = Path(frontend.created[-1]["mounts"][2]["source"]) / "scope.json"
+    assert json.loads(generation_scope.read_bytes())["image"] == new_image
+    assert await pool.reclaim_idle() == 1
+    assert migrate(store, pool.storage, first.binding_id, new_image, old_image, None)["generation"] == 3
+    async with pool.hold(owner, "project", PROJECT_DIR) as third:
+        assert third.binding_id == first.binding_id and third.password == first.password
+        assert pool.project_sessions(third, "project") == {"native-1"}
+    assert len(frontend.created[-1]["mounts"]) == 3
+    assert {x["workspace"] for x in frontend.created} == {str(state)}
+    assert anchor.read_bytes() == original_manifest and (state / "marker").read_text() == "retained"

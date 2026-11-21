@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
+from gateway.common.opencode_runtime import runtime_source
 from gateway.common.security.opencode_relay_auth import OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH
 
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
@@ -141,7 +142,7 @@ class CloudConfig:
         profile = self.opencode_provider
         if (not isinstance(profile, dict) or "image" not in profile
                 or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport",
-                                     "account_allowlist", "admit_new_bindings"}
+                                     "account_allowlist", "admit_new_bindings", "shared_runtime"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
             raise ValueError("Managed OpenCode requires an immutable image")
@@ -171,6 +172,11 @@ class CloudConfig:
             info = path.stat()
             if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
                 raise ValueError("Managed OpenCode model configuration must be private")
+        if "shared_runtime" in profile:
+            source = Path(runtime_source(profile["shared_runtime"]))
+            protected = (self.workspace_root, self.state_root)
+            if any(source.is_relative_to(root) or root.is_relative_to(source) for root in protected):
+                raise ValueError("OpenCode shared runtime must be outside account and state directories")
         for key in ("cpu", "memory"):
             value = profile.get(key, 1024)
             if type(value) is not int or value <= 0:

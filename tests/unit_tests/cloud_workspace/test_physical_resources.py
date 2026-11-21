@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import sys
 import threading
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
@@ -18,7 +19,11 @@ from tests.unit_tests.cloud_workspace.test_docker_log_boundary import boundary, 
 
 spec = importlib.util.spec_from_file_location("physical_resources", Path(module.__file__).with_name("physical_resources.py"))
 physical = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(physical)
+sys.path.insert(0, str(Path(spec.origin).parent))
+try:
+    spec.loader.exec_module(physical)
+finally:
+    sys.path.pop(0)
 
 
 @pytest.fixture
@@ -491,3 +496,44 @@ def test_restricted_socket_lease_accepts_only_operator_owned_group_endpoint(tmp_
     parent.chmod(0o770)
     with pytest.raises(ValueError):
         with module.socket_lease(path, False, group): pass
+
+
+def test_runtime_mount_is_pinned_and_absent_node_refuses_create(provider, monkeypatch):
+    resources, request, _, anchor, _ = provider
+    generation_mount = request["HostConfig"]["Mounts"][2]
+    source = Path("/opt/runtime-assets") / ("9" * 64)
+    definition = json.loads(anchor.read_text())
+    definition.update(image="sha256:" + "5" * 64, shared_runtime=str(source))
+    generation = Path(generation_mount["Source"]) / "scope.json"
+    generation.write_text(json.dumps(definition))
+    generation.chmod(0o600)
+    if os.getuid() == 0:
+        os.chown(generation, resources.boundary.uid, resources.boundary.uid)
+    image = definition["image"]
+    resources.provider_images = resources.provider_images | {image}
+    resources.runtime_assets[image] = source
+    request["Image"] = image
+    runtime = {"Type": "bind", "Source": str(source), "Target": physical.RUNTIME_TARGET, "ReadOnly": True}
+    request["HostConfig"]["Mounts"].append(runtime)
+
+    def unavailable(_):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(physical, "runtime_identity", unavailable)
+    with pytest.raises(ValueError, match="not provisioned"):
+        resources.create_scope(request)
+
+    monkeypatch.setattr(physical, "runtime_identity", lambda _: (10, 11))
+    monkeypatch.setattr(physical, "tree_digest", lambda _: "0" * 64)
+    with pytest.raises(ValueError, match="digest mismatch"):
+        resources.create_scope(request)
+    monkeypatch.setattr(physical, "tree_digest", lambda _: source.name)
+    assert resources.create_scope(request)["shared_runtime"] == str(source)
+    runtime["ReadOnly"] = False
+    with pytest.raises(ValueError, match="mount differs"):
+        resources.create_scope(request)
+    runtime["ReadOnly"] = True
+    definition["project_target"] = "/data/agent/workspace/other"
+    generation.write_text(json.dumps(definition))
+    with pytest.raises(ValueError, match="outside its account binding"):
+        resources.create_scope(request)
