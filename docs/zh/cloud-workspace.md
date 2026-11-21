@@ -17,6 +17,8 @@
 
 可通过 `opencode_provider.shared_runtime` 为固定镜像配置宿主启动栈。镜像与只读资产路径随绑定保存，资产缺失的节点拒绝启动。已回收的绑定可离线迁移或回滚，并复用原状态卷。操作步骤见[共享启动栈部署说明](../../deploy/cloud-workspace/README.md#独立-opencode-共享启动栈)。
 
+通过[发布与节点预置流程](../../deploy/cloud-workspace/OPENCODE_RELEASE.md)生成镜像与启动栈清单，先校验全部调度节点再切换配置。
+
 独立 OpenCode 在发送时同步当前账号兼容模型的服务地址、凭据引用解析结果及已配置的上下文上限。上下文按 token 数传给 OpenCode，例如 1 Mi token 为 1,048,576。修改上限沿用已有模型标识，按原绑定的空闲回收流程生效。
 
 原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件仅贡献 `cloud.environment.ensure/status`，不接管 `session.execution.options`。

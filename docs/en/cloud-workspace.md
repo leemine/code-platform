@@ -18,6 +18,8 @@ Route the fixed `/api/v1/auth/organization/provider/managed/` prefix to the pool
 
 Set `opencode_provider.shared_runtime` to use a host-provisioned startup stack with a pinned image. Each binding stores its image and read-only asset path. A node without the asset refuses launch. After confirmed physical recycling, an operator can migrate or roll back the binding while keeping its original state volume. See the [shared startup stack runbook](../../deploy/cloud-workspace/README.md#独立-opencode-共享启动栈).
 
+Use the [release and node provisioning flow](../../deploy/cloud-workspace/OPENCODE_RELEASE.md) to freeze the image and runtime together and verify each scheduler node before changing the deployment configuration.
+
 Managed OpenCode syncs endpoints, resolved credentials, and configured context limits for compatible models saved by the account when sending a message. The context limit is expressed in tokens, such as 1,048,576 for a 1M context configured at 1,048,576 tokens. Changing the limit keeps the model identifier and uses the existing idle recycling flow for that binding.
 
 Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW; environment ensure or the existing connection warmup invokes the sole Router creator. The plugin contributes only cloud environment RPCs and leaves `session.execution.options` in place.
