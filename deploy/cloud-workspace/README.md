@@ -101,6 +101,16 @@ Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenC
 可用标识交给新启动的 Worker。模型服务地址和密钥留在私有模型文件及 Provider 启动配置。
 Web 选择 OpenCode 时选中这个默认模型。显式选择账号模型时，模型协议与请求参数须兼容，
 且对应映射已在独立 OpenCode 配置登记。Web 在选模时显示失败原因，Worker 在创建会话前独立校验。
+
+**OpenCode 灰度观测**
+
+采集时按 `event_id` 去重，同一日志记录经不同处理器投递时保持这个标识。
+
+- Gateway 日志 `opencode_provider_readiness` 记录账号、绑定、操作 ID、代次、就绪阶段、结果、耗时、预算及认证探针次数。首次就绪尝试用 `attempt=initial`，同一操作可在超时后重试。已经就绪的操作仅记录失败的复核，标为 `attempt=recheck`。聚合首次就绪尝试的超时率时以 `attempt=initial` 的记录为分母，按 `stage=yuanrong_running` 或 `stage=authenticated_health` 分项。需要统计受影响的生命周期时，再按 `operation_id` 去重。
+- 正式 Web 在模型选择被拦截时，通过既有同源账号鉴权上报原因。Gateway 日志 `opencode_web_model_rejected` 记录事件 ID、认证账号 ID 和有限的原因代码。它统计收到的客户端上报，Worker 的实际准入结果仍由原入口处理。上报失败不影响页面提示、会话或 Provider 生命周期。
+
+The Gateway emits `opencode_provider_readiness` for initial readiness attempts and unsuccessful rechecks. It distinguishes the YuanRong RUNNING wait from authenticated health checks and records the elapsed time, budget, and probe count. Hosted Web reports blocked model selections through the existing authenticated same-origin account route. `opencode_web_model_rejected` includes the authenticated account ID and a bounded reason code. Deduplicate records by their Gateway-generated `event_id`. Failed telemetry does not affect selection or execution.
+
 动态选模使用与 Worker 模型目录一致的 OpenCode 模型映射。模型配置随实例的稳定
 绑定保存，运行认证与原生状态保存在 Gateway 管理的目录。管理目录及项目
 路径必须能被执行池以相同路径访问。

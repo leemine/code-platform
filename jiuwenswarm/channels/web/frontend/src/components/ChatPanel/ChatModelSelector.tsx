@@ -26,6 +26,7 @@ import {
   managedOpenCodeReason,
   openCodeDefaultOption,
   readManagedOpenCodeModels,
+  reportManagedOpenCodeRejection,
 } from '../../features/cloudWorkspace/opencodeModels';
 import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
 
@@ -169,13 +170,18 @@ function ConversationModelSelector({
     includeModelGroups && selectableGroups.some((group) => group.enabled !== false && Boolean(group.model_group_id));
   if (!selected && !pickerSelection && models.length === 0 && !hasSelectableGroup && !singleAgent) return null;
 
+  const rejectManagedSelection = (reason: string) => {
+    setSelectionError(t(`chat.modelSelector.managedOpenCode.${reason}`));
+    reportManagedOpenCodeRejection(reason);
+  };
+
   const persistSelection = async (next: ModelSelection) => {
     if (selectedChildTeam) return;
     if (!boundSessionId || disabled || useChatStore.getState().getRuntime(boundSessionId)?.isProcessing) return;
     if (managed) {
       const reason = managedOpenCodeReason(managed, next);
       if (reason) {
-        setSelectionError(t(`chat.modelSelector.managedOpenCode.${reason}`));
+        rejectManagedSelection(reason);
         return;
       }
     }
@@ -217,7 +223,7 @@ function ConversationModelSelector({
           if (selectedChildTeam) return;
           if (!boundSessionId || disabled || useChatStore.getState().getRuntime(boundSessionId)?.isProcessing) return;
           if (managed) {
-            setSelectionError(t('chat.modelSelector.managedOpenCode.opencode_model_not_registered'));
+            rejectManagedSelection('opencode_model_not_registered');
             return;
           }
           setSelectionError('');

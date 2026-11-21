@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -299,6 +300,42 @@ async def test_plugin_uses_original_http_contributions_and_leaves_session_option
             assert (await client.get(base + "/status")).json()["authenticated"] is False
     finally:
         await plugin.shutdown()
+
+@pytest.mark.asyncio
+async def test_web_model_rejection_records_authenticated_account_and_only_reason(config, caplog, monkeypatch):
+    infra = Infrastructure()
+    accounts, service_ = service(config, infra)
+    plugin = CloudWorkspacePlugin(config)
+    plugin.accounts, plugin.environments = accounts, service_
+    plugin.authenticator = AccountAuthenticator(accounts)
+    service_.opencode_relay = SimpleNamespace(handle=plugin.http, handle_shared=plugin.http)
+    registry = ExtensionRegistry(None, {}, None)
+    registry.register_application_plugin(plugin)
+    app = FastAPI()
+    mount_application_plugin_http_routes(app, registry)
+    path = config.api_prefix + "/observations/opencode-model-rejection"
+    payload = {"reason": "opencode_shared_model_protocol_unsupported"}
+    headers = {"Origin": config.public_origin}
+    logger = logging.getLogger("gateway.extensions.cloud_workspace.extension")
+    caplog.set_level("INFO", logger=logger.name)
+    monkeypatch.setattr(logger, "handlers", [caplog.handler])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=config.public_origin) as client:
+        assert (await client.post(path, json=payload, headers=headers)).status_code == 401
+        credentials = {"username": "web-rejection", "password": "long-test-password"}
+        assert (await client.post(config.api_prefix + "/register", json=credentials, headers=headers)).status_code == 201
+        login = await client.post(config.api_prefix + "/login", json=credentials, headers=headers)
+        assert login.status_code == 200
+        assert (await client.post(path, json=payload, headers={"Origin": "https://invalid.example"})).status_code == 401
+        assert (await client.post(path, json=payload | {"model": "private-model"}, headers=headers)).status_code == 400
+        assert (await client.post(path, json={"reason": "arbitrary"}, headers=headers)).status_code == 400
+        assert (await client.post(path, json=payload, headers=headers)).json() == {"recorded": True}
+    events = [r.getMessage() for r in caplog.records if r.msg.startswith("opencode_web_model_rejected")]
+    assert len(events) == 1
+    assert events[0].endswith(f" account_id={login.json()['user_id']} reason={payload['reason']}")
+    event_id = events[0].split()[1].removeprefix("event_id=")
+    assert len(bytes.fromhex(event_id)) == 12
+    assert not infra.allocations
+
 
 @pytest.mark.asyncio
 async def test_writer_and_symlink_boundaries(config, tmp_path):

@@ -5,6 +5,7 @@ import hashlib
 import logging
 import json
 import os
+import secrets
 from pathlib import Path
 from urllib.parse import urlsplit
 from fastapi import Request
@@ -21,6 +22,13 @@ from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension
 
 logger = logging.getLogger(__name__)
 COOKIE = "jiuwenswarm_organization"
+MODEL_REJECTION_PATH = "/observations/opencode-model-rejection"
+MODEL_REJECTION_REASONS = frozenset({
+    "opencode_model_not_registered",
+    "opencode_shared_model_group_unsupported",
+    "opencode_shared_model_options_unsupported",
+    "opencode_shared_model_protocol_unsupported",
+})
 
 def public_environment(row):
     return {key: row[key] for key in ("environment_id", "operation_id", "state", "instance_id")}
@@ -69,6 +77,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
         ))
         if self.environments is not None and self.environments.opencode_relay:
             relay = self.environments.opencode_relay
+            routes += (HTTPRouteContribution(self.config.api_prefix + MODEL_REJECTION_PATH, self.http, ("POST",)),)
             routes += tuple(HTTPRouteContribution(
                 self.config.api_prefix + prefix + "/{project_id}/{path:path}", handler, ("GET", "POST"),
             ) for prefix, handler in (
@@ -166,6 +175,13 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                 raise PermissionError("account login required")
             principal = current_account()
             identity = await principal.check()
+            if op == MODEL_REJECTION_PATH:
+                reason = body.get("reason")
+                if set(body) != {"reason"} or not isinstance(reason, str) or reason not in MODEL_REJECTION_REASONS:
+                    raise ValueError("invalid model rejection observation")
+                logger.info("opencode_web_model_rejected event_id=%s account_id=%s reason=%s",
+                            secrets.token_hex(12), identity["user_id"], reason)
+                return JSONResponse({"recorded": True})
             if op == "/status":
                 return JSONResponse({**identity, "authenticated": True, "enabled": True, "actor_id": identity["user_id"],
                                      "subject_id": identity["user_id"], "auth_backend": "builtin", "execution_mode": "user_instance",
