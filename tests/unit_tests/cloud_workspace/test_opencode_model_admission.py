@@ -102,3 +102,27 @@ def test_sync_validates_only_generated_account_model_fields(field):
         entry["models"]["m"]["extra"] = "invalid"
     with pytest.raises(ValueError):
         validate_account_providers({key: entry})
+
+
+@pytest.mark.parametrize("auth_path, previous_path", [
+    ("/provider/managed/opencode", "/provider/opencode"),
+    ("/provider/opencode", "/provider/managed/opencode"),
+])
+def test_managed_session_settings_allow_only_same_gateway_route_alias(auth_path, previous_path):
+    from jiuwenswarm.server.runtime.agent_adapter.providers import session_recovery
+    from jiuwenswarm.server.runtime.agent_adapter.providers.opencode import OpenCodeAdapter
+
+    origin = "https://gateway.example.invalid/api/organization"
+    adapter = OpenCodeAdapter()
+    adapter._relay_url = origin + auth_path
+    adapter._recovery_settings = {"relay_url": adapter._relay_url, "relay_owner": {"actor_id": "first"}}
+    settings = adapter._session_recovery_settings("project", True)
+    previous = {**settings, "relay_url": origin + previous_path}
+    binding = {"version": 2, "settings_revision": session_recovery.settings_revision(previous)}
+    adapter._require_recovery_settings(binding, "project", True)
+    with pytest.raises(ValueError, match="Provider configuration changed"):
+        adapter._require_recovery_settings(binding, "different-project", True)
+    other_origin = {**previous, "relay_url": "https://different.example.invalid/api/organization" + previous_path}
+    binding["settings_revision"] = session_recovery.settings_revision(other_origin)
+    with pytest.raises(ValueError, match="Provider configuration changed"):
+        adapter._require_recovery_settings(binding, "project", True)

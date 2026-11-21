@@ -579,6 +579,14 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
         managed.validate()
     managed = replace(managed, resource_reconciler_socket=str(tmp_path / "physical.sock"))
     managed.validate()
+    for enabled in (False, True):
+        replace(managed, opencode_provider={**managed.opencode_provider, "admit_new_bindings": enabled}).validate()
+    for enabled in (None, "false", 0, 1, []):
+        with pytest.raises(ValueError, match="admit_new_bindings"):
+            replace(managed, opencode_provider={**managed.opencode_provider, "admit_new_bindings": enabled}).validate()
+    with pytest.raises(ValueError, match="both a switch and an account_allowlist"):
+        replace(managed, opencode_provider={**managed.opencode_provider,
+                                           "admit_new_bindings": True, "account_allowlist": []}).validate()
     for allowlist in ([], ["u_pilot"]):
         replace(managed, opencode_provider={**managed.opencode_provider, "account_allowlist": allowlist}).validate()
     for allowlist in (None, "u_pilot", [7], [""], [" u_pilot "]):
@@ -602,3 +610,15 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
     scoped = CloudInstancePolicy(app.store, opencode_relay_url=endpoint, opencode_model_policy=lambda row: None)
     assert OPENCODE_RELAY_ENV not in scoped.plan(info).env_vars
     assert OPENCODE_RELAY_ENV not in app.store.get(actor)["profile"]["runtime_env"]
+
+
+def test_managed_relay_paths_use_existing_signed_handlers(config):
+    plugin = CloudWorkspacePlugin(config)
+    relay = SimpleNamespace(handle=AsyncMock(), handle_shared=AsyncMock())
+    plugin.environments = SimpleNamespace(opencode_relay=relay)
+    relay_routes = {route.path.removeprefix(config.api_prefix).split("/{project_id}")[0]: route.endpoint
+                    for route in plugin.http_routes() if "/{project_id}" in route.path}
+    assert relay_routes == {
+        "/provider/opencode": relay.handle, "/provider/opencode-worker": relay.handle_shared,
+        "/provider/managed/opencode": relay.handle, "/provider/managed/opencode-worker": relay.handle_shared,
+    }

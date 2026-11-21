@@ -2,7 +2,7 @@
 from gateway.auth.account_authenticator import AccountAuthenticator
 from gateway.auth.remote_accounts import RemoteAccounts
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentService
-from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_PATH
+from gateway.extensions.cloud_workspace.config import OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH
 from gateway.services.cloud_instance_policy import CloudInstancePolicy
 
 def assemble(config, client):
@@ -29,7 +29,8 @@ def assemble(config, client):
         pool = CloudOpencodePool(store, client._yuanrong, config, resources=resources)
         model_policy = pool.worker_model_policy
         relay = CloudOpencodeRelay(store, pool, auth_transport=config.opencode_provider.get("auth_transport", "basic"))
-        relay_url = config.public_origin.rstrip("/") + config.api_prefix + OPENCODE_RELAY_PATH
+        path = OPENCODE_MANAGED_RELAY_PATH if "admit_new_bindings" in config.opencode_provider else OPENCODE_RELAY_PATH
+        relay_url = config.public_origin.rstrip("/") + config.api_prefix + path
     policy = CloudInstancePolicy(
         store, ready_timeout=config.ready_timeout, resources=resources, opencode_relay_url=relay_url, opencode_model_policy=model_policy,
     )

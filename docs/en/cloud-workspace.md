@@ -12,7 +12,9 @@ The environment SQLite store has a single-writer file lock. Private directories/
 
 ## Recovery and authorization
 
-For a shared execution pool, configure `opencode_provider.account_allowlist` with `user_id` values issued by the account authority. An empty list stops new OpenCode Provider bindings. Existing bindings can recreate the Provider with their original state volumes. General account registration remains controlled by `registration_enabled`. Dedicated OpenCode deployments can continue to omit the field. The Gateway reads the configuration at startup. A newly registered account can be added after it receives its ID and before its Worker first starts. An already running Worker receives the managed OpenCode configuration on its next launch.
+For a shared execution pool, configure `opencode_provider.admit_new_bindings`. With `true`, authenticated accounts can request OpenCode on demand. With `false`, existing bindings can still recreate the Provider with their original state volumes. General registration continues to use `registration_enabled`. Gateway reads the switch at startup. Workers launched under switch-based admission use the same relay address when the switch changes.
+
+Route the fixed `/api/v1/auth/organization/provider/managed/` prefix to the pool's Gateway, with the deployment's configured API prefix. Preserve the complete signed request path and headers. Gateway verifies the Worker identity and project ownership. Existing deployments can continue to use `account_allowlist` and the original routes. Remove `account_allowlist` when explicitly configuring the switch. Managed session recovery accepts the two known route forms on the same origin and API prefix.
 
 Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW; environment ensure or the existing connection warmup invokes the sole Router creator. The plugin contributes only cloud environment RPCs and leaves `session.execution.options` in place.
 

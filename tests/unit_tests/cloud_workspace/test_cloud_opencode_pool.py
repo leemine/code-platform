@@ -117,6 +117,42 @@ async def test_concurrent_project_requests_and_gateway_restart_reuse_one_instanc
 
 
 @pytest.mark.asyncio
+async def test_pool_switch_controls_new_bindings_without_disconnecting_existing_workers(sandbox):
+    initial, frontend, account, config = sandbox
+    pilot = account("existing-account")
+    other = account("other-account")
+    config.opencode_provider["admit_new_bindings"] = False
+    closed = CloudOpencodePool(initial.store, frontend, config)
+    assert closed.worker_model_policy(pilot)["account_model_sync"]
+    with pytest.raises(PermissionError):
+        await closed.sync_models(pilot, "project", PROJECT_DIR, "0" * 64, shared=True)
+    assert not frontend.created
+
+    config.opencode_provider["admit_new_bindings"] = True
+    admitted = CloudOpencodePool(initial.store, frontend, config)
+    async with admitted.hold(pilot, "project", PROJECT_DIR, shared=True) as original:
+        admitted.register_session(original, "project", "original-native-id")
+
+    config.opencode_provider["admit_new_bindings"] = False
+    closed = CloudOpencodePool(initial.store, frontend, config)
+
+    async def idle(_lease):
+        return True
+
+    closed.idle_check = idle
+    assert await closed.reclaim_idle() == 1
+    with pytest.raises(PermissionError):
+        async with closed.hold(other, "project", PROJECT_DIR, shared=True):
+            pytest.fail("Closed pool created a new binding")
+    async with closed.hold(pilot, "project", PROJECT_DIR, shared=True) as resumed:
+        assert resumed.binding_id == original.binding_id
+        assert resumed.instance_id != original.instance_id
+        assert closed.owns_session(resumed, "project", "original-native-id")
+    assert len(frontend.created) == 2
+    assert frontend.created[0]["workspace"] == frontend.created[1]["workspace"]
+
+
+@pytest.mark.asyncio
 async def test_allowlist_blocks_new_bindings_and_preserves_an_idle_shared_binding(sandbox):
     initial, frontend, account, config = sandbox
     pilot = account("pilot-account")
