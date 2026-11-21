@@ -63,11 +63,19 @@ def validate_account_providers(providers: dict) -> None:
                 or not isinstance(models, dict) or len(models) != 1):
             raise ValueError("opencode_shared_model_options_unsupported")
         model = next(iter(models))
-        if (not model or models[model] != {"name": model}
+        definition = models[model]
+        if (not model or not isinstance(definition, dict) or definition.get("name") != model
+                or definition.keys() - {"name", "limit"}
                 or any(not isinstance(v, str) or "{env:" in v or "{file:" in v
                        for v in (model, options["baseURL"], options["apiKey"]))
                 or any(type(v) is not int or v <= 0 for k, v in options.items() if k not in {"baseURL", "apiKey"})):
             raise ValueError("opencode_shared_model_options_unsupported")
+        if "limit" in definition:
+            limit = definition["limit"]
+            if (not isinstance(limit, dict) or limit.keys() != {"context", "output"}
+                    or type(limit["context"]) is not int or limit["context"] <= 0
+                    or type(limit["output"]) is not int or limit["output"] != 0):
+                raise ValueError("opencode_shared_model_options_unsupported")
         url = urlsplit(options["baseURL"])
         if url.scheme not in {"http", "https"} or not url.hostname:
             raise ValueError("opencode_shared_model_protocol_unsupported")

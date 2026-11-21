@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 73 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 74 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -31,7 +31,7 @@ generated: true
 | [gateway](#module-14) | 7 |
 | [gateway/channel_manager/im_platforms/xiaoyi](#module-15) | 1 |
 | [gateway/channel_manager/web](#module-16) | 1 |
-| [gateway/common](#module-17) | 3 |
+| [gateway/common](#module-17) | 4 |
 | [gateway/extensions/cloud_workspace](#module-18) | 6 |
 | [gateway/extensions/data_sync](#module-19) | 5 |
 | [gateway/message_handler](#module-20) | 1 |
@@ -52,7 +52,7 @@ generated: true
 | [jiuwenswarm/server](#module-35) | 4 |
 | [jiuwenswarm/server/control](#module-36) | 4 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-37) | 11 |
-| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-38) | 9 |
+| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-38) | 10 |
 | [jiuwenswarm/server/runtime/gateway_adapter](#module-39) | 1 |
 | [jiuwenswarm/server/runtime/session](#module-40) | 3 |
 | [jiuwenswarm/server/worker](#module-41) | 1 |
@@ -219,6 +219,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](features/F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [F_20261121_2103_opencode-account-model-context](features/F_20261121_2103_opencode-account-model-context.md) | F | 托管 OpenCode 同步账号模型上下文上限 | leemine | gateway/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/opencode_model_policy.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, tests/unit_tests/cloud_workspace/test_opencode_model_admission.py | 无独立 D：沿现有账号模型同步、原生配置及按绑定回收契约扩展。 |
 | [B_20261031_1122_model-config-without-core](bugfix/jiuwenswarm/common/config_panel/B_20261031_1122_model-config-without-core.md) | B | 无 Core 安装的模型配置加载与保存修复 | leemine | gateway/common, jiuwenswarm/common/config_panel, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models | gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/modelAdapters.ts, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/modelValidation.ts, jiuwenswarm/channels/web/frontend/src/types/index.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/tests/modelReasoning.test.mjs, tests/unit_tests/test_external_model_settings.py | 无独立 D：用户确认的最小配置缺陷修复，不统一 Provider 推理能力，无独立设计。 |
 | [B_20261110_2036_codex-context-window](bugfix/agent_adapter/B_20261110_2036_codex-context-window.md) | B | Codex 自定义模型上下文窗口传递与目录上限 | leemine | gateway/common, jiuwenswarm/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/model_selection.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：对现有模型解析与 Codex 配置接缝的修复，不新增执行链。 |
 
@@ -449,6 +450,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [F_20261121_0233_opencode-worker-shared-provider](features/F_20261121_0233_opencode-worker-shared-provider.md) | F | 同一 Worker 的 OpenCode 共享实例与旧会话兼容 | leemine | gateway/services, gateway/extensions/cloud_workspace, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/extensions/cloud_workspace/extension.py, deploy/cloud-workspace/physical_resources.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/session_recovery.py | 无独立 D：用户确认 Worker 内共享与旧会话沿用原状态卷，设计边界登记在管理仓任务表。 |
 | [F_20261121_1751_opencode-global-admission](features/F_20261121_1751_opencode-global-admission.md) | F | 托管 OpenCode 固定中继与新绑定开关 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/security/opencode_relay_auth.py, gateway/extensions/cloud_workspace/config.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_workspace_assembly.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py | 无独立 D：延续共池方案与原账号准入契约，用户已确认改用全局开关和固定入口。 |
+| [F_20261121_2103_opencode-account-model-context](features/F_20261121_2103_opencode-account-model-context.md) | F | 托管 OpenCode 同步账号模型上下文上限 | leemine | gateway/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/opencode_model_policy.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, tests/unit_tests/cloud_workspace/test_opencode_model_admission.py | 无独立 D：沿现有账号模型同步、原生配置及按绑定回收契约扩展。 |
 | [B_20261030_2041_opencode-cli-discovery](bugfix/agent_adapter/B_20261030_2041_opencode-cli-discovery.md) | B | OpenCode 桌面 PATH 缺口与传输边界收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, scripts | jiuwenswarm/server/runtime/agent_adapter/providers/cli.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_transport.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, tests/unit_tests/agentserver/test_opencode_direct_adapter.py, scripts/assemble-electron-linux.py | 无独立 D：用户确认保留官方 HTTP/SSE 并隔离传输边界；延续管理仓 EXECUTION_PROVIDER_BOUNDARY_REVIEW_20261026 的外部 Provider 桌面候选。 |
 | [B_20261102_1123_provider-native-timeouts](bugfix/agent_adapter/B_20261102_1123_provider-native-timeouts.md) | B | 外部 Provider 模型超时与整轮时限职责修复 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers, jiuwenswarm/common | jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/common/config_panel/config_set_handlers.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py | 无独立 D：用户在本会话确认超时职责修正与官方配置复用方案，无独立 D 文档；续写当前外部适配器契约，不修改已归档设计。 |
 | [B_20261102_1436_claude-background-lifecycle](bugfix/agent_adapter/B_20261102_1436_claude-background-lifecycle.md) | B | Claude 后台探索的原生完成边界 | leemine | jiuwenswarm/server/runtime/agent_adapter/providers | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py | 无独立 D：用户明确确认的最小缺陷修复，沿现有 S_02_external-adapter-boundary 契约，无新增执行架构。 |

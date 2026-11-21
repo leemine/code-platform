@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 18 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 19 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -23,7 +23,7 @@ generated: true
 | [desktop](#module-6) | 1 |
 | [gateway](#module-7) | 5 |
 | [gateway/channel_manager/web](#module-8) | 1 |
-| [gateway/common](#module-9) | 1 |
+| [gateway/common](#module-9) | 2 |
 | [gateway/extensions/cloud_workspace](#module-10) | 4 |
 | [gateway/extensions/data_sync](#module-11) | 3 |
 | [gateway/services](#module-12) | 6 |
@@ -36,7 +36,7 @@ generated: true
 | [jiuwenswarm/server](#module-19) | 2 |
 | [jiuwenswarm/server/control](#module-20) | 1 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-21) | 4 |
-| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-22) | 2 |
+| [jiuwenswarm/server/runtime/agent_adapter/providers](#module-22) | 3 |
 | [jiuwenswarm/server/runtime/session](#module-23) | 3 |
 | [scripts](#module-24) | 1 |
 | [server/front](#module-25) | 1 |
@@ -120,6 +120,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261031_1714_claude-main-agent-and-model-settings](F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
+| [F_20261121_2103_opencode-account-model-context](F_20261121_2103_opencode-account-model-context.md) | F | 托管 OpenCode 同步账号模型上下文上限 | leemine | gateway/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/opencode_model_policy.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, tests/unit_tests/cloud_workspace/test_opencode_model_admission.py | 无独立 D：沿现有账号模型同步、原生配置及按绑定回收契约扩展。 |
 
 <a id="module-10"></a>
 
@@ -246,6 +247,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [F_20261121_0233_opencode-worker-shared-provider](F_20261121_0233_opencode-worker-shared-provider.md) | F | 同一 Worker 的 OpenCode 共享实例与旧会话兼容 | leemine | gateway/services, gateway/extensions/cloud_workspace, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/extensions/cloud_workspace/extension.py, deploy/cloud-workspace/physical_resources.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/session_recovery.py | 无独立 D：用户确认 Worker 内共享与旧会话沿用原状态卷，设计边界登记在管理仓任务表。 |
 | [F_20261121_1751_opencode-global-admission](F_20261121_1751_opencode-global-admission.md) | F | 托管 OpenCode 固定中继与新绑定开关 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/security/opencode_relay_auth.py, gateway/extensions/cloud_workspace/config.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_workspace_assembly.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py | 无独立 D：延续共池方案与原账号准入契约，用户已确认改用全局开关和固定入口。 |
+| [F_20261121_2103_opencode-account-model-context](F_20261121_2103_opencode-account-model-context.md) | F | 托管 OpenCode 同步账号模型上下文上限 | leemine | gateway/common, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/opencode_model_policy.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, tests/unit_tests/cloud_workspace/test_opencode_model_admission.py | 无独立 D：沿现有账号模型同步、原生配置及按绑定回收契约扩展。 |
 
 <a id="module-23"></a>
 
