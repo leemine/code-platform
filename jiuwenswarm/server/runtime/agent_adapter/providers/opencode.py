@@ -193,6 +193,7 @@ class OpenCodeAdapter:
         url = str(settings.get("url") or "").strip()
         if self._relay_url:
             self._executable = None
+            self._permission_profile = "default"
             self._configure_relay(settings)
             self._directory = ""
         else:
@@ -343,6 +344,25 @@ class OpenCodeAdapter:
             raise ValueError("OpenCode session workspace must match its configured binding")
         return directory
 
+    def _managed_native_model(self, request):
+        from gateway.common.model_selection import ModelSelection
+        from gateway.common.opencode_model_policy import native_model_binding, native_model_reference, worker_model_policy
+        from jiuwenswarm.server.runtime.session.model_selection_store import get_session_model_selection
+
+        if not self._relay_url:
+            return None
+        policy = worker_model_policy()
+        if policy is None:
+            return None
+        raw = request.params.get("model_selection")
+        selection = (
+            ModelSelection.model_validate(raw) if raw is not None else
+            get_session_model_selection(request.session_id) if request.session_id and not request.params.get("model_name")
+            else None
+        )
+        reference = native_model_reference(selection)
+        return native_model_binding(reference, policy) if reference is not None else None
+
     def execution_input_policy(self, request):
         from ..execution_input import ExecutionInputPolicy
         sid = request.session_id or "default"
@@ -351,7 +371,9 @@ class OpenCodeAdapter:
         if directory is None and self._relay_url:
             _, directory = self._managed_project(sid)
         return ExecutionInputPolicy(
-            require_model=not self._model or bool(request.params.get("model_name") or request.params.get("model_selection")),
+            require_model=self._managed_native_model(request) is None and (not self._model or bool(
+                request.params.get("model_name") or request.params.get("model_selection")
+            )),
             include_model_catalog=bool(self._executable), strip_agentos_max_tokens=True, catalog_settings_key="opencode",
             bound_directory=directory,
         )
@@ -538,15 +560,19 @@ class OpenCodeAdapter:
         from ..execution_input import prepared_input
         execution = prepared_input(request, inputs)
         sid = request.session_id or "default"
+        native_model = self._managed_native_model(request)
+        selected_model = native_model or self._model
+        explicit_selection = bool(request.params.get("model_name") or request.params.get("model_selection"))
+        resolve_selection = native_model is None and (not selected_model or explicit_selection)
+        if resolve_selection:
+            from .opencode_models import resolve_request_model, validate_request_model
+            _, selected_model = validate_request_model(execution.model) if execution else resolve_request_model(request)
         await self.prepare_session(session_id=sid, channel_id=request.channel_id,
                                    mode=request.params.get("mode", "agent"),
                                    project_dir=execution.directory if execution else inputs.get("workspace_dir") or inputs.get("project_dir") or inputs.get("cwd"),
                                    facts=execution.session if execution else None, execution=execution)
         session = self._sessions[sid]
-        selected_model = self._model
-        if not selected_model or request.params.get("model_name") or request.params.get("model_selection"):
-            from .opencode_models import resolve_request_model, validate_request_model
-            _, selected_model = validate_request_model(execution.model) if execution else resolve_request_model(request)
+        if native_model is not None or resolve_selection:
             registered = await self._call("GET", "/provider", session=session)
             providers = registered.get("all", [])
             if not any(p.get("id") == selected_model["providerID"] and selected_model["modelID"] in p.get("models", {}) for p in providers):
@@ -827,7 +853,7 @@ class OpenCodeAdapter:
         session = self._sessions.get(session_id)
         desired = session.desired_permission if session else self._permission_profile
         effective = session.effective_permission if session else None
-        supported = list(self.permission_profiles) if self._executable else []
+        supported = list(self.permission_profiles) if self._executable else ["default"] if self._relay_url else []
         state = "not_started"
         if desired not in supported:
             state = "unsupported"
@@ -884,7 +910,9 @@ class OpenCodeAdapter:
         if reload_scopes and "permissions" not in reload_scopes:
             return  # Equipment/model snapshots are reconciled at the existing turn boundary.
         from jiuwenswarm.common.config import get_config
-        profile = self._read_permission_profile(config_base if config_base is not None else get_config())
+        profile = "default" if self._relay_url else self._read_permission_profile(
+            config_base if config_base is not None else get_config()
+        )
         if target_session_id is None:
             self._permission_profile = profile
         sessions = [(sid, session) for sid, session in self._sessions.items()

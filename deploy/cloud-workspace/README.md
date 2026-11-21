@@ -96,6 +96,11 @@ Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenC
 
 镜像包含官方 `opencode` 和 `sh`，并支持 Worker 现有的 POSIX 运行账号。
 模型文件为运维私有 JSON，包含 OpenCode 可用的模型配置，供独立实例启动。
+给新账号配置默认模型时，在这个文件设置顶层 `"model": "<provider-id>/<model-id>"`，
+并在同一文件的 `provider.<provider-id>.models` 声明该模型。Gateway 把默认模型标识和
+可用标识交给新启动的 Worker。模型服务地址和密钥留在私有模型文件及 Provider 启动配置。
+Web 选择 OpenCode 时选中这个默认模型。显式选择账号模型时，模型协议与请求参数须兼容，
+且对应映射已在独立 OpenCode 配置登记。Web 在选模时显示失败原因，Worker 在创建会话前独立校验。
 动态选模使用与 Worker 模型目录一致的 OpenCode 模型映射。模型配置随实例的稳定
 绑定保存，运行认证与原生状态保存在 Gateway 管理的目录。管理目录及项目
 路径必须能被执行池以相同路径访问。
@@ -104,7 +109,7 @@ Frontend 管理 API 按账号、稳定 Worker 环境和 Provider 为新的 OpenC
 需要重新启动才能读取该地址。开启后，使用已登记云项目的 OpenCode 会话
 通过中继运行，项目目录仍来自原 ProjectStore。共享容器挂载该账号 Worker 的项目文件根、
 独立的持久状态和本代只读启动配置。各项目共享进程的文件访问范围。Gateway 继续校验项目目录，
-按项目校验原生会话、事件和审批回复。远端模式使用现有 Default 审批控制。
+按项目校验原生会话、事件和审批回复。受管中继使用现有 Default 审批控制，新账号的全局权限设置只影响支持该设置的执行线路。
 
 部署共享版本时先更新宿主物理边界和 Gateway，再更新 Worker。新 Worker 写入会话时
 持久保存共享线路，历史记录没有该标记时继续用原项目线路。

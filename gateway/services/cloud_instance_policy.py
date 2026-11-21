@@ -1,6 +1,9 @@
 """Environment policy supplied to the original instance lifecycle owner."""
 from __future__ import annotations
 
+import json
+
+from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
 from gateway.auth.account_authenticator import current_account
 from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
 from gateway.common.security.service_auth import ServiceAuthenticator, SERVICE_AUTH_HEADER
@@ -9,8 +12,9 @@ from gateway.services.cloud_environments import EnvironmentUnavailable
 
 
 class CloudInstancePolicy:
-    def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None):
+    def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None, opencode_model_policy=None):
         self.opencode_relay_url = opencode_relay_url
+        self.opencode_model_policy = opencode_model_policy
         self.resources = resources
         self.store = store
         self.ready_timeout = ready_timeout
@@ -52,6 +56,8 @@ class CloudInstancePolicy:
                    JIUWENSWARM_CONTAINER_FILE_ROOT="/home/agentos")
         if self.opencode_relay_url:
             env[OPENCODE_RELAY_ENV] = self.opencode_relay_url
+            if self.opencode_model_policy is not None:
+                env[MODEL_POLICY_ENV] = json.dumps(self.opencode_model_policy)
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

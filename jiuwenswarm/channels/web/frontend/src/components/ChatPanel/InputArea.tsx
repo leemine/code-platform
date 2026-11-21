@@ -6231,7 +6231,9 @@ function PermissionSelector({
   onSavePermission: (updates: Record<string, string>) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const permission = permissionProfiles === undefined ? effectivePermissionProfile(permissionProfile, mode) : permissionProfile;
+  const permission = permissionProfiles?.length === 1
+    ? permissionProfiles[0]
+    : permissionProfiles === undefined ? effectivePermissionProfile(permissionProfile, mode) : permissionProfile;
   const permissionOptions = permissionProfiles ?? permissionOptionsForMode(mode);
 
   const [isOpen, setIsOpen] = useState(false);

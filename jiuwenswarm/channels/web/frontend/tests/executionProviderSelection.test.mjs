@@ -105,6 +105,10 @@ test('catalog failure offers retry; keyboard Escape closes the existing menu', a
     await act(async () => { root.render(createElement(Selector, { sessionId: 'new' })); });
     await act(async () => { document.querySelector('[data-testid="chat-panel-execution-trigger"]').click(); });
     assert.ok(document.querySelector('[data-testid="chat-panel-execution-retry"]'));
+    globalThis.__providerRpc = respond([]);
+    await act(async () => { document.querySelector('[data-testid="chat-panel-execution-retry"]').click(); });
+    await act(async () => { document.querySelector('[data-testid="chat-panel-execution-trigger"]').click(); });
+    assert.ok(document.querySelector('[data-testid="chat-panel-execution-retry"]'));
     globalThis.__providerRpc = respond();
     await act(async () => { document.querySelector('[data-testid="chat-panel-execution-retry"]').click(); });
     await act(async () => { document.querySelector('[data-testid="chat-panel-execution-trigger"]').click(); });
