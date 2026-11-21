@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from gateway.common.security.opencode_relay_auth import HEADER, parse_assertion, verify_assertion
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable
-from gateway.services.cloud_opencode_pool import OpenCodeFault
+from gateway.services.cloud_opencode_pool import OpenCodeConfigurationError, OpenCodeFault
 
 logger = logging.getLogger(__name__)
 _PROJECT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,159}\Z")
@@ -338,6 +338,8 @@ class CloudOpencodeRelay:
             response = _RelayResponse(upstream, scope, content=events)
             handed_off = True
             return response
+        except OpenCodeConfigurationError as exc:
+            return JSONResponse({"code": str(exc)}, status_code=409)
         except (PermissionError, FileNotFoundError, KeyError, TypeError, ValueError):
             return JSONResponse({"code": "OPENCODE_FORBIDDEN"}, status_code=403)
         except (EnvironmentUnavailable, YuanrongAgentApiError, httpx.HTTPError, ClientDisconnect, OSError, TimeoutError) as exc:

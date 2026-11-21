@@ -597,3 +597,46 @@ async def test_shared_binding_checks_every_project_and_retains_session_ownership
     assert pool.owns_session(restored, "project", "ses_a")
     assert not pool.owns_session(restored, "project", "ses_b")
     assert frontend.created[-1]["workspace"] == frontend.created[0]["workspace"]
+
+
+@pytest.mark.asyncio
+async def test_worker_and_provider_share_first_snapshot_across_gateway_restart(sandbox):
+    import json
+
+    pool, frontend, account, config = sandbox
+    owner = account("old")
+    other = account("new")
+    model_file = Path(config.opencode_provider["model_config"])
+
+    def restart(model):
+        model_file.write_text(json.dumps({"model": f"test/{model}", "provider": {
+            "test": {"models": {model: {}}}
+        }}))
+        return CloudOpencodePool(pool.store, frontend, config)
+
+    old = restart("a")
+    assert old.worker_model_policy(owner)["default"] == "test/a"
+    assert not frontend.created
+    with pool.store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM provider_bindings").fetchone()[0] == 0
+    new = restart("b")
+    assert new.worker_model_policy(owner)["default"] == "test/a"
+    assert new.worker_model_policy(other)["default"] == "test/b"
+    async with new.hold(owner, "project", PROJECT_DIR, shared=True):
+        mounted = Path(frontend.created[0]["mounts"][-1]["source"]) / "opencode.json"
+        data = json.loads(mounted.read_bytes())
+        assert data["model"] == "test/a"
+    data["$schema"] = "https://opencode.ai/config.json"
+    mounted.write_text(json.dumps(data))
+    assert new.worker_model_policy(owner)["default"] == "test/a"
+    data["provider"]["test"]["options"] = {"baseURL": "https://changed.invalid"}
+    mounted.write_text(json.dumps(data))
+    assert new.worker_model_policy(owner)["error"] == "opencode_model_snapshot_stale"
+    del data["provider"]["test"]["options"]
+    data["permission"]["*"] = "deny"
+    mounted.write_text(json.dumps(data))
+    assert new.worker_model_policy(owner)["models"] == {}
+    with pytest.raises(ValueError, match="opencode_approval_policy_conflict"):
+        async with new.hold(owner, "project", PROJECT_DIR, shared=True):
+            pytest.fail("Conflicting active configuration must block dispatch")
+    assert new.worker_model_policy(other)["default"] == "test/b"

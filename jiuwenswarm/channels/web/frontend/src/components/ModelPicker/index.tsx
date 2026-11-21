@@ -34,6 +34,7 @@ interface ModelPickerProps {
   testIdPrefix?: string;
   /** Explain a saved selection that is unavailable without replacing it. */
   unavailableSelectionLabel?: string;
+  modelRejection?: (model: ModelEntry) => { message: string; onSelect: () => void } | undefined;
 }
 
 const MENU_GAP = 10;
@@ -75,6 +76,7 @@ export default function ModelPicker({
   excludeFreeModels = false,
   testIdPrefix = 'model-picker',
   unavailableSelectionLabel,
+  modelRejection,
   catalog,
 }: ModelPickerProps): JSX.Element {
   const { t } = useTranslation();
@@ -519,12 +521,15 @@ export default function ModelPicker({
                       ? isSameSelection(selection, modelSelection)
                       : model === selected && selection?.type !== 'model_group';
                     const displayName = getModelDisplayName(model);
-                    const metadata = formatModelMetadata(model, t);
+                    const rejection = modelRejection?.(model);
+                    const metadata = rejection?.message || formatModelMetadata(model, t);
                     return (
                       <button
                         key={`${model.model_id ?? model.model_name}-${index}`}
                         type="button"
-                        onClick={() => handleSelectModel(model)}
+                        aria-disabled={rejection ? true : undefined}
+                        title={rejection?.message}
+                        onClick={rejection ? rejection.onSelect : () => handleSelectModel(model)}
                         className={clsx(
                           'chat-mode-select__option',
                           active && 'chat-mode-select__option--active',
@@ -609,12 +614,15 @@ export default function ModelPicker({
               ? isSameSelection(selection, modelSelection)
               : model === selected && selection?.type !== 'model_group';
             const displayName = getModelDisplayName(model);
-            const metadata = formatModelMetadata(model, t);
+            const rejection = modelRejection?.(model);
+            const metadata = rejection?.message || formatModelMetadata(model, t);
             return (
               <button
                 key={`${model.model_id ?? model.model_name}-${index}`}
                 type="button"
-                onClick={() => handleSelectModel(model)}
+                aria-disabled={rejection ? true : undefined}
+                title={rejection?.message}
+                onClick={rejection ? rejection.onSelect : () => handleSelectModel(model)}
                 className={clsx('chat-mode-select__option', active && 'chat-mode-select__option--active')}
                 role="menuitemradio"
                 aria-checked={active}

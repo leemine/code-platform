@@ -5,6 +5,8 @@ const nativePrefix = 'opencode:';
 
 export type ManagedOpenCodeModels = {
   default: { id: string; label: string } | null;
+  registered?: string[];
+  error?: string | null;
   reasons: Record<string, string>;
 };
 
@@ -18,6 +20,11 @@ export function readManagedOpenCodeModels(config?: Record<string, unknown>): Man
       typeof policy.default?.id !== 'string' || !policy.default.id.startsWith(nativePrefix)
       || typeof policy.default.label !== 'string'
     )) return null;
+    if (policy.registered !== undefined && (!Array.isArray(policy.registered)
+      || !policy.registered.every((id: unknown) => typeof id === 'string'))) return null;
+    if (policy.default && typeof policy.default_account_id === 'string' && policy.default_account_id) {
+      return { ...policy, default: { id: policy.default_account_id, label: policy.default.label } };
+    }
     return policy as ManagedOpenCodeModels;
   } catch {
     return null;
@@ -29,9 +36,10 @@ export function isOpenCodeNativeModel(selection?: ModelSelection | null): boolea
 }
 
 export function managedOpenCodeReason(policy: ManagedOpenCodeModels, selection: ModelSelection): string | null {
+  if (policy.error) return policy.error;
   if (selection.type !== 'model') return 'opencode_shared_model_group_unsupported';
   if (isOpenCodeNativeModel(selection)) {
-    return selection.id === policy.default?.id ? null : 'opencode_model_not_registered';
+    return (selection.id === policy.default?.id || policy.registered?.includes(selection.id.slice(nativePrefix.length))) ? null : 'opencode_model_not_registered';
   }
   return Object.prototype.hasOwnProperty.call(policy.reasons, selection.id) ? policy.reasons[selection.id] : null;
 }
@@ -42,7 +50,8 @@ export function reportManagedOpenCodeRejection(reason: string): void {
 }
 
 export function openCodeDefaultOption(policy: ManagedOpenCodeModels): ModelEntry | null {
-  return policy.default && {
+  if (!policy.default?.id.startsWith(nativePrefix)) return null;
+  return {
     model_id: policy.default.id,
     model_name: policy.default.label,
     model_provider: 'OpenCode',

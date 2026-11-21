@@ -201,7 +201,7 @@ function restoreNewConversationSelection(
 ): SessionRuntime {
   // Catalog refresh can briefly omit groups; keep the draft group until the user
   // changes it. Historical sessions heal via ChatModelSelector / session restore.
-  if (runtime.selectedModelSelection?.type === 'model_group') return runtime;
+  if (runtime.executionProvider === 'opencode-direct' || runtime.selectedModelSelection?.type === 'model_group') return runtime;
   const legacyName = loadLastLegacyModelName();
   const legacyModel = models.find((model) => model.model_name === legacyName);
   if (legacyName && (legacyModel || models.length === 0)) {

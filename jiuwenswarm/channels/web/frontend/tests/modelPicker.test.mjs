@@ -968,3 +968,40 @@ test('design selectors hide model groups and persist an ordinary model fallback'
     assert.equal(byId('chat-panel-model-selector-moa-option'), null);
   });
 });
+
+test('opening managed OpenCode history preserves its saved model while the account catalog loads', async () => {
+  await withFixture(async ({ mount, byId, click }) => {
+    setupStableCatalog();
+    const saved = { type: 'model', id: 'opencode:fixture/previous' };
+    useSessionStore.getState().setExecutionProvider(sessionId, 'opencode-direct');
+    useSessionStore.getState().setSelectedModelSelection(sessionId, saved);
+    let resolveCatalog;
+    const calls = [];
+    const original = webClient.request;
+    webClient.request = async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'config.get') return new Promise(resolve => { resolveCatalog = resolve; });
+      return {};
+    };
+    try {
+      await mount(createElement(ChatModelSelector, { sessionId }));
+      assert.deepEqual(useSessionStore.getState().runtimes[sessionId].selectedModelSelection, saved);
+      assert.match(byId('chat-panel-model-selector-trigger').textContent, /fixture\/previous/);
+      await act(async () => resolveCatalog({ managed_opencode_models: JSON.stringify({
+        default: { id: 'opencode:fixture/new', label: 'New' }, default_account_id: 'mdl-a', registered: ['fixture/new'], reasons: { 'mdl-b': 'opencode_model_not_registered' },
+      }) }));
+      assert.deepEqual(useSessionStore.getState().runtimes[sessionId].selectedModelSelection, saved);
+      assert.ok(byId('chat-panel-model-selector-error'));
+      const writes = () => calls.filter(call => call.method === 'session.selection.set');
+      assert.equal(writes().length, 0);
+      await click(byId('chat-panel-model-selector-trigger'));
+      const menu = byId('chat-panel-model-selector-menu');
+      assert.equal(menu.querySelector('[data-variant="opencode:fixture/new"]'), null);
+      assert.equal(menu.querySelector('[data-variant="mdl-b"]').getAttribute('aria-disabled'), 'true');
+      await click(menu.querySelector('[data-variant="mdl-a"]'));
+      assert.deepEqual(writes().map(call => call.params), [{ session_id: sessionId, model_selection: { type: 'model', id: 'mdl-a' } }]);
+    } finally {
+      webClient.request = original;
+    }
+  });
+});

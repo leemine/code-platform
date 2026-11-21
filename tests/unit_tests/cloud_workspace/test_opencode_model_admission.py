@@ -36,6 +36,8 @@ def test_managed_model_projection_uses_the_native_default_and_hides_credentials(
     policy = deployment_model_policy(registered)
     public = public_managed_model_policy(config, policy)
     assert public["default"]["id"] == f"opencode:{selector}"
+    assert public["default_account_id"] == "registered"
+    assert public_managed_model_policy({"models": {"defaults": []}}, policy)["default_account_id"] is None
     assert public["reasons"] == {
         "unsupported": "opencode_shared_model_options_unsupported",
         "unregistered": "opencode_model_not_registered",
@@ -43,7 +45,7 @@ def test_managed_model_projection_uses_the_native_default_and_hides_credentials(
     assert "private-token" not in json.dumps(public)
     assert "example.invalid" not in json.dumps(public)
     catalog = ModelCatalog(config)
-    assert managed_model_binding(policy, ModelSelection(type="model", id=public["default"]["id"])) == (
+    assert managed_model_binding(policy, ModelSelection(type="model", id=f"opencode:{selector}")) == (
         managed_model_binding(policy, ModelSelection(type="model", id="registered"), catalog=catalog)
     )
     with pytest.raises(ValueError, match="opencode_model_not_registered"):

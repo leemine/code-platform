@@ -117,11 +117,13 @@ async def session_selection_handler(channel, ws, req_id, params, session_id):
         policy = worker_model_policy()
         if policy is not None and get_session_metadata(target, enable_writeback=False).get("execution_provider") == "opencode-direct":
             from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import managed_model_binding
+            from jiuwenswarm.server.runtime.agent_adapter.providers.session_recovery import revision
 
-            managed_model_binding(policy, selection)
+            binding = managed_model_binding(policy, selection)
+            set_session_model_selection(target, selection, confirmed_revision=revision(binding))
         else:
             ModelSelectionResolver().resolve(selection)
-        set_session_model_selection(target, selection)
+            set_session_model_selection(target, selection)
         await channel.send_response(ws, req_id, ok=True, payload={"model_selection": selection.model_dump()})
     except Exception as exc:  # noqa: BLE001
         await channel.send_response(ws, req_id, ok=False, error=str(exc), code=getattr(exc, "code", "BAD_REQUEST"))

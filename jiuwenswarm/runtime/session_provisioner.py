@@ -803,13 +803,16 @@ class RuntimeSessionProvisioner:
                     policy = worker_model_policy()
                     if policy is not None:
                         from jiuwenswarm.common.model_catalog import ModelCatalog
-                        from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import managed_model_binding
+                        from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_models import (
+                            managed_model_binding, public_managed_model_policy,
+                        )
 
                         if selection is None and not provision_input.model_name:
                             default_model = policy["default"]
                             if not default_model:
-                                raise ValueError("opencode_default_model_unconfigured")
-                            selection = ModelSelection(type="model", id=NATIVE_MODEL_PREFIX + default_model)
+                                raise ValueError(policy.get("error") or "opencode_default_model_unconfigured")
+                            account_default = public_managed_model_policy(config_snapshot, policy)["default_account_id"]
+                            selection = ModelSelection(type="model", id=account_default or NATIVE_MODEL_PREFIX + default_model)
                         managed_model_binding(policy, selection, model_name=provision_input.model_name,
                                               catalog=ModelCatalog(config_snapshot))
                 if moa_enabled:

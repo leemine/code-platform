@@ -1858,6 +1858,8 @@
     "taskFullDuplexStop": "Stop Full-duplex conversation and screen sharing",
     "modelSelector": {
       "managedOpenCode": {
+        "opencode_approval_policy_conflict": "The OpenCode instance conflicts with the default approval policy. Contact your administrator.",
+        "opencode_model_snapshot_stale": "The OpenCode model configuration is inconsistent. Contact your administrator.",
         "default": "OpenCode default · {{model}}",
         "opencode_default_model_unconfigured": "Managed OpenCode has no default model. Choose a registered model.",
         "opencode_shared_model_protocol_unsupported": "Managed OpenCode does not support this model's protocol. Choose a compatible model.",

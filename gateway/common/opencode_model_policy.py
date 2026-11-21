@@ -7,6 +7,10 @@ MODEL_POLICY_ENV = "JIUWENSWARM_OPENCODE_MODEL_POLICY"
 NATIVE_MODEL_PREFIX = "opencode:"
 
 
+def base_permission_rules(action: str) -> dict[str, str]:
+    return {"*": action, "task": "deny", "question": "allow"}
+
+
 def deployment_model_policy(config: dict) -> dict:
     models = {
         f"{provider_id}/{model_id}": str(definition.get("name") or model_id)

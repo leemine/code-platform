@@ -1858,6 +1858,8 @@
     "taskFullDuplexStop": "停止全双工对话和屏幕共享",
     "modelSelector": {
       "managedOpenCode": {
+        "opencode_approval_policy_conflict": "独立 OpenCode 实例的权限配置与默认审批冲突，请联系管理员。",
+        "opencode_model_snapshot_stale": "独立 OpenCode 实例的模型配置不一致，请联系管理员。",
         "default": "OpenCode 默认模型 · {{model}}",
         "opencode_default_model_unconfigured": "独立 OpenCode 未配置默认模型，请选择已登记的模型。",
         "opencode_shared_model_protocol_unsupported": "该模型的接口协议不受独立 OpenCode 支持，请选择兼容模型。",
