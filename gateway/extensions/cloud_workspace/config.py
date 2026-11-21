@@ -11,11 +11,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
+from gateway.common.security.opencode_relay_auth import OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH
 
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
 OPENCODE_RELAY_ENV = "JIUWENSWARM_OPENCODE_RELAY_URL"
-OPENCODE_RELAY_PATH = "/provider/opencode"
 OPENCODE_WORKER_RELAY_PATH = OPENCODE_RELAY_PATH + "-worker"
+OPENCODE_MANAGED_WORKER_RELAY_PATH = OPENCODE_MANAGED_RELAY_PATH + "-worker"
 
 
 @dataclass(frozen=True)
@@ -139,10 +140,16 @@ class CloudConfig:
             raise ValueError("Managed OpenCode requires an explicit YuanRong Frontend endpoint")
         profile = self.opencode_provider
         if (not isinstance(profile, dict) or "image" not in profile
-                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport", "account_allowlist"}
+                or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport",
+                                     "account_allowlist", "admit_new_bindings"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
             raise ValueError("Managed OpenCode requires an immutable image")
+        if "admit_new_bindings" in profile:
+            if type(profile["admit_new_bindings"]) is not bool:
+                raise ValueError("Managed OpenCode admit_new_bindings must be a boolean")
+            if "account_allowlist" in profile:
+                raise ValueError("Managed OpenCode admission configuration has both a switch and an account_allowlist")
         if "account_allowlist" in profile:
             accounts = profile["account_allowlist"]
             if not isinstance(accounts, list) or any(

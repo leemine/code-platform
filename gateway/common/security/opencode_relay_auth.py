@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -14,7 +15,21 @@ from gateway.common.security.service_auth import ServiceAuthenticator, canonical
 
 
 HEADER = "X-Jiuwen-Opencode-Assertion"
+OPENCODE_RELAY_PATH = "/provider/opencode"
+OPENCODE_MANAGED_RELAY_PATH = "/provider/managed/opencode"
 _AUDIENCE = "jiuwenswarm-managed-opencode"
+
+
+def compatible_relay_url(url: str) -> str | None:
+    """Return the other deployed path on the same origin and API prefix."""
+    parsed = urlsplit(url)
+    for path, alias in (
+        (OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH),
+        (OPENCODE_RELAY_PATH, OPENCODE_MANAGED_RELAY_PATH),
+    ):
+        if parsed.path.endswith(path):
+            return parsed._replace(path=parsed.path[:-len(path)] + alias).geturl()
+    return None
 
 
 def _request_digest(method: str, path: str, directory: str, body: bytes) -> str:

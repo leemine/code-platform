@@ -16,6 +16,7 @@ from gateway.auth.remote_accounts import AccountAuthorityUnavailable
 from gateway.extensions.auth.credential_authenticator import AuthContext
 from gateway.extensions.cloud_workspace.config import (
     CloudConfig, CONFIG_ENV, OPENCODE_RELAY_PATH, OPENCODE_WORKER_RELAY_PATH,
+    OPENCODE_MANAGED_RELAY_PATH, OPENCODE_MANAGED_WORKER_RELAY_PATH,
 )
 from gateway.services.cloud_environments import EnvironmentUnavailable
 from gateway.extensions.sdk.application_plugin import ApplicationPluginExtension, HTTPRouteContribution
@@ -82,6 +83,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                 self.config.api_prefix + prefix + "/{project_id}/{path:path}", handler, ("GET", "POST"),
             ) for prefix, handler in (
                 (OPENCODE_RELAY_PATH, relay.handle), (OPENCODE_WORKER_RELAY_PATH, relay.handle_shared),
+                (OPENCODE_MANAGED_RELAY_PATH, relay.handle), (OPENCODE_MANAGED_WORKER_RELAY_PATH, relay.handle_shared),
             ))
         return routes
 

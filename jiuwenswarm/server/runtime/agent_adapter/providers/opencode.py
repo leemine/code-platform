@@ -458,7 +458,7 @@ class OpenCodeAdapter:
             if binding:
                 if bool(self._executable) != (binding["version"] == 1):
                     raise ValueError("OpenCode recovery requires its original server mode")
-                recovery.require_settings(binding, self._session_recovery_settings(project_id, shared_provider))
+                self._require_recovery_settings(binding, project_id, shared_provider)
                 if binding["native_id"] is None:
                     raise ValueError("OpenCode native session creation outcome is unknown; it cannot be retried safely")
             elif facts.has_assistant_history:
@@ -528,6 +528,18 @@ class OpenCodeAdapter:
         if project_id:
             return {**self._recovery_settings, "project_id": project_id}
         return self._recovery_settings
+
+    def _require_recovery_settings(self, binding, project_id, shared_provider):
+        settings = self._session_recovery_settings(project_id, shared_provider)
+        if binding["version"] == 2 and self._relay_url:
+            from gateway.common.security.opencode_relay_auth import compatible_relay_url
+
+            alias = compatible_relay_url(self._relay_url)
+            if alias:
+                previous = {**settings, "relay_url": alias}
+                if binding["settings_revision"] == recovery.settings_revision(previous):
+                    return
+        recovery.require_settings(binding, settings)
 
     def _save_binding(self, session, *, reserving=False):
         if not session.swarm_id or (not reserving and not session.native_id):

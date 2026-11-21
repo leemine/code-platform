@@ -240,7 +240,10 @@ class CloudOpencodePool:
     def worker_model_policy(self, account):
         key = account["account_id"], "@" + account["environment_id"], PROVIDER
         row = self._get(key)
-        if row is None and not self._admits_new_binding(account["account_id"]):
+        # Switch-based deployments provision the relay even with intake closed.
+        # The allocation gate can then change while the Worker stays running.
+        if ("admit_new_bindings" not in self.options and row is None
+                and not self._admits_new_binding(account["account_id"])):
             # Existing project-scoped bindings also need their relay after a Worker restart.
             with self.store.connect() as db:
                 inherited = db.execute(
@@ -261,6 +264,8 @@ class CloudOpencodePool:
             return {"default": None, "models": {}, "error": reason}
 
     def _admits_new_binding(self, account_id):
+        if "admit_new_bindings" in self.options:
+            return self.options["admit_new_bindings"]
         allowlist = self.options.get("account_allowlist")
         return allowlist is None or account_id in allowlist
 

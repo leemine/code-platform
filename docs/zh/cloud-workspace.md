@@ -11,7 +11,9 @@
 
 ## 行为与恢复
 
-在共用执行池中配置 `opencode_provider.account_allowlist`，使用账号权威返回的 `user_id`。空列表关闭新 OpenCode Provider 绑定，已有绑定可继续使用原状态卷重建。普通账号的注册继续由 `registration_enabled` 控制。现有独占部署可沿用省略此字段的行为。配置在 Gateway 启动时读取。首次加入名单可在账号取得 ID 后、首次启动 Worker 前完成。已经运行的 Worker 在下次启动时收到托管 OpenCode 配置。
+在共用执行池中配置 `opencode_provider.admit_new_bindings`。设为 `true` 时，已认证账号可以按需申请独立 OpenCode。设为 `false` 时暂停创建新绑定，已有绑定仍可挂回原状态卷重建。普通账号注册由 `registration_enabled` 独立控制。Gateway 启动时读取开关。使用开关配置启动的 Worker 在开关切换时沿用同一中继地址。
+
+使用开关的部署把固定前缀 `/api/v1/auth/organization/provider/managed/` 转发到本执行池的 Gateway，其中 API 前缀取部署配置。代理保留完整签名路径和请求头，Gateway 沿用原 Worker 身份和项目验证。现有以 `account_allowlist` 部署的配置和旧中继路径仍可继续使用。切换部署方式时删除 `account_allowlist`，再显式设置开关。同源同 API 前缀的两个托管地址可用于恢复原绑定。
 
 原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件仅贡献 `cloud.environment.ensure/status`，不接管 `session.execution.options`。
 
