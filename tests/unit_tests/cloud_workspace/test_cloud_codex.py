@@ -74,11 +74,13 @@ def test_managed_codex_rejects_invalid_model_catalog_context(value):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("context_window", [None, 1048576])
-@pytest.mark.parametrize("named", [False, True])
-async def test_codex_allocation_releases_then_reuses_original_volume(account_and_store, context_window, named):
+@pytest.mark.parametrize(("named", "session_models"), [(False, False), (False, True), (True, True)])
+async def test_codex_allocation_releases_then_reuses_original_volume(account_and_store, context_window, named, session_models):
     account, store, state = account_and_store
+    image = "sha256:" + "a" * 64
     config = SimpleNamespace(codex_provider={"image": "sha256:" + "a" * 64, "account_allowlist": ["canary"],
-                             "shared_runtime": "/opt/runtime/" + "b" * 64, "idle_seconds": 0},
+                             "shared_runtime": "/opt/runtime/" + "b" * 64, "idle_seconds": 0,
+                             "session_model_canary": {"accounts": ["canary"] if session_models else [], "image": image}},
                              state_root=state, runtime="python3.11", namespace="isolated", ready_timeout=2)
     requests, instances = [], {}
 
@@ -103,30 +105,22 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
     model = ManagedModel("only-model", MODEL_URL, "synthetic-private-model-key", context_window)
     runtime_id = None
     try:
+        assert pool.runtime_template(account).get("default_session_models", False) is session_models
         if named:
             name, token = "Dev sandbox", "a" * 32
-            device = pool.register_device(account, name, token, "account-selected")
+            device = pool.register_device(account, name, token)
             runtime_id = device["runtime_id"]
-            assert device["state"] == "not_started" and device["model_id"] is None
-            assert pool.register_device(account, name, token, "account-selected") == device
-            assert pool.device_model_id(account, runtime_id) == "account-selected"
-            with pytest.raises(RuntimeDeviceNameConflict):
-                pool.register_device(account, name, token, "different-model")
+            assert device["state"] == "not_started" and device["session_models"]
+            assert pool.register_device(account, name, token) == device
             with pytest.raises(RuntimeDeviceNameConflict):
                 pool.register_device(account, name, "b" * 32)
-            with pytest.raises(PermissionError, match="model selection differs"):
-                await pool.prepare_device(account, runtime_id, model, "account-default")
-            with pytest.raises(PermissionError):
-                async with pool.hold(account, "unprepared", DIRECTORY, model, runtime_id=runtime_id):
-                    pytest.fail("An unprepared named device started without its account model")
-            assert not requests
-            await pool.prepare_device(account, runtime_id, model, "account-selected")
-            assert pool.device_runtime(account, runtime_id)["state"] == "ready"
-            assert pool.device_runtime(account, runtime_id)["model_id"] == "account-selected"
+            await pool.prepare_device(account, runtime_id)
+            status = pool.device_runtime(account, runtime_id)
+            assert status["state"] == "ready" and status["model_id"] is None
             with store.connect() as db:
                 assert db.execute("SELECT count(*) FROM codex_session_owners").fetchone()[0] == 0
-            with pytest.raises(PermissionError, match="model selection differs"):
-                await pool.prepare_device(account, runtime_id, model, "changed-default")
+            assert "CODEX_SELECTED_MODEL" not in requests[0]["env_vars"]
+            assert requests[0]["env_vars"]["CODEX_SESSION_MODELS"] == "1"
         async with pool.hold(account, "web_session", DIRECTORY, model, runtime_id=runtime_id) as first:
             description = requests[0]
             assert hashlib.sha256(first.capability.encode()).hexdigest() == description["env_vars"]["CODEX_CAPABILITY_DIGEST"]
@@ -136,7 +130,7 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             }
             identity = next(mount for mount in description["mounts"] if mount["target"] == "/run/codex")
             assert identity["readonly"]
-            first_catalog = Path(identity["source"]) / CATALOG_FILENAME
+            first_catalog = Path(identity["source"]) / (f"catalog-{first.model_route}.json" if session_models else CATALOG_FILENAME)
             if context_window is None:
                 assert not first_catalog.exists()
             else:
@@ -146,18 +140,33 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
                 assert catalog["slug"] == model.name
                 assert catalog["context_window"] == catalog["max_context_window"] == context_window
                 assert catalog["effective_context_window_percent"] == 95
-            async with pool.hold(account, "another_session", OTHER_DIRECTORY, model, runtime_id=runtime_id) as another:
-                assert another == first
+            other_model = ManagedModel("alternate", MODEL_URL, "separate-fixture-key", 4096) if session_models else model
+            async with pool.hold(account, "another_session", OTHER_DIRECTORY, other_model, runtime_id=runtime_id) as another:
+                assert another.address == first.address and another.capability == first.capability
+                if session_models:
+                    assert first.model_route and another.model_route and first.model_route != another.model_route
+                    broker = next(iter(pool._brokers.values()))
+                    assert broker.server.routes == {first.model_route: model, another.model_route: other_model}
+                    path = Path(identity["source"]) / f"catalog-{another.model_route}.json"
+                    assert json.loads(path.read_bytes())["models"][0]["slug"] == other_model.name
+                else:
+                    assert another == first
                 assert len(requests) == 1
                 await pool.reclaim_idle()
                 assert len(instances) == 1
+            if session_models:
+                assert broker.server.routes == {first.model_route: model}
+                assert not path.exists()
+        if session_models:
+            assert not broker.server.routes
         with pytest.raises(PermissionError, match="another project"):
             async with pool.hold(account, "web_session", OTHER_DIRECTORY, model, runtime_id=runtime_id):
                 pytest.fail("changed project acquired a Codex transport")
-        changed = ManagedModel(model.name, model.endpoint, model.key, 4096)
-        with pytest.raises(PermissionError, match="persistent Worker binding"):
-            async with pool.hold(account, "web_session", DIRECTORY, changed, runtime_id=runtime_id):
-                pytest.fail("changed context acquired a Codex transport")
+        if not session_models:
+            changed = ManagedModel(model.name, model.endpoint, model.key, 4096)
+            with pytest.raises(PermissionError, match="persistent Worker binding"):
+                async with pool.hold(account, "web_session", DIRECTORY, changed):
+                    pytest.fail("changed context acquired a legacy Codex transport")
         with store.connect() as db:
             keys = db.execute("SELECT account_id,project_id,provider FROM provider_bindings").fetchall()
         scope = f"@device:{account['environment_id']}:{runtime_id}" if named else "@" + account["environment_id"]
@@ -177,13 +186,100 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             assert requests[0]["name"] != requests[1]["name"]
             assert first.capability != second.capability
             second_identity = next(mount for mount in requests[1]["mounts"] if mount["target"] == "/run/codex")
-            second_catalog = Path(second_identity["source"]) / CATALOG_FILENAME
+            second_catalog = Path(second_identity["source"]) / (f"catalog-{second.model_route}.json" if session_models else CATALOG_FILENAME)
             if context_window is None:
                 assert not second_catalog.exists()
             else:
                 assert second_catalog.read_bytes() == encoded_catalog
     finally:
         await pool.close()
+
+
+def test_existing_named_codex_migrates_without_changing_session_owner(account_and_store):
+    from gateway.services.cloud_provider_allocation import read_binding
+    from gateway.services.migrate_opencode_binding import migrate
+
+    account, store, state = account_and_store
+    image = "sha256:" + "a" * 64
+    target = "sha256:" + "c" * 64
+    shared_runtime = "/opt/runtime/" + "b" * 64
+    config = SimpleNamespace(
+        codex_provider={"image": image, "shared_runtime": shared_runtime, "account_allowlist": ["canary"]},
+        state_root=state, runtime="python3.11", namespace="isolated", ready_timeout=2,
+    )
+    pool = CloudCodexPool(store, None, config, None)
+    runtime = pool.register_device(account, "Previous Codex", "f" * 32)["runtime_id"]
+    binding_key = pool._device_key(account, runtime)
+    previous = read_binding(store, binding_key)
+    profile = json.loads(previous["profile_json"])
+    profile.pop("session_models")
+    profile.update(model_id="previous-model", requested_model_id="previous-model",
+                   model_revision="old-revision", model_name="old-model", context_window=65536)
+    with store.connect() as db:
+        db.execute("UPDATE provider_bindings SET profile_json=? WHERE binding_id=?", (json.dumps(profile), runtime))
+    pool._bind_session(previous, "existing_session", DIRECTORY)
+    store.close()
+    migrate(store, pool.storage, runtime, image, target, shared_runtime, provider="codex", session_models=True)
+    migrated = read_binding(store, binding_key)
+    updated = json.loads(migrated["profile_json"])
+    assert migrated["binding_id"] == runtime and migrated["operation_id"] == previous["operation_id"]
+    assert migrated["generation"] == previous["generation"] and migrated["project_source"] == previous["project_source"]
+    assert updated["image"] == target and updated["initial_image"] == image and updated["session_models"]
+    assert not {"model_id", "requested_model_id", "model_name", "model_revision", "context_window"} & set(updated)
+    with store.connect() as db:
+        saved, = db.execute("SELECT session_id,directory FROM codex_session_owners WHERE binding_id=?", (runtime,))
+    assert tuple(saved) == ("existing_session", DIRECTORY)
+
+
+def test_codex_account_migration_is_atomic_and_preserves_default_and_named_ownership(account_and_store):
+    from gateway.services.cloud_environments import EnvironmentUnavailable
+    from gateway.services.cloud_provider_allocation import read_binding
+    from gateway.services.migrate_opencode_binding import migrate_codex_account
+
+    account, store, state = account_and_store
+    image = "sha256:" + "a" * 64
+    target = "sha256:" + "c" * 64
+    config = SimpleNamespace(
+        codex_provider={"image": image, "account_allowlist": ["canary"],
+                        "session_model_canary": {"accounts": [], "image": target},
+                        "shared_runtime": "/opt/runtime/" + "b" * 64},
+        state_root=state, runtime="python3.11", namespace="isolated", ready_timeout=2,
+    )
+    pool = CloudCodexPool(store, None, config, None)
+    default = pool._binding(pool._default_key(account), account, DIRECTORY,
+                            ManagedModel("old", MODEL_URL, "fixture-key", 4096))
+    named_id = pool.register_device(account, "Previous Codex", "f" * 32, "old-model")["runtime_id"]
+    named_key = pool._device_key(account, named_id)
+    named = read_binding(store, named_key)
+    pool._bind_session(default, "old_default_session", DIRECTORY)
+    pool._bind_session(named, "old_named_session", DIRECTORY)
+    config.codex_provider["session_model_canary"]["accounts"].append("canary")
+    assert not pool.runtime_template(account)["default_session_models"]
+    store.close()
+    manifest = {default["binding_id"]: image, named_id: image}
+    with pytest.raises(PermissionError):
+        migrate_codex_account(store, config, "outside", manifest)
+    planned = pool._generation(named)
+    planned.mkdir(parents=True)
+    with pytest.raises(EnvironmentUnavailable, match="unused generation"):
+        migrate_codex_account(store, config, "canary", manifest)
+    assert read_binding(store, pool._key(default)) == default
+    assert read_binding(store, named_key) == named
+    planned.rmdir()
+    migrate_codex_account(store, config, "canary", manifest)
+    assert pool.runtime_template(account)["default_session_models"]
+    for before in (default, named):
+        row = read_binding(store, pool._key(before))
+        assert {key: row[key] for key in row if key != "profile_json"} == {
+            key: before[key] for key in before if key != "profile_json"
+        }
+        profile = json.loads(row["profile_json"])
+        assert profile["image"] == target and profile["initial_image"] == image and profile["session_models"]
+        assert not {"model_id", "requested_model_id", "model_name", "model_revision", "context_window"} & profile.keys()
+    with store.connect() as db:
+        owners = db.execute("SELECT binding_id,session_id FROM codex_session_owners").fetchall()
+        assert {tuple(row) for row in owners} == {(default["binding_id"], "old_default_session"),
+                                                  (named_id, "old_named_session")}
 
 
 @pytest.mark.asyncio
@@ -305,7 +401,8 @@ async def test_codex_retirement_recovers_after_restart_and_retries_once(account_
 
         first, second = await asyncio.gather(retry("first", DIRECTORY), retry("second", OTHER_DIRECTORY))
         updated = read_binding(store, key)
-        assert first == second
+        assert (first.address, first.capability) == (second.address, second.capability)
+        assert first.model_route and second.model_route and first.model_route != second.model_route
         assert updated["binding_id"] == pending["binding_id"]
         assert updated["generation"] == pending["generation"] + 1
         assert requests[0]["workspace"] == requests[1]["workspace"]
@@ -351,20 +448,19 @@ def test_named_codex_control_reuses_signed_websocket_without_starting_a_thread(a
         signature = sign_assertion(credential, audience=AUDIENCE, method="GET", path=path, directory=directory, body=b"")
         return {ASSERTION_HEADER: signature, DIRECTORY_HEADER: quote(directory, safe="/")}
 
-    request = {"op": "prepare", "runtime_id": runtime_id, "model_id": "account-default",
-               "model": "fixture", "base_url": MODEL_URL, "api_key": "fixture-key"}
+    request = {"op": "prepare", "runtime_id": runtime_id}
     with TestClient(app) as client:
         with client.websocket_connect(path, headers=headers(str(PROJECT_ROOT))) as ws:
-            ws.send_json({**request, "base_url": "https://unadmitted.example.test/v1"})
+            ws.send_json({**request, "model_id": "account-default"})
             assert ws.receive_json() == {"code": MODEL_UNAVAILABLE}
         pool.prepare_device.assert_not_awaited()
         with client.websocket_connect(path, headers=headers(str(PROJECT_ROOT))) as ws:
             ws.send_json(request)
             assert ws.receive_json() == {"ready": True}
         pool.prepare_device.assert_awaited_once()
-        prepared_account, prepared_id, model, model_id = pool.prepare_device.await_args.args
+        prepared_account, prepared_id = pool.prepare_device.await_args.args
         assert prepared_account["account_id"] == account["account_id"]
-        assert (prepared_id, model.name, model_id) == (runtime_id, "fixture", "account-default")
+        assert prepared_id == runtime_id
         with client.websocket_connect(path, headers=headers(str(PROJECT_ROOT))) as ws:
             ws.send_json({"op": "check", "runtime_id": runtime_id})
             with pytest.raises(WebSocketDisconnect) as failure:
@@ -375,7 +471,7 @@ def test_named_codex_control_reuses_signed_websocket_without_starting_a_thread(a
         }))
         with client.websocket_connect(path, headers=headers(DIRECTORY)) as ws:
             ws.send_json({"op": "check", "runtime_id": runtime_id})
-            assert ws.receive_json() == {"runtime_id": runtime_id, "model_id": None}
+            assert ws.receive_json() == {"runtime_id": runtime_id, "model_id": None, "session_models": True}
         with client.websocket_connect(path, headers=headers(DIRECTORY)) as ws:
             ws.send_json({"op": "check", "runtime_id": "f" * 32})
             with pytest.raises(WebSocketDisconnect) as failure:

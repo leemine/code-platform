@@ -934,12 +934,20 @@ async def test_session_create_pins_installed_role_and_rejects_rebinding(monkeypa
     assert session_metadata.get_session_metadata(sid, cache_bust=True)["main_agent_role"] == stored["main_agent_role"]
 
 
-@pytest.mark.parametrize("selection", [None, {"type": "model", "id": "another-model"}])
+@pytest.mark.parametrize(("device_model", "selection", "expected_model"), [
+    ("bound-model", None, "bound-model"),
+    ("bound-model", {"type": "model", "id": "another-model"}, None),
+    (None, {"type": "model", "id": "another-model"}, "another-model"),
+    (None, {"type": "model", "id": "unknown"}, None),
+])
 @pytest.mark.asyncio
-async def test_codex_named_device_pins_provider_workspace_and_model(monkeypatch, tmp_path, selection):
+async def test_codex_named_device_pins_provider_workspace_and_session_model(
+    monkeypatch, tmp_path, device_model, selection, expected_model,
+):
     from unittest.mock import AsyncMock
 
-    from jiuwenswarm.server.runtime.agent_adapter import agent_adapters
+    from jiuwenswarm.common.model_catalog import ModelCatalog
+    from jiuwenswarm.server.runtime.agent_adapter import agent_adapters, execution_input
     from jiuwenswarm.server.runtime.agent_adapter.providers import codex_device
     from jiuwenswarm.server.runtime.session import project_store, session_metadata
 
@@ -951,7 +959,14 @@ async def test_codex_named_device_pins_provider_workspace_and_model(monkeypatch,
     monkeypatch.setattr(project_store, "get_project_by_id", lambda *_args, **_kwargs: SimpleNamespace(
         work_mode="code", hidden=False, project_dir=str(tmp_path),
     ))
-    validate = AsyncMock(return_value="bound-model")
+    catalog = ModelCatalog({"models": {"defaults": [{
+        "model_id": "another-model",
+        "model_client_config": {"model_name": "model", "client_provider": "OpenAI",
+                                "api_base": "https://models.example.test/v1", "api_key": "fixture"},
+    }]}})
+    resolver = execution_input.model_resolver(catalog)
+    monkeypatch.setattr(execution_input, "model_resolver", lambda: resolver)
+    validate = AsyncMock(return_value=device_model)
     monkeypatch.setattr(codex_device, "validate_device", validate)
 
     provisioner = _provisioner(state)
@@ -959,7 +974,7 @@ async def test_codex_named_device_pins_provider_workspace_and_model(monkeypatch,
     request = _input(execution_provider="codex-direct", runtime_id=runtime_id, mode="agent.code.normal",
                      project_id="repo", project_dir=str(tmp_path), work_mode="code", user_id="owner",
                      model_selection=selection)
-    if selection is not None:
+    if expected_model is None:
         with pytest.raises(SessionProvisionError) as error:
             await provisioner.prepare_session_create(request)
         assert error.value.code == "RUNTIME_DEVICE_MODEL_UNAVAILABLE"
@@ -969,6 +984,6 @@ async def test_codex_named_device_pins_provider_workspace_and_model(monkeypatch,
         metadata = session_metadata.get_session_metadata(prepared.result.session_id, cache_bust=True)
         assert prepared.result.runtime_id == metadata["runtime_id"] == runtime_id
         assert metadata["execution_provider"] == "codex-direct"
-        assert metadata["project_id"] == "repo" and metadata["model_selection"]["id"] == "bound-model"
+        assert metadata["project_id"] == "repo" and metadata["model_selection"]["id"] == expected_model
         await provisioner.abort_session_provision(prepared)
     validate.assert_awaited_once_with(runtime_id, str(tmp_path), "owner")

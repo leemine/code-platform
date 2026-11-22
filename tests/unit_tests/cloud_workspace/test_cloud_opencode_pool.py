@@ -143,6 +143,7 @@ async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbo
     config.codex_provider = {
         "image": "sha256:" + "c" * 64, "account_allowlist": ["legacy", "fresh"],
         "shared_runtime": "/opt/runtime/" + "d" * 64, "idle_seconds": 0,
+        "session_model_canary": {"accounts": ["fresh"], "image": "sha256:" + "e" * 64},
     }
     resources = SimpleNamespace(confirm_deleted=AsyncMock(), confirm_codex_address=AsyncMock(return_value="10.0.0.1"))
     model = ManagedModel("test-model", "https://models.example.test/v1", "fixture-key")
@@ -153,7 +154,7 @@ async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbo
         async with opencode.hold(legacy, "project", PROJECT_DIR, shared=True) as original:
             opencode.register_session(original, "project", "ses_legacy")
         async with codex.hold(legacy, "legacy-thread", PROJECT_DIR, model) as original_codex:
-            pass
+            assert not original_codex.session_models and original_codex.model_route is None
     finally:
         await codex.close()
 
@@ -178,7 +179,8 @@ async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbo
         async with opencode.hold(fresh, "project", PROJECT_DIR, shared=True, runtime_id=runtime_id) as new_device:
             opencode.register_session(new_device, "project", "ses_new")
         async with codex.hold(fresh, "fresh-thread", PROJECT_DIR, model) as new_codex:
-            assert new_codex != original_codex
+            assert new_codex.session_models and new_codex.model_route
+            assert new_codex.capability != original_codex.capability
 
         async with opencode.hold(legacy, "project", PROJECT_DIR, shared=True) as resumed:
             assert resumed == original
@@ -194,7 +196,8 @@ async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbo
             assert resumed.instance_id != new_device.instance_id
             assert opencode.owns_session(resumed, "project", "ses_new")
         async with codex.hold(fresh, "fresh-thread", PROJECT_DIR, model) as resumed:
-            assert resumed != new_codex
+            assert resumed.session_models and resumed.model_route and resumed.model_route != new_codex.model_route
+            assert resumed.capability != new_codex.capability
         assert len(frontend.created) == 6
         for original_request, resumed_request in zip(frontend.created[2:4], frontend.created[4:6]):
             assert original_request["workspace"] == resumed_request["workspace"]

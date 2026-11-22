@@ -827,13 +827,14 @@ async def test_codex_runtime_catalog_and_start_use_the_account_worker_without_a_
     identity = {"user_id": "owner", "authority": "isolated-test"}
     runtime_id = "a" * 32
     registered = {"runtime_id": runtime_id, "display_name": "Codex device", "state": "not_started",
-                  "model_id": None, "available": True}
-    ready = {**registered, "state": "ready", "model_id": "account-model"}
+                  "model_id": None, "available": True, "session_models": True}
+    ready = {**registered, "state": "ready"}
     template = {"runtime_profile_id": "codex-cloud", "cpu": 1000, "memory": 1024, "available": True}
     pool = SimpleNamespace(
         account_devices=Mock(return_value=[ready]), device_runtime=Mock(return_value=ready),
         runtime_template=Mock(return_value=template), register_device=Mock(return_value=registered),
-        device_model_id=Mock(side_effect=[None, "account-model", "selected-model"]),
+        device_model_id=Mock(return_value="account-model"),
+        uses_session_models=Mock(return_value=True),
     )
     plugin = CloudWorkspacePlugin(config)
     plugin.environments = SimpleNamespace(codex_relay=SimpleNamespace(pool=pool, store=SimpleNamespace(get=Mock(return_value=account)),
@@ -857,16 +858,18 @@ async def test_codex_runtime_catalog_and_start_use_the_account_worker_without_a_
         "runtime_profile_id": "codex-cloud", "display_name": "Codex device", "create_token": "b" * 32,
     }, None)
     pool.register_device.assert_called_once_with(account, "Codex device", "b" * 32)
-    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id, "model_id": None}
+    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id}
     assert prewarm.await_args.kwargs["session_id"] is None and prewarm.await_args.kwargs["user_id"] == "owner"
     channel.send_response.assert_awaited_with(ws, "create", ok=True, payload={**public, "start_failed": False})
 
+    legacy = {**ready, "model_id": "account-model", "session_models": False}
+    pool.device_runtime.return_value = legacy
     prewarm.return_value = False, {"code": MODEL_UNAVAILABLE}
     await methods["cloud.runtime.start"](ws, "start", {"runtime_id": runtime_id}, None)
     assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id,
                                                   "model_id": "account-model"}
     channel.send_response.assert_awaited_with(ws, "start", ok=True, payload={
-        **public, "start_failed": True, "start_error": MODEL_UNAVAILABLE,
+        **public, **legacy, "start_failed": True, "start_error": MODEL_UNAVAILABLE,
     })
     await methods["cloud.runtime.start"](ws, "foreign", {"runtime_id": "c" * 32}, None)
     channel.send_response.assert_awaited_with(ws, "foreign", ok=False, code="PROJECT_RUNTIME_FORBIDDEN")
@@ -883,10 +886,10 @@ async def test_codex_runtime_catalog_and_start_use_the_account_worker_without_a_
     fields = {"runtime_profile_id": "codex-cloud", "display_name": "Codex device", "create_token": "b" * 32}
     await methods["cloud.runtime.create"](ws, "unsupported", {**fields, "model_id": "unsupported"}, None)
     pool.register_device.assert_not_called()
-    channel.send_response.assert_awaited_with(ws, "unsupported", ok=False, code=MODEL_UNAVAILABLE)
+    channel.send_response.assert_awaited_with(ws, "unsupported", ok=False, code="INVALID_REQUEST")
 
+    pool.uses_session_models.return_value = False
     prewarm.side_effect = [(True, {"model_ids": ["selected-model"]}), (True, {"ready": True})]
-    await methods["cloud.runtime.create"](ws, "selected", {**fields, "model_id": "selected-model"}, None)
+    await methods["cloud.runtime.create"](ws, "legacy-create", {**fields, "model_id": "selected-model"}, None)
     pool.register_device.assert_called_once_with(account, "Codex device", "b" * 32, "selected-model")
-    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id,
-                                                  "model_id": "selected-model"}
+    assert prewarm.await_args_list[-2].kwargs["params"]["model_id"] == "selected-model"

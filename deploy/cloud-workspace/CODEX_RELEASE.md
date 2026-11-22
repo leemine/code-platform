@@ -8,6 +8,8 @@ The initial managed path supports a fixed Responses-compatible model connection 
 
 When the selected account model has a configured context window, the Worker passes it over the signed relay and the Gateway pins it to the binding. Each generation mounts a read-only native model catalog at `/run/codex/model-catalog.json`. Its configured and maximum context windows come from the account model, with the Codex custom-model effective percentage of 95. The mounted catalog contains model metadata only. The Responses broker remains the sole consumer of the upstream endpoint and key on the Gateway side. A binding with no explicit context window continues to use Codex's native defaults.
 
+The account-default Codex runtime and named Codex devices can use session model routing. Device creation and prewarm initialize the Provider and its state volume. The account-default runtime starts on first use. In a Code chat, the original model picker shows eligible models from the signed-in account. The Worker persists the model with the conversation. Each App Server stream receives its own model broker route and, when configured, a read-only catalog containing that model's name and context capacity. The broker removes the route when the stream closes.
+
 ## Build and stage
 
 Build `Dockerfile.codex` with an explicit context containing `codex_model_bridge.py`, `codex_stdio_bridge.py`, and the complete `codex_cli_bin/` directory from the lock's Linux amd64 Codex CLI wheel. Verify the original wheel and package file digests. Keep the versioned Python 3.11, YuanRong Runtime and Executor tree on the host. Use the same Linux user ID in the account, Gateway and managed containers. The Gateway creates the native state and home directories before requesting allocation so the YuanRong bootstrap can initialize.
@@ -32,6 +34,8 @@ The deployment places the Gateway model broker and its admitted execution pool o
 Verify every scheduling node's receipt before enabling an account. Test a new session using the original model picker and Web flow, including streaming, an approved command, cancellation, and a new container resuming the same thread and state volume.
 
 Wait for the idle reaper to confirm deletion in YuanRong and Docker before changing a binding's image. Use the same offline migration command with `--provider codex`, the exact binding ID and its expected source image. Point the deployment config at the preverified target image and matching runtime. The binding and native volume remain the same. Restore the Gateway and verify that the same Web session resumes with that native thread.
+
+Ship the matching Gateway, Worker, Web assets and Codex Provider image for session model routing. Verify the target image on every admitted node. After physical reclamation, use `migrate_codex_account` with the configured session-model canary account and the exact binding IDs and source images. The offline transaction migrates that account's fixed default and named Codex bindings together. It clears device-level model fields while preserving conversation selections, binding IDs, and state volumes. The offline `--session-models` option remains available for single named-device maintenance. Roll back migrated bindings using a verified image and Gateway that both support session model routing.
 
 ## 中文部署摘要
 

@@ -1,7 +1,7 @@
 ---
 title: 实施与决策 F索引
-author: Codex
-author_email: codex@openai.com
+author: leemine
+author_email: leewanlong@gmail.com
 generated: true
 ---
 
@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 25 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 26 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -24,17 +24,17 @@ generated: true
 | [gateway](#module-7) | 7 |
 | [gateway/channel_manager/web](#module-8) | 1 |
 | [gateway/common](#module-9) | 2 |
-| [gateway/extensions/cloud_workspace](#module-10) | 7 |
+| [gateway/extensions/cloud_workspace](#module-10) | 8 |
 | [gateway/extensions/data_sync](#module-11) | 3 |
-| [gateway/services](#module-12) | 9 |
+| [gateway/services](#module-12) | 10 |
 | [gateway/services/data_sync](#module-13) | 1 |
 | [jiuwenswarm/channels/web](#module-14) | 2 |
-| [jiuwenswarm/channels/web/frontend](#module-15) | 7 |
+| [jiuwenswarm/channels/web/frontend](#module-15) | 8 |
 | [jiuwenswarm/channels/web/frontend/src/components/ChatPanel](#module-16) | 1 |
 | [jiuwenswarm/common](#module-17) | 2 |
 | [jiuwenswarm/data_sync](#module-18) | 2 |
-| [jiuwenswarm/runtime](#module-19) | 1 |
-| [jiuwenswarm/server](#module-20) | 3 |
+| [jiuwenswarm/runtime](#module-19) | 2 |
+| [jiuwenswarm/server](#module-20) | 4 |
 | [jiuwenswarm/server/control](#module-21) | 1 |
 | [jiuwenswarm/server/runtime/agent_adapter](#module-22) | 6 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-23) | 3 |
@@ -142,6 +142,7 @@ generated: true
 | [F_20261121_2219_opencode-shared-runtime](F_20261121_2219_opencode-shared-runtime.md) | F | 独立 OpenCode 复用宿主启动栈 | leemine | deploy/cloud-workspace, gateway/services, gateway/extensions/cloud_workspace | deploy/cloud-workspace/docker_log_boundary.py, deploy/cloud-workspace/opencode_runtime_asset.py, deploy/cloud-workspace/physical_resources.py, gateway/common/opencode_runtime.py, gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_opencode_pool.py, gateway/services/migrate_opencode_binding.py | 无独立 D：沿现有元戎调度、Docker 物理围栏和绑定回收流程扩展。 |
 | [F_20261122_0213_opencode-cloud-runtime-ui](F_20261122_0213_opencode-cloud-runtime-ui.md) | F | Code 普通会话显示 OpenCode 云运行时名称 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/channels/web/frontend | gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useProjectRuntime.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0144-opencode-cloud-runtime-ui](../designs/active/D-20261122-0144-opencode-cloud-runtime-ui/design.md) |
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 
 <a id="module-11"></a>
 
@@ -168,6 +169,7 @@ generated: true
 | [F_20261121_2219_opencode-shared-runtime](F_20261121_2219_opencode-shared-runtime.md) | F | 独立 OpenCode 复用宿主启动栈 | leemine | deploy/cloud-workspace, gateway/services, gateway/extensions/cloud_workspace | deploy/cloud-workspace/docker_log_boundary.py, deploy/cloud-workspace/opencode_runtime_asset.py, deploy/cloud-workspace/physical_resources.py, gateway/common/opencode_runtime.py, gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_opencode_pool.py, gateway/services/migrate_opencode_binding.py | 无独立 D：沿现有元戎调度、Docker 物理围栏和绑定回收流程扩展。 |
 | [F_20261122_0213_opencode-cloud-runtime-ui](F_20261122_0213_opencode-cloud-runtime-ui.md) | F | Code 普通会话显示 OpenCode 云运行时名称 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/channels/web/frontend | gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useProjectRuntime.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0144-opencode-cloud-runtime-ui](../designs/active/D-20261122-0144-opencode-cloud-runtime-ui/design.md) |
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 
 <a id="module-13"></a>
 
@@ -199,6 +201,7 @@ generated: true
 | [F_20261116_1940_github-cloud-environments](F_20261116_1940_github-cloud-environments.md) | F | GitHub 云端项目环境接入与待验收边界 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/server/runtime/session, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/server/control/project_checkout.py, jiuwenswarm/server/runtime/session/project_store.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ProjectGitHubConnection.tsx | [D-20261116-1851-github-cloud-environment-alignment](../designs/active/D-20261116-1851-github-cloud-environment-alignment/design.md) |
 | [F_20261122_0213_opencode-cloud-runtime-ui](F_20261122_0213_opencode-cloud-runtime-ui.md) | F | Code 普通会话显示 OpenCode 云运行时名称 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/channels/web/frontend | gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useProjectRuntime.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0144-opencode-cloud-runtime-ui](../designs/active/D-20261122-0144-opencode-cloud-runtime-ui/design.md) |
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 
 <a id="module-16"></a>
 
@@ -233,6 +236,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 
 <a id="module-20"></a>
 
@@ -243,6 +247,7 @@ generated: true
 | [F-20261112-1320-platform-code-workspace](F_20261112_1320_platform-code-workspace.md) | F | P1S-01 Code 三段式工作区入口 | leemine | gateway, jiuwenswarm/channels/web, jiuwenswarm/server | gateway/routing/workspace_locations.py, gateway/channel_manager/web/app_web_handlers.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CodeWorkspaceControls.tsx | code-projects:D-20261112-1120-platform-workspace-sync（非本仓或待定位） |
 | [F_20261031_1714_claude-main-agent-and-model-settings](F_20261031_1714_claude-main-agent-and-model-settings.md) | F | Claude 主 Agent 与无 Core 模型配置发布收尾 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, gateway/common, jiuwenswarm/channels/web/frontend, jiuwenswarm/server | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/common/claude_adapter_config.py, jiuwenswarm/common/external_adapter_factories.py, gateway/common/model_vendor_registry.py, jiuwenswarm/common/native_integration.py, jiuwenswarm/common/reasoning_config.py, jiuwenswarm/common/config_panel/models_handlers.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/features/settings/modules/models/ModelDialog.tsx, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, pyproject.toml, uv.lock, .github/workflows/stable.yml | 无独立 D：用户已确认原AgentAdapter直接接官方SDK的实施方向，并授权任务1～2发布收尾；本次未另建独立设计。 |
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 
 <a id="module-21"></a>
 

@@ -21,7 +21,6 @@ COMMAND = (
     "/opt/codex/bin/codex",
     "-c", 'model_provider="swarm"',
     "-c", 'model_providers.swarm.name="Swarm model service"',
-    "-c", 'model_providers.swarm.base_url="http://127.0.0.1:17543/v1"',
     "-c", 'model_providers.swarm.wire_api="responses"',
     "-c", "model_providers.swarm.requires_openai_auth=false",
 )
@@ -71,8 +70,9 @@ async def stop(process):
 
 
 class StdioBridge:
-    def __init__(self, digest):
+    def __init__(self, digest, *, session_models=False):
         self.digest = digest
+        self.session_models = session_models
         self.active: dict[str, asyncio.Event] = {}
 
     def authorize(self, raw):
@@ -87,7 +87,7 @@ class StdioBridge:
             raise PermissionError("Codex capability rejected")
         return request
 
-    async def relay(self, reader, writer, *, state, directory):
+    async def relay(self, reader, writer, *, state, directory, model_route=None, use_catalog=False):
         home = state / "home"
         codex_home = state / "codex"
         for path in (state, home, codex_home):
@@ -96,9 +96,13 @@ class StdioBridge:
                 raise PermissionError("Invalid Codex session state")
         env = {k: v for k, v in os.environ.items() if k != "CODEX_CAPABILITY_DIGEST"}
         env.update(HOME=str(home), CODEX_HOME=str(codex_home))
-        command = COMMAND
-        if MODEL_CATALOG.is_file():
-            command += ("-c", "model_catalog_json=" + json.dumps(str(MODEL_CATALOG)))
+        path = f"/{model_route}/v1" if model_route else "/v1"
+        command = COMMAND + ("-c", "model_providers.swarm.base_url=" + json.dumps("http://127.0.0.1:17543" + path))
+        catalog = MODEL_CATALOG if model_route is None else MODEL_CATALOG.with_name(f"catalog-{model_route}.json")
+        if use_catalog and not catalog.is_file():
+            raise ValueError("Missing Codex session model catalog")
+        if use_catalog or (model_route is None and catalog.is_file()):
+            command += ("-c", "model_catalog_json=" + json.dumps(str(catalog)))
         process = await asyncio.create_subprocess_exec(
             *command, "app-server", "--listen", "stdio://", cwd=directory, env=env, start_new_session=True,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
@@ -125,10 +129,17 @@ class StdioBridge:
             if request == {"op": "idle"}:
                 await reply(writer, {"idle": not self.active})
                 return
-            if request == {"op": "probe"}:
+            if request == {"op": "probe-session-models" if self.session_models else "probe"}:
                 with tempfile.TemporaryDirectory(prefix="ready-", dir=STATE_ROOT) as temporary:
                     await self.relay(reader, writer, state=Path(temporary), directory=PROJECT_ROOT)
                 return
+            model_route = request.pop("model_route", None)
+            use_catalog = request.pop("use_catalog", False)
+            if (self.session_models != (model_route is not None)
+                    or model_route is not None and (not isinstance(model_route, str)
+                    or not re.fullmatch(r"[a-f0-9]{32}", model_route))
+                    or type(use_catalog) is not bool or use_catalog and model_route is None):
+                raise ValueError("Invalid Codex model route")
             if set(request) != {"op", "session", "directory"} or request["op"] != "stream":
                 raise ValueError("Unsupported Codex operation")
             value = request["session"]
@@ -151,7 +162,7 @@ class StdioBridge:
             if sessions.resolve() != sessions or sessions.stat().st_mode & 0o077:
                 raise PermissionError("Invalid Codex sessions root")
             await self.relay(reader, writer, state=sessions / hashlib.sha256(value.encode()).hexdigest(),
-                             directory=directory)
+                             directory=directory, model_route=model_route, use_catalog=use_catalog)
         except (OSError, PermissionError, ValueError, TypeError, TimeoutError):
             pass
         finally:
@@ -166,7 +177,7 @@ async def main():
     digest = os.environ["CODEX_CAPABILITY_DIGEST"]
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("Invalid Codex capability digest")
-    bridge = StdioBridge(digest)
+    bridge = StdioBridge(digest, session_models=os.environ.get("CODEX_SESSION_MODELS") == "1")
     server = await asyncio.start_server(bridge.handle, "0.0.0.0", PORT, limit=FRAME + 1)
     async with server:
         await server.serve_forever()
