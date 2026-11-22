@@ -1239,3 +1239,16 @@ async def test_mkdir_agent_dir_rejects_nul_path(client: YuanrongFrontendAgentCli
     with pytest.raises(YuanrongAgentFileError) as exc:
         await client.mkdir_agent_dir("inst-1", "/home/agentos/foo\x00bar")
     assert exc.value.error_code == "BAD_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_codex_retirement_distinguishes_exact_pending_cleanup(client):
+    await client.connect("http://127.0.0.1:8080")
+    client._do_agent_delete = lambda instance, trace: (
+        500, '{"code":500,"message":"instance codex-1 kill accepted but not fully cleared"}',
+    )
+    assert await client.retire_undispatched_codex("codex-1") is False
+    with pytest.raises(YuanrongAgentApiError):
+        await client.retire_undispatched_codex("codex-2")
+    with pytest.raises(YuanrongAgentApiError):
+        await client.delete_sandbox("codex-1")

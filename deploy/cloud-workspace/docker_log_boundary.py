@@ -360,6 +360,7 @@ class ConfirmationHandler(http.server.BaseHTTPRequestHandler):
         try:
             operations = {
                 "/v1/confirm-deleted": self.server.resources.confirm_deleted,
+                "/v1/fence-undispatched-codex": self.server.resources.fence_undispatched_codex,
                 "/v1/confirm-opencode-unavailable": self.server.resources.confirm_opencode_unavailable,
                 "/v1/confirm-opencode-stalled": self.server.resources.confirm_opencode_stalled,
                 "/v1/confirm-codex-address": self.server.resources.confirm_codex_address,

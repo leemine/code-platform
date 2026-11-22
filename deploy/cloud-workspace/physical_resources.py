@@ -467,6 +467,25 @@ class PhysicalResources:
                     return {"stalled": True}
                 return {"stalled": False}
 
+    def fence_undispatched_codex(self, request: dict) -> dict:
+        """Reject any late dispatch for a generation that never reached Docker."""
+        scope, instance = self._confirmation_scope(request)
+        if scope.get("role") != "codex":
+            raise ValueError("undispatched fence requires a Codex generation")
+        fence = {**scope, "state": "DELETED", "observed": False,
+                 "reason": "never-dispatched", "instance_id": instance}
+        with self.locked(scope) as directory:
+            path = directory / (scope["key"] + ".json")
+            receipt = self.read(path)
+            if receipt is not None and receipt != fence:
+                return {"fenced": False}
+            status, _ = self.docker("GET", "/containers/" + scope["name"] + "/json")
+            if status != 404:
+                return {"fenced": False}
+            if receipt is None:
+                self.write(path, fence)
+            return {"fenced": True}
+
     def confirm_deleted(self, request: dict) -> dict:
         scope, instance = self._confirmation_scope(request)
         with self.locked(scope) as directory:

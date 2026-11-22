@@ -178,3 +178,70 @@ async def test_stdio_reconnect_waits_until_same_session_has_released_state(tmp_p
         await asyncio.gather(first, second)
     assert relay_probe.await_count == 2
     assert not bridge.active
+
+
+@pytest.mark.asyncio
+async def test_codex_retirement_recovers_after_restart_and_retries_once(account_and_store):
+    import asyncio
+
+    from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
+    from gateway.services.cloud_provider_allocation import read_binding
+
+    account, store, state = account_and_store
+    config = SimpleNamespace(codex_provider={"image": "sha256:" + "a" * 64, "account_allowlist": ["canary"],
+                             "shared_runtime": "/opt/runtime/" + "b" * 64, "idle_seconds": 0},
+                             state_root=state, runtime="python3.11", namespace="isolated", ready_timeout=2)
+    requests, instances = [], {}
+
+    async def create(**request):
+        requests.append(request)
+        identifier = f"runtime-{len(requests)}"
+        instances[identifier] = {"name": request["name"], "rootfs": {
+            **request["runtime_spec"]["rootfs"], "workspace": request["workspace"], "mounts": request["mounts"],
+        }}
+        return SimpleNamespace(sandbox_id=identifier)
+
+    async def wait(identifier, **_):
+        if identifier == "runtime-1":
+            raise TimeoutError("capacity")
+        return instances[identifier]
+
+    yuanrong = SimpleNamespace(create_sandbox=create, wait_until_running=wait,
+                               get_agent_info=AsyncMock(side_effect=lambda identifier: instances[identifier]),
+                               instance_absent=AsyncMock(return_value=False),
+                               retire_undispatched_codex=AsyncMock(side_effect=[
+                                   YuanrongAgentApiError("unconfirmed error"), False]))
+    resources = SimpleNamespace(confirm_deleted=AsyncMock(), confirm_codex_address=AsyncMock(return_value="10.0.0.1"),
+                                fence_undispatched_codex=AsyncMock(return_value=True))
+    key = ("canary", "@" + account["environment_id"], "codex")
+    model = ManagedModel("only-model", MODEL_URL, "synthetic")
+    pool = CloudCodexPool(store, yuanrong, config, resources)
+    try:
+        with pytest.raises(TimeoutError):
+            async with pool.hold(account, "first", DIRECTORY, model):
+                pytest.fail("exhausted allocation was admitted")
+        pending = read_binding(store, key)
+        assert pending["state"] == "RETIRING_UNDISPATCHED"
+        await pool.reclaim_idle()
+        assert read_binding(store, key) == pending
+        assert len(requests) == 1
+    finally:
+        await pool.close()
+    pool = CloudCodexPool(store, yuanrong, config, resources)
+    pool.ready_check = AsyncMock(return_value=True)
+    try:
+        async def retry(session, directory):
+            async with pool.hold(account, session, directory, model) as lease:
+                return lease
+
+        first, second = await asyncio.gather(retry("first", DIRECTORY), retry("second", OTHER_DIRECTORY))
+        updated = read_binding(store, key)
+        assert first == second
+        assert updated["binding_id"] == pending["binding_id"]
+        assert updated["generation"] == pending["generation"] + 1
+        assert requests[0]["workspace"] == requests[1]["workspace"]
+        assert len(requests) == 2
+        assert updated["instance_id"] == "runtime-2"
+        resources.confirm_deleted.assert_not_called()
+    finally:
+        await pool.close()

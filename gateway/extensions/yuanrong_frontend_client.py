@@ -640,6 +640,19 @@ class YuanrongFrontendAgentClient(AgentServerClient):
         self, sandbox_id: str, *, trace_id: str | None = None
     ) -> None:
         """Destroy a detached agent instance via DELETE /api/agent/:instanceId."""
+        await self._delete_sandbox(sandbox_id, trace_id=trace_id)
+
+    async def retire_undispatched_codex(self, sandbox_id: str) -> bool:
+        """Request cancellation of a physically fenced Codex allocation.
+
+        False means YuanRong accepted the kill, but has not confirmed frontend cleanup.
+        """
+        return await self._delete_sandbox(sandbox_id, accept_pending_cleanup=True)
+
+    async def _delete_sandbox(
+        self, sandbox_id: str, *, trace_id: str | None = None,
+        accept_pending_cleanup: bool = False,
+    ) -> bool:
         self._ensure_connected()
         normalized_sandbox_id = str(sandbox_id or "").strip()
         if not normalized_sandbox_id:
@@ -658,13 +671,23 @@ class YuanrongFrontendAgentClient(AgentServerClient):
                 normalized_sandbox_id,
                 resolved_trace_id,
             )
-            return
+            return True
+        if accept_pending_cleanup and status == 500:
+            try:
+                result = json.loads(body)
+            except ValueError:
+                result = None
+            if (isinstance(result, dict) and result.get("code") in (500, "500")
+                    and result.get("message") ==
+                    f"instance {normalized_sandbox_id} kill accepted but not fully cleared"):
+                return False
         self._parse_agent_api_response(body, status)
         logger.info(
             "[YuanrongFrontendAgentClient] delete_sandbox: instance_id=%s trace_id=%s",
             normalized_sandbox_id,
             resolved_trace_id,
         )
+        return True
 
     async def get_agent_info(
         self, instance_id: str, *, trace_id: str | None = None

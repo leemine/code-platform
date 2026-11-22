@@ -537,3 +537,35 @@ def test_runtime_mount_is_pinned_and_absent_node_refuses_create(provider, monkey
     generation.write_text(json.dumps(definition))
     with pytest.raises(ValueError, match="outside its account binding"):
         resources.create_scope(request)
+
+
+def test_codex_undispatched_fence_blocks_late_create_and_preserves_other_receipts(provider, monkeypatch):
+    resources, request, claim, _, response = provider
+    # Reuse the provider's real workspace and journal for the Codex role.
+    resources.codex_root = resources.provider_root
+    resources.codex_images, resources.provider_images = resources.provider_images, frozenset()
+    for mount in request["HostConfig"]["Mounts"]:
+        if mount["Target"] == "/run/opencode":
+            mount["Target"] = "/run/codex"
+    scope = resources.create_scope(request)
+    request, _ = resources.boundary.rewrite(request, provider_scope=scope)
+    monkeypatch.setattr(resources, "docker", lambda *_: (404 if response["container"] is None else 200, {}))
+    with pytest.raises(BlockingIOError):
+        with resources.locked(scope):
+            resources.fence_undispatched_codex(claim)
+    response["container"] = object()
+    assert resources.fence_undispatched_codex(claim) == {"fenced": False}
+    response["container"] = None
+    with resources.dispatch(request, "/containers/create", scope=scope) as (path, receipt, _):
+        # Even if Docker returns 404, a possibly forwarded operation is unresolved.
+        resources.write(path, {**receipt, "state": "SENT"})
+    assert resources.fence_undispatched_codex(claim) == {"fenced": False}
+
+    path.unlink()
+    assert resources.fence_undispatched_codex(claim) == {"fenced": True}
+    assert resources.fence_undispatched_codex(claim) == {"fenced": True}
+    assert resources.fence_undispatched_codex({**claim, "instance_id": "another"}) == {"fenced": False}
+    assert resources.read(path)["reason"] == "never-dispatched"
+    with pytest.raises(ValueError, match="already dispatched or fenced"):
+        with resources.dispatch(request, "/containers/create", scope=scope):
+            pytest.fail("late fenced create reached the Docker upstream")

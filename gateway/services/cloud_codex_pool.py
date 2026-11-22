@@ -188,8 +188,34 @@ class CloudCodexPool:
                 await asyncio.sleep(0.25)
             return lease
 
+    async def _fence_unready(self, row, plan):
+        instance = row["instance_id"]
+        if (not await self.yuanrong.instance_absent(instance)
+                and not matches_allocation(plan, await self.yuanrong.get_agent_info(instance))):
+            raise EnvironmentUnavailable("Codex allocation ownership changed before fencing")
+        if not await self.resources.fence_undispatched_codex(**self._claim(row, plan)):
+            return row
+        return self._transition(row, "RETIRING_UNDISPATCHED", instance_id=instance)
+
+    async def _retire_undispatched(self, row, plan):
+        instance = row["instance_id"]
+        # Revalidate the physical fence when resuming after a Gateway restart.
+        if not await self.resources.fence_undispatched_codex(**self._claim(row, plan)):
+            raise EnvironmentUnavailable("Codex undispatched allocation fence is missing")
+        if not await self.yuanrong.instance_absent(instance):
+            if not matches_allocation(plan, await self.yuanrong.get_agent_info(instance)):
+                raise EnvironmentUnavailable("Codex allocation ownership changed before retirement")
+            if not await self.yuanrong.retire_undispatched_codex(instance):
+                logger.warning("Codex kill accepted with frontend cleanup pending: instance_id=%s", instance)
+            elif not await self.yuanrong.instance_absent(instance):
+                raise EnvironmentUnavailable("Codex undispatched allocation deletion is pending")
+        return await self._advance_generation(row)
+
     async def _finish_retirement(self, row, plan):
         await self.resources.confirm_deleted(**self._claim(row, plan))
+        return await self._advance_generation(row)
+
+    async def _advance_generation(self, row):
         broker = self._brokers.pop(row["operation_id"], None)
         if broker:
             await asyncio.to_thread(broker.close)
@@ -219,6 +245,9 @@ class CloudCodexPool:
             row = self._binding(key, self._current(account), directory, model)
             self._bind_session(row, session_id, directory)
             plan = self._plan(row)
+            if row["state"] == "RETIRING_UNDISPATCHED":
+                row = await self._retire_undispatched(row, plan)
+                plan = self._plan(row)
             if row["state"] == "DELETING":
                 if not await self.yuanrong.instance_absent(row["instance_id"]):
                     raise EnvironmentUnavailable("Codex deletion is pending")
@@ -232,7 +261,15 @@ class CloudCodexPool:
                        "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
                 row = await allocate_provider(self.yuanrong, self.namespace, row, plan, self._transition,
                                               env_vars=env, provider_name="Codex")
-            lease = await self._ready(row, plan)
+            try:
+                lease = await self._ready(row, plan)
+            except (TimeoutError, YuanrongAgentApiError):
+                if not self._holds.get(key):
+                    try:
+                        await self._fence_unready(row, plan)
+                    except (EnvironmentUnavailable, YuanrongAgentApiError, OSError, RuntimeError, ValueError) as exc:
+                        logger.warning("Codex failed allocation fencing deferred: %s", type(exc).__name__)
+                raise
             self._current(account)
             self._holds.setdefault(key, {})[session_id] = asyncio.Event()
         try:
@@ -251,23 +288,42 @@ class CloudCodexPool:
         cutoff = time.time() - self.idle_seconds
         with self.store.connect() as db:
             keys = [tuple(row) for row in db.execute("""SELECT account_id, project_id, provider FROM provider_bindings
-                WHERE provider=? AND (state='DELETING' OR (state='ALLOCATED' AND used_at<=?))""", (PROVIDER, cutoff))]
+                WHERE provider=? AND (state IN ('DELETING', 'RETIRING_UNDISPATCHED')
+                                  OR (state='ALLOCATED' AND used_at<=?))""", (PROVIDER, cutoff))]
         for key in keys:
             try:
                 async with self._locks[key]:
                     row = read_binding(self.store, key)
-                    if row is None or key in self._holds or row["state"] not in ("DELETING", "ALLOCATED"):
+                    if (row is None or key in self._holds
+                            or row["state"] not in ("DELETING", "ALLOCATED", "RETIRING_UNDISPATCHED")):
                         continue
                     if row["state"] == "ALLOCATED" and row["used_at"] > cutoff:
                         continue
                     plan = self._plan(row)
+                    if row["state"] == "RETIRING_UNDISPATCHED":
+                        await self._retire_undispatched(row, plan)
+                        continue
                     instance = row["instance_id"]
                     absent = await self.yuanrong.instance_absent(instance)
+                    if row["state"] == "ALLOCATED":
+                        if absent:
+                            address = None
+                        else:
+                            try:
+                                address = await self.resources.confirm_codex_address(**self._claim(row, plan))
+                            except RuntimeError:
+                                address = None
+                        if address is None and row["used_at"] <= time.time() - self.ready_timeout:
+                            row = await self._fence_unready(row, plan)
+                            if row["state"] == "RETIRING_UNDISPATCHED":
+                                await self._retire_undispatched(row, plan)
+                                continue
+                        if address is None and not absent:
+                            continue
                     if not absent:
                         if not matches_allocation(plan, await self.yuanrong.get_agent_info(instance)):
                             raise EnvironmentUnavailable("Codex allocation ownership changed before deletion")
                         if row["state"] == "ALLOCATED":
-                            address = await self.resources.confirm_codex_address(**self._claim(row, plan))
                             if not await self.idle_check(CodexLease(address, plan[-1].decode("ascii"))):
                                 continue
                             row = self._transition(row, "DELETING", instance_id=instance)

@@ -104,6 +104,8 @@ Gateway的 `resource_reconciler_socket` 指向容器内该确认socket。该配�
 
 受限接口支持 `POST /v1/confirm-deleted`，以及 OpenCode 专用的 `POST /v1/confirm-opencode-unavailable` 和 `POST /v1/confirm-opencode-stalled`。请求字段为 `workspace/identity/image/user/instance_id`，请求体最多 8192 字节。删除确认返回 `absent=true`。OpenCode 两个故障检查分别返回 `unavailable` 和 `stalled` 布尔值。无法验证时返回 503。接口不转发任意 Docker 请求，也不提供强制删除、卷删除或列出其他环境的操作。Gateway 沿用 15 秒超时、无重试的既有 HTTP 客户端和创建、回收 SDK。
 
+Codex 专用的 `POST /v1/fence-undispatched-codex` 使用相同请求字段。物理边界在创建路径使用的槽位锁下检查该代无创建回执且规范容器名返回 404，写入标记 `never-dispatched` 的封禁回执，再返回 `fenced=true`。该回执阻止同一代迟到的创建请求，返回值只证明该代未向 Docker 发起创建。已存在创建回执或容器时返回 `fenced=false`，仍走原实例删除与物理确认。
+
 适配器从已审核的创建请求提取工作区及只读凭据挂载，以工作区hash生成唯一Docker名字，以工作区和凭据目录hash标记epoch归属。同一工作区持有非阻塞文件锁；转发前持久化最小 `NOT_SENT→SENT` 回执，收到有效201后先落 `CREATED` 再回复。既有同代回执、未结束旧代或占用物理名字时拒绝再次派发。回执只含路径、镜像、用户和物理标识，不存口令、令牌、环境变量或命令，不取代平台环境数据库。
 
 原删除流程请求确认时，部署侧校验上述归属与原API404：只对镜像、用户、scope标签、工作区/凭据挂载完全匹配，且状态created、从未启动的容器做一次非force、不删除卷的补偿删除，再确认物理404并持久化 `DELETED`。这是原删除的同步补偿，没有后台扫描、第二创建器或独立回收调度。运行过的容器、归属不同、检查失败均保留待处理状态，不强删。旧代 `DELETED` 回执保留以拒绝迟到创建。
