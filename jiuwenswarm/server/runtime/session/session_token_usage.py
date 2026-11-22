@@ -6,10 +6,12 @@ from collections.abc import Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any
 
 _MAX_TOKEN_COUNT = (1 << 53) - 1
 _CATEGORIES = ("main", "others")
+_LOCK_TIMEOUT_SECONDS = 10
 
 
 def _token_count(value: Any) -> int | None:
@@ -45,6 +47,20 @@ def classify_usage_owner(
     return "main"
 
 
+def _enable_wal(connection: sqlite3.Connection) -> None:
+    # A concurrent reader can make the initial mode switch return SQLITE_BUSY
+    # immediately, even with SQLite's busy handler configured.
+    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if exc.sqlite_errorcode != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+
+
 class SessionTokenUsageLedger:
     """SQLite ledger keyed by Core's model-call request ID."""
 
@@ -68,9 +84,9 @@ class SessionTokenUsageLedger:
         safe_input = _token_count(input_tokens)
         safe_output = _token_count(output_tokens)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self._path, timeout=10, isolation_level=None)) as connection:
-            connection.execute("PRAGMA busy_timeout = 10000")
-            connection.execute("PRAGMA journal_mode = WAL")
+        with closing(sqlite3.connect(self._path, timeout=0, isolation_level=None)) as connection:
+            _enable_wal(connection)
+            connection.execute(f"PRAGMA busy_timeout = {_LOCK_TIMEOUT_SECONDS * 1000}")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS usage_events (

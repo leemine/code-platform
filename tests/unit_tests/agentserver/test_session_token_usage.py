@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from functools import partial
+import sqlite3
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +103,36 @@ def test_concurrent_agents_do_not_lose_session_token_updates(tmp_path):
     assert snapshot["others"]["input_tokens"] == 136
     assert snapshot["others"]["output_tokens"] == 152
     assert snapshot["others"]["calls_total"] == 16
+
+
+def test_record_retries_wal_initialization_after_a_concurrent_reader(tmp_path, monkeypatch):
+    busy, released = Event(), Event()
+
+    class ObservedConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            try:
+                return super().execute(sql, parameters)
+            except sqlite3.OperationalError as exc:
+                if sql == "PRAGMA journal_mode = WAL" and exc.sqlite_errorcode == sqlite3.SQLITE_BUSY:
+                    busy.set()
+                    if not released.wait(5):
+                        raise TimeoutError("Fixture reader retained its lock") from exc
+                raise
+
+    ledger = SessionTokenUsageLedger(tmp_path, "sess_usage")
+    with closing(sqlite3.connect(tmp_path / "session_token_usage.sqlite3", isolation_level=None)) as reader:
+        reader.execute("BEGIN")
+        reader.execute("SELECT name FROM sqlite_master").fetchall()
+        monkeypatch.setattr(sqlite3, "connect", partial(sqlite3.connect, factory=ObservedConnection))
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(ledger.record, "call-1", "others", 1, 2)
+            try:
+                assert busy.wait(15)
+            finally:
+                reader.rollback()
+                released.set()
+            pending.result(timeout=5)
+    assert ledger.snapshot()["others"]["calls_total"] == 1
 
 
 def test_usage_owner_groups_leader_as_main_and_team_or_nested_agents_as_others():
