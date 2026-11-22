@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 78 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 79 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -51,7 +51,7 @@ generated: true
 | [jiuwenswarm/observability](#module-34) | 1 |
 | [jiuwenswarm/server](#module-35) | 4 |
 | [jiuwenswarm/server/control](#module-36) | 4 |
-| [jiuwenswarm/server/runtime/agent_adapter](#module-37) | 13 |
+| [jiuwenswarm/server/runtime/agent_adapter](#module-37) | 14 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-38) | 10 |
 | [jiuwenswarm/server/runtime/gateway_adapter](#module-39) | 1 |
 | [jiuwenswarm/server/runtime/session](#module-40) | 3 |
@@ -451,6 +451,7 @@ generated: true
 | [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 | [B_20261103_1113_opencode-utf8-equipment](bugfix/agent_adapter/B_20261103_1113_opencode-utf8-equipment.md) | B | OpenCode equipment 跨平台 UTF-8 编码修复 | leewanlong | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_equipment.py, tests/unit_tests/agentserver/test_opencode_equipment_encoding.py | 无独立 D：现有适配层文件编码的小范围修复，无独立设计。 |
 | [B_20261110_2344_codex-permission-reconnect](bugfix/agent_adapter/B_20261110_2344_codex-permission-reconnect.md) | B | Codex 已加载线程权限变更通过自有客户端重连确认 | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：修复既有权限契约，沿用原 Runtime 和官方恢复入口，无新增架构设计。 |
+| [B_20261122_1223_codex-relay-async-wss](bugfix/agent_adapter/B_20261122_1223_codex-relay-async-wss.md) | B | Codex 托管中继的 WSS 升级竞态 | leemine | jiuwenswarm/server/runtime/agent_adapter | jiuwenswarm/server/runtime/agent_adapter/providers/codex_managed_stdio.py, tests/unit_tests/cloud_workspace/test_codex_managed_stdio.py | 无独立 D：用户确认在现有 S_01 托管 Codex 中继契约内修复 Worker 的 TLS 套接字访问方式。 |
 
 <a id="module-38"></a>
 
