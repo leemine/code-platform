@@ -15,6 +15,7 @@ PORT = 18768
 FRAME = 8 * 1024 * 1024
 PROJECT_ROOT = Path("/data/agent/workspace")
 STATE_ROOT = Path("/state")
+MODEL_CATALOG = Path("/run/codex/model-catalog.json")
 SESSION = re.compile(r"[A-Za-z0-9_-]{1,160}")
 COMMAND = (
     "/opt/codex/bin/codex",
@@ -23,7 +24,6 @@ COMMAND = (
     "-c", 'model_providers.swarm.base_url="http://127.0.0.1:17543/v1"',
     "-c", 'model_providers.swarm.wire_api="responses"',
     "-c", "model_providers.swarm.requires_openai_auth=false",
-    "app-server", "--listen", "stdio://",
 )
 
 
@@ -96,7 +96,11 @@ class StdioBridge:
                 raise PermissionError("Invalid Codex session state")
         env = {k: v for k, v in os.environ.items() if k != "CODEX_CAPABILITY_DIGEST"}
         env.update(HOME=str(home), CODEX_HOME=str(codex_home))
-        process = await asyncio.create_subprocess_exec(*COMMAND, cwd=directory, env=env, start_new_session=True,
+        command = COMMAND
+        if MODEL_CATALOG.is_file():
+            command += ("-c", "model_catalog_json=" + json.dumps(str(MODEL_CATALOG)))
+        process = await asyncio.create_subprocess_exec(
+            *command, "app-server", "--listen", "stdio://", cwd=directory, env=env, start_new_session=True,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             limit=FRAME + 1)
         tasks = []

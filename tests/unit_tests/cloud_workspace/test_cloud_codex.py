@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,7 +11,7 @@ from gateway.common.security.provider_relay_auth import parse_assertion, sign_as
 from gateway.common.security.service_auth import ServiceAuthenticator
 from gateway.services.cloud_codex_pool import CloudCodexPool, PROJECT_ROOT
 from gateway.services.cloud_environments import EnvironmentStore
-from gateway.services.managed_codex_models import ManagedModel
+from gateway.services.managed_codex_models import CATALOG_FILENAME, ManagedModel
 
 
 DIRECTORY = "/data/agent/workspace/code/demo"
@@ -55,13 +56,24 @@ def test_models_cannot_change_the_network_origin_or_expose_credentials():
     value = {"model": "isolated", "base_url": MODEL_URL, "api_key": "fixture-key"}
     model = ManagedModel.parse(value, {MODEL_URL})
     assert "fixture-key" not in repr(model)
+    configured = ManagedModel.parse({**value, "context_window": 1048576}, {MODEL_URL})
+    assert configured.context_window == 1048576
+    assert configured.revision == model.revision
     for origin in ("http://127.0.0.1/v1", "https://another.example.test/v1", MODEL_URL + "?key=fixture"):
         with pytest.raises(ValueError):
             ManagedModel.parse({**value, "base_url": origin}, {MODEL_URL})
 
 
+@pytest.mark.parametrize("value", [True, 0, -1, "1048576", 1048576.0, None, 2**63])
+def test_managed_codex_rejects_invalid_model_catalog_context(value):
+    with pytest.raises(ValueError, match="context window"):
+        ManagedModel.parse({"model": "isolated", "base_url": MODEL_URL, "api_key": "fixture-key",
+                            "context_window": value}, {MODEL_URL})
+
+
 @pytest.mark.asyncio
-async def test_codex_allocation_releases_then_reuses_original_volume(account_and_store):
+@pytest.mark.parametrize("context_window", [None, 1048576])
+async def test_codex_allocation_releases_then_reuses_original_volume(account_and_store, context_window):
     account, store, state = account_and_store
     config = SimpleNamespace(codex_provider={"image": "sha256:" + "a" * 64, "account_allowlist": ["canary"],
                              "shared_runtime": "/opt/runtime/" + "b" * 64, "idle_seconds": 0},
@@ -86,7 +98,7 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
     resources = SimpleNamespace(confirm_deleted=AsyncMock(), confirm_codex_address=AsyncMock(return_value="10.0.0.1"))
     pool = CloudCodexPool(store, yuanrong, config, resources)
     pool.ready_check = pool.idle_check = AsyncMock(return_value=True)
-    model = ManagedModel("only-model", MODEL_URL, "synthetic-private-model-key")
+    model = ManagedModel("only-model", MODEL_URL, "synthetic-private-model-key", context_window)
     try:
         async with pool.hold(account, "web_session", DIRECTORY, model) as first:
             description = requests[0]
@@ -95,6 +107,18 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             assert {mount["target"] for mount in description["mounts"]} == {
                 str(PROJECT_ROOT), "/state", "/run/codex", "/opt/yuanrong-python",
             }
+            identity = next(mount for mount in description["mounts"] if mount["target"] == "/run/codex")
+            assert identity["readonly"]
+            first_catalog = Path(identity["source"]) / CATALOG_FILENAME
+            if context_window is None:
+                assert not first_catalog.exists()
+            else:
+                encoded_catalog = first_catalog.read_bytes()
+                assert model.key.encode() not in encoded_catalog and model.endpoint.encode() not in encoded_catalog
+                [catalog] = json.loads(encoded_catalog)["models"]
+                assert catalog["slug"] == model.name
+                assert catalog["context_window"] == catalog["max_context_window"] == context_window
+                assert catalog["effective_context_window_percent"] == 95
             async with pool.hold(account, "another_session", OTHER_DIRECTORY, model) as another:
                 assert another == first
                 assert len(requests) == 1
@@ -103,16 +127,30 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
         with pytest.raises(PermissionError, match="another project"):
             async with pool.hold(account, "web_session", OTHER_DIRECTORY, model):
                 pytest.fail("changed project acquired a Codex transport")
+        changed = ManagedModel(model.name, model.endpoint, model.key, 4096)
+        with pytest.raises(PermissionError, match="persistent Worker binding"):
+            async with pool.hold(account, "web_session", DIRECTORY, changed):
+                pytest.fail("changed context acquired a Codex transport")
         with store.connect() as db:
             keys = db.execute("SELECT account_id,project_id,provider FROM provider_bindings").fetchall()
         assert [tuple(item) for item in keys] == [("canary", "@" + account["environment_id"], "codex")]
         await pool.reclaim_idle()
         resources.confirm_deleted.assert_awaited_once()
         assert not instances
+        assert not first_catalog.exists()
+        await pool.close()
+        pool = CloudCodexPool(store, yuanrong, config, resources)
+        pool.ready_check = pool.idle_check = AsyncMock(return_value=True)
         async with pool.hold(account, "web_session", DIRECTORY, model) as second:
             assert requests[0]["workspace"] == requests[1]["workspace"]
             assert requests[0]["name"] != requests[1]["name"]
             assert first.capability != second.capability
+            second_identity = next(mount for mount in requests[1]["mounts"] if mount["target"] == "/run/codex")
+            second_catalog = Path(second_identity["source"]) / CATALOG_FILENAME
+            if context_window is None:
+                assert not second_catalog.exists()
+            else:
+                assert second_catalog.read_bytes() == encoded_catalog
     finally:
         await pool.close()
 
