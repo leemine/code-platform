@@ -7,6 +7,8 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
+import sys
 import time
 import shutil
 import tempfile
@@ -17,6 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from gateway.common.managed_codex import RELAY_ENV as MANAGED_RELAY_ENV
 from jiuwenswarm.common.external_adapter_factories import create_codex
 from jiuwenswarm.common.schema.agent import AgentResponse, AgentResponseChunk
 from jiuwenswarm.common.schema.message import ReqMethod
@@ -160,13 +163,18 @@ class CodexAdapter:
             raise ValueError("Install the codex-direct optional dependency (official Codex SDK)") from None
         self._permission_profile = self._profile(config if config and "permissions" in config else root)
         settings = dict(settings)
-        if settings.get("cli_path"):
+        relay = os.environ.get(MANAGED_RELAY_ENV)
+        if relay:
+            settings["managed_relay"] = relay
+        if settings.get("cli_path") and not relay:
             from jiuwenswarm.common.windows_cli_paths import resolve_preserved_cli_path
             from .cli import resolve_cli
             settings["cli_path"] = resolve_cli("codex", explicit=resolve_preserved_cli_path(settings["cli_path"]))
         catalog_text = None
         catalog_path = settings.pop("model_catalog_json", None)
         if catalog_path is not None:
+            if relay:
+                raise ValueError("Managed Codex does not support a Worker-local native model catalog")
             if not isinstance(catalog_path, str) or not Path(catalog_path).is_absolute():
                 raise ValueError("Codex model_catalog_json must be an absolute file path")
             try:
@@ -243,6 +251,7 @@ class CodexAdapter:
             ensure_current()
             await self._connect(session, model, role, selection=selection, ensure_current=ensure_current)
             session.mcp = selection
+            await self._release_managed_transport(session)
 
     async def prepare_session(self, *, session_id, channel_id, mode, project_dir=None, facts=None):
         self._validate_mode(mode)
@@ -401,8 +410,21 @@ class CodexAdapter:
         if selection is not None and selection.env:
             env.update(selection.env)
             overrides += ('shell_environment_policy.exclude=["SWARM_CODEX_MCP_*"]',)
-        config = CodexConfig(codex_bin=self._settings.get("cli_path"), cwd=session.directory, env=env,
-                             config_overrides=overrides, client_name="swarm_agent_adapter")
+        managed = self._settings.get("managed_relay")
+        if managed:
+            if selection is not None and selection.env:
+                raise ValueError("Managed Codex cannot transfer Worker-local MCP credentials")
+            env = {MANAGED_RELAY_ENV: managed, "SWARM_CODEX_WORKSPACE": session.directory,
+                   "SWARM_CODEX_MODEL_BINDING": json.dumps({
+                       "session_id": session.swarm_id, "model": model.model_name,
+                       "base_url": model.api_base, "api_key": model.api_key,
+                   })}
+            config = CodexConfig(launch_args_override=(
+                sys.executable, "-m", "jiuwenswarm.server.runtime.agent_adapter.providers.codex_managed_stdio",
+            ), cwd=session.directory, env=env, client_name="swarm_agent_adapter")
+        else:
+            config = CodexConfig(codex_bin=self._settings.get("cli_path"), cwd=session.directory, env=env,
+                                 config_overrides=overrides, client_name="swarm_agent_adapter")
         if model.client_options.get("timeout") is not None:
             logging.getLogger(__name__).info("Codex model HTTP timeout is not mapped to a Turn deadline; native stream idle policy applies")
         try:
@@ -411,12 +433,14 @@ class CodexAdapter:
             raise RuntimeError("The installed Codex SDK does not support Swarm's required client/approval interface") from None
         try:
             await asyncio.to_thread(client.start)
-            await asyncio.wait_for(asyncio.to_thread(client.initialize), 30)
+            await asyncio.wait_for(asyncio.to_thread(client.initialize), 165 if managed else 30)
             options = {
                 "cwd": session.directory, "model": model.model_name, "modelProvider": "swarm",
                 "config": {"mcp_servers": selection.servers if selection is not None else {}},
                 **self._permission_options(session.desired_permission),
             }
+            if managed and model.context_window is not None:
+                options["config"]["model_context_window"] = model.context_window
             resumed = bool(session.thread_id)
             if resumed:
                 response = await asyncio.wait_for(asyncio.to_thread(client.thread_resume, session.thread_id, options), 30)
@@ -460,6 +484,11 @@ class CodexAdapter:
         session.new_thread = not resumed
         session.role_instructions = role if "developerInstructions" in options else None if resumed else ""
         session.effective_permission = session.desired_permission
+
+    async def _release_managed_transport(self, session):
+        if self._settings.get("managed_relay") and session.client is not None:
+            client, session.client = session.client, None
+            await asyncio.to_thread(client.close)
 
     @staticmethod
     def _permission_options(profile):
@@ -719,6 +748,8 @@ class CodexAdapter:
                 # confirmed. EOF/ACK alone cannot admit another Turn.
                 if not terminal and not session.cancelled:
                     await self.cleanup_session_adapter(sid)
+                elif terminal and not session.cancelled:
+                    await self._release_managed_transport(session)
 
     @staticmethod
     def _final_response(messages):
@@ -777,6 +808,7 @@ class CodexAdapter:
                                 raise RuntimeError("Codex stream closed without a native terminal event")
                             await self._stop_turn_terminals(session)
                             session.cancel_confirmed = True
+                            await self._release_managed_transport(session)
                     except Exception as exc:
                         # Preserve the Thread and ownership evidence for retry;
                         # never report success or silently start a replacement.

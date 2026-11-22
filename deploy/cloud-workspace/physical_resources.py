@@ -27,21 +27,28 @@ CONTAINER_ID = re.compile(r"[a-f0-9]{64}")
 PROJECT_ROOT = Path("/data/agent/workspace")
 STATE_TARGET = "/state"
 PROVIDER_IDENTITY_TARGET = "/run/opencode"
+CODEX_IDENTITY_TARGET = "/run/codex"
 OPENCODE_PORT = 4096
+CODEX_PORT = 18768
 
 from opencode_runtime_asset import RUNTIME_TARGET, asset_rules, runtime_identity, tree_digest
 
 
 class PhysicalResources:
     def __init__(self, boundary, journal_root: Path, identity_root: Path, identity_target: str,
-                 upstream: str, frontend: str, timeout: float = 10, *, provider_root=None, provider_images=(), runtime_assets=()):
+                 upstream: str, frontend: str, timeout: float = 10, *, provider_root=None, provider_images=(),
+                 runtime_assets=(), codex_root=None, codex_images=(), codex_runtime_assets=(), codex_security=None):
         self.boundary = boundary
         self.root, self.identity_root = Path(journal_root), Path(identity_root)
         self.identity_target = identity_target
         self.upstream, self.frontend, self.timeout = upstream, frontend.rstrip("/"), timeout
         self.provider_root = Path(provider_root) if provider_root is not None else None
         self.provider_images = frozenset(provider_images)
-        self.runtime_assets = asset_rules(runtime_assets, self.provider_images)
+        self.codex_root = Path(codex_root) if codex_root is not None else None
+        self.codex_images = frozenset(codex_images)
+        self.codex_security = codex_security
+        self.runtime_assets = {**asset_rules(runtime_assets, self.provider_images),
+                               **asset_rules(codex_runtime_assets, self.codex_images)}
         self._verified_runtime_assets = {}
 
         for path, uid in [(self.root, os.getuid()), (self.identity_root, boundary.uid)]:
@@ -67,6 +74,18 @@ class PhysicalResources:
             roots = (self.root, self.identity_root, boundary.workspace_root, boundary.log_root, *boundary.shared)
             if any(self.provider_root.is_relative_to(root) or root.is_relative_to(self.provider_root) for root in roots):
                 raise ValueError("OpenCode physical storage must be separate from other runtime roots")
+        if (bool(self.codex_root) != bool(self.codex_images) or bool(self.codex_images) != bool(codex_security)
+                or self.codex_images & (self.provider_images | boundary.images)
+                or any(image not in self.runtime_assets for image in self.codex_images)
+                or (self.codex_images and identity_target == CODEX_IDENTITY_TARGET)):
+            raise ValueError("Codex admission requires a distinct root, shared runtime and pinned security")
+        if self.codex_root is not None:
+            self._private(self.codex_root, boundary.uid)
+            roots = (self.root, self.identity_root, boundary.workspace_root, boundary.log_root, *boundary.shared)
+            if self.provider_root is not None:
+                roots += (self.provider_root,)
+            if any(self.codex_root.is_relative_to(root) or root.is_relative_to(self.codex_root) for root in roots):
+                raise ValueError("Codex physical storage must be separate from other runtime roots")
 
     @staticmethod
     def _private(path: Path, uid: int) -> None:
@@ -94,15 +113,18 @@ class PhysicalResources:
                 "user": user, "slot": slot, "key": key, "name": "cpw-" + slot}
 
     def is_provider_image(self, image) -> bool:
-        return isinstance(image, str) and image in self.provider_images
+        return isinstance(image, str) and image in (self.provider_images | self.codex_images)
 
     def _provider_scope(self, workspace: str, identity: str, image: str, user: str) -> dict:
         state, generation = Path(workspace), Path(identity)
         binding = state.parent
-        if (state.name != "state" or binding.parent != self.provider_root
+        codex = image in self.codex_images
+        role = "codex" if codex else "opencode"
+        physical_root = self.codex_root if codex else self.provider_root
+        if (state.name != "state" or binding.parent != physical_root
                 or generation.parent != binding or not OPENCODE_BINDING.fullmatch(binding.name)
                 or not OPENCODE_BINDING.fullmatch(generation.name) or user != self.boundary.user):
-            raise ValueError("invalid OpenCode physical scope")
+            raise ValueError("invalid Provider physical scope")
         for directory in (binding, state, generation):
             self._private(directory, self.boundary.uid)
         operation_scope = generation / "scope.json"
@@ -120,8 +142,8 @@ class PhysicalResources:
         slot = hashlib.sha256(str(state).encode()).hexdigest()
         key = hashlib.sha256((str(state) + "\0" + str(generation)).encode()).hexdigest()
         scope = {"workspace": str(state), "identity": str(generation), "image": image,
-                "user": user, "slot": slot, "key": key, "name": "cpo-" + slot,
-                "role": "opencode", "account_workspace": definition["account_workspace"],
+                "user": user, "slot": slot, "key": key, "name": ("cpc-" if codex else "cpo-") + slot,
+                "role": role, "account_workspace": definition["account_workspace"],
                 "project_source": definition["project_source"], "project_target": definition["project_target"]}
         if expected_asset:
             scope["shared_runtime"] = str(expected_asset)
@@ -184,7 +206,8 @@ class PhysicalResources:
         return mounts
 
     def _check_provider_mounts(self, scope: dict, mounts: dict, *, private_logs: bool) -> None:
-        required = {STATE_TARGET: (scope["workspace"], False), PROVIDER_IDENTITY_TARGET: (scope["identity"], True),
+        target = CODEX_IDENTITY_TARGET if scope.get("role") == "codex" else PROVIDER_IDENTITY_TARGET
+        required = {STATE_TARGET: (scope["workspace"], False), target: (scope["identity"], True),
                     scope["project_target"]: (scope["project_source"], False)}
         if "shared_runtime" in scope:
             required[RUNTIME_TARGET] = (scope["shared_runtime"], True)
@@ -233,7 +256,8 @@ class PhysicalResources:
         if self.is_provider_image(request.get("Image")):
             mounts = self._provider_create_mounts(request)
             state = mounts.get(STATE_TARGET)
-            identity = mounts.get(PROVIDER_IDENTITY_TARGET)
+            target = CODEX_IDENTITY_TARGET if request["Image"] in self.codex_images else PROVIDER_IDENTITY_TARGET
+            identity = mounts.get(target)
             if not state or not identity:
                 raise ValueError("OpenCode requires state and generation mounts")
             scope = self._provider_scope(state[0], identity[0], request["Image"], request.get("User"))
@@ -338,7 +362,7 @@ class PhysicalResources:
         if (value.get("Image") != scope["image"] or value.get("Config", {}).get("User") != scope["user"]
                 or value.get("Config", {}).get("Labels", {}).get(LABEL) != scope["key"]):
             raise ValueError("physical ownership differs; no deletion permitted")
-        if scope.get("role") == "opencode":
+        if scope.get("role") in {"opencode", "codex"}:
             actual = {}
             for mount in mounts:
                 target = mount["Destination"]
@@ -348,6 +372,8 @@ class PhysicalResources:
                     raise ValueError("OpenCode shared runtime mount propagation differs")
                 actual[target] = (mount["Source"], not mount["RW"])
             self._check_provider_mounts(scope, actual, private_logs=True)
+            if scope["role"] == "codex":
+                self.codex_security.verify_inspect(value)
         elif (not any(m.get("Source") == scope["workspace"] and m.get("Destination") == "/data" for m in mounts)
                 or not any(m.get("Source") == scope["identity"] and m.get("Destination") == self.identity_target
                            and m.get("RW") is False for m in mounts)):
@@ -356,7 +382,7 @@ class PhysicalResources:
     @contextmanager
     def dispatch(self, request: dict, path: str, *, scope=None):
         scope = self.create_scope(request) if scope is None else scope
-        if scope.get("role") == "opencode":
+        if scope.get("role") in {"opencode", "codex"}:
             if request.get("Image") != scope["image"] or request.get("User") != scope["user"]:
                 raise ValueError("OpenCode physical image or user differs")
             if self._provider_scope(scope["workspace"], scope["identity"], scope["image"], scope["user"]) != scope:
@@ -394,10 +420,10 @@ class PhysicalResources:
         return scope, instance
 
     @contextmanager
-    def _opencode_probe_address(self, request: dict):
+    def _provider_probe_address(self, request: dict, role: str):
         scope, _ = self._confirmation_scope(request)
-        if scope.get("role") != "opencode":
-            raise ValueError("physical fault checks require an OpenCode scope")
+        if scope.get("role") != role:
+            raise ValueError("physical address request has a different Provider scope")
         with self.locked(scope) as directory:
             receipt = self.read(directory / (scope["key"] + ".json"))
             if (receipt is None or receipt.get("state") != "CREATED" or receipt.get("observed") is not True
@@ -413,7 +439,14 @@ class PhysicalResources:
             address = IPv4Address(bridge.get("IPAddress", ""))
             if not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified:
                 raise ValueError("OpenCode container bridge address is not private")
-            yield str(address), OPENCODE_PORT
+            yield str(address), CODEX_PORT if role == "codex" else OPENCODE_PORT
+
+    def _opencode_probe_address(self, request: dict):
+        return self._provider_probe_address(request, "opencode")
+
+    def confirm_codex_address(self, request: dict) -> dict:
+        with self._provider_probe_address(request, "codex") as (address, _):
+            return {"address": address}
 
     def confirm_opencode_unavailable(self, request: dict) -> dict:
         with self._opencode_probe_address(request) as address:
@@ -434,6 +467,25 @@ class PhysicalResources:
                     return {"stalled": True}
                 return {"stalled": False}
 
+    def fence_undispatched_codex(self, request: dict) -> dict:
+        """Reject any late dispatch for a generation that never reached Docker."""
+        scope, instance = self._confirmation_scope(request)
+        if scope.get("role") != "codex":
+            raise ValueError("undispatched fence requires a Codex generation")
+        fence = {**scope, "state": "DELETED", "observed": False,
+                 "reason": "never-dispatched", "instance_id": instance}
+        with self.locked(scope) as directory:
+            path = directory / (scope["key"] + ".json")
+            receipt = self.read(path)
+            if receipt is not None and receipt != fence:
+                return {"fenced": False}
+            status, _ = self.docker("GET", "/containers/" + scope["name"] + "/json")
+            if status != 404:
+                return {"fenced": False}
+            if receipt is None:
+                self.write(path, fence)
+            return {"fenced": True}
+
     def confirm_deleted(self, request: dict) -> dict:
         scope, instance = self._confirmation_scope(request)
         with self.locked(scope) as directory:
@@ -451,7 +503,7 @@ class PhysicalResources:
             # Fence undispatched late creates too. A missing receipt is safe only
             # on this explicitly guarded, newly provisioned deployment scope.
             if receipt is None:
-                if scope.get("role") == "opencode":
+                if scope.get("role") in {"opencode", "codex"}:
                     raise ValueError("OpenCode allocation has no physical dispatch receipt")
                 receipt = {**scope, "state": "NOT_SENT", "observed": False}
                 self.write(path, receipt)
@@ -474,7 +526,7 @@ class PhysicalResources:
                     raise ValueError("physical container still exists")
             elif not receipt.get("observed") and receipt["state"] not in ("NOT_SENT", "DELETED"):
                 raise ValueError("dispatch outcome is unknown; absence alone is insufficient")
-            if scope.get("role") == "opencode" and receipt.get("observed"):
+            if scope.get("role") in {"opencode", "codex"} and receipt.get("observed"):
                 identifier = receipt.get("container_id")
                 if not isinstance(identifier, str) or not CONTAINER_ID.fullmatch(identifier):
                     raise ValueError("invalid OpenCode physical create receipt")

@@ -5,7 +5,7 @@ id: S_01_cloud-account-instance
 title: 云账号与原实例链契约
 type: S
 modules: [gateway, server/front]
-files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
+files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
 ---
 
 # 云账号与原实例链契约
@@ -21,6 +21,12 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 启用 `opencode_provider.shared_runtime` 后，绑定固定启动栈的版本路径。Docker 边界按镜像 ID 校验本节点的授权和资产摘要，只允许只读的 `/opt/yuanrong-python` 挂载。缺失资产的节点在 Docker 创建前拒绝启动。操作员可在完成物理回收且下一代尚未计划时，停写并比较当前镜像后更新绑定快照。迁移或回滚保留绑定、项目授权、原生会话索引和状态卷。
 
 共享版 OpenCode 发布清单同时固定新镜像 ID、启动栈树摘要和原完整镜像 ID。发布工具在所有指定元戎节点完成预置与核验后才输出 Gateway 配置及 Docker 边界参数。新节点先核验同一清单再接入调度。原完整镜像在节点保留，可按现有离线迁移流程回滚。
+
+独立 Codex 按认证账号和 Worker 环境 ID 固定执行容器及状态卷。同一 Worker 的多个授权项目可共享容器。Gateway 将每个 Swarm 会话固定到原项目路径，容器为该会话单独持久化 CODEX_HOME。Worker 继续负责模型选择、原生线程映射、审批及取消。Worker 使用签名 WSS 连接 Gateway，Gateway 经带代次令牌的私有中继接到容器内的官方 App Server stdio。Gateway 保留连接令牌和模型 API Key，容器接收令牌摘要及限定模型的 Unix socket。同一绑定固定 Responses 模型连接配置，模型不一致时显式拒绝。已分配实例先核对元戎归属、Docker 物理证明，再完成带令牌的 App Server 初始化探测。
+
+托管 Codex 完成或确认取消一轮后释放会话传输租约。容器内中继关闭本次 App Server 进程后进入空闲。回收检查 Worker 绑定无活动租约和中继无活动会话，元戎和 Docker 均确认删除后才推进代次。下一代重用状态卷和会话目录，原适配器按保存的原生线程恢复。镜像变更使用同一离线比较并交换流程，目标镜像需要同一 stdio 启动契约。
+
+Codex 就绪失败时，Gateway 先匹配元戎实例的镜像、用户和挂载，再由 Docker 边界在同一物理槽位锁下核对无创建回执和容器 404，写入禁止迟到创建的该代记录。已写入创建回执或物理结果无法确认的实例继续使用常规回收。Gateway 持久化清退状态供重启后继续。元戎明确返回该实例已接收 kill、仅 Frontend 清理确认未闭合时，可以凭无物理创建的记录推进该绑定代次。其它错误保留待清退状态。新申请沿用原绑定、项目和状态卷。
 
 就绪观测记录首次等待与失败复核，区分元戎 RUNNING 和认证健康检查，按账号、绑定及代次归因。观测不增加等待或更改生命周期。正式 Web 的选模拦截通过原账号认证上报固定原因码，记录 Gateway 生成的事件 ID、认证账号 ID 和原因。两个日志事件都可按事件 ID 去重。上报不写会话，不分配 Provider，Worker 准入保持独立。
 
