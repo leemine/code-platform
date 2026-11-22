@@ -98,6 +98,7 @@ class Session:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     subagents: SubagentProjection | None = None
     usage: CodexUsage = field(default_factory=CodexUsage)
+    runtime_id: str | None = None
 
 
 def command_result(item: dict) -> dict:
@@ -257,7 +258,14 @@ class CodexAdapter:
         self._validate_mode(mode)
         if self._settings is None:
             raise RuntimeError("Codex adapter has not been configured")
+        from gateway.common.runtime_device import DEVICE_ID
         from jiuwenswarm.common.utils import get_default_project_session_workspace_dir
+        from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+        runtime_id = get_session_metadata(session_id, enable_writeback=False).get("runtime_id")
+        if runtime_id is not None and (not self._settings.get("managed_relay")
+                or not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id)):
+            raise ValueError("Codex device needs a managed runtime")
         current = self._sessions.get(session_id)
         directory = Path(project_dir or (current.directory if current else get_default_project_session_workspace_dir())).expanduser()
         if not directory.is_absolute() or not directory.is_dir():
@@ -266,28 +274,35 @@ class CodexAdapter:
         if current:
             if directory != current.directory:
                 raise ValueError("Codex session workspace cannot change after binding")
+            if runtime_id != current.runtime_id:
+                raise ValueError("Codex session runtime device cannot change after binding")
             return
         from ..execution_input import session_facts
         facts = facts or session_facts(session_id)
         binding = recovery.load("codex", session_id, directory)
         if binding:
-            recovery.require_settings(binding, self._settings)
+            recovery.require_settings(binding, self._binding_settings(runtime_id))
             self._sessions[session_id] = Session(directory, Path(binding["root"]), swarm_id=session_id,
                 thread_id=binding["native_id"], model_revision=binding["model_revision"],
-                desired_permission=binding["permission"])
+                desired_permission=binding["permission"], runtime_id=runtime_id)
             return
         if facts.has_assistant_history:
             raise ValueError("Codex cannot restore a released session without a recovery binding; its original native thread cannot be identified")
         parent = facts.storage_dir / ".codex-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
-        self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
+        self._sessions[session_id] = Session(directory, root, swarm_id=session_id,
+                                             desired_permission=self._permission_profile, runtime_id=runtime_id)
+
+    def _binding_settings(self, runtime_id):
+        return self._settings | {"runtime_id": runtime_id} if runtime_id is not None else self._settings
 
     def _save_binding(self, session):
         if session.swarm_id and session.thread_id:
             recovery.save("codex", session.swarm_id, root=session.root, directory=session.directory,
                 native_id=session.thread_id, model_revision=session.model_revision,
-                settings_revision=recovery.settings_revision(self._settings), permission=session.desired_permission)
+                settings_revision=recovery.settings_revision(self._binding_settings(session.runtime_id)),
+                permission=session.desired_permission)
 
     def has_session_runtime(self, session_id=None):
         return session_id in self._sessions if session_id else bool(self._sessions)
@@ -414,10 +429,11 @@ class CodexAdapter:
         if managed:
             if selection is not None and selection.env:
                 raise ValueError("Managed Codex cannot transfer Worker-local MCP credentials")
-            binding = {"session_id": session.swarm_id, "model": model.model_name,
-                       "base_url": model.api_base, "api_key": model.api_key}
-            if model.context_window is not None:
-                binding["context_window"] = model.context_window
+            from .codex_device import model_payload
+
+            binding = {"session_id": session.swarm_id, **model_payload(model)}
+            if session.runtime_id is not None:
+                binding["runtime_id"] = session.runtime_id
             env = {MANAGED_RELAY_ENV: managed, "SWARM_CODEX_WORKSPACE": session.directory,
                    "SWARM_CODEX_MODEL_BINDING": json.dumps(binding)}
             config = CodexConfig(launch_args_override=(

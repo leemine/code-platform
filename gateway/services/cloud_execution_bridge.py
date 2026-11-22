@@ -25,7 +25,7 @@ from gateway.services.project_gitcode import METHODS as GITCODE_METHODS
 from gateway.services.project_environments import ENVIRONMENT_METHODS
 
 PATH = "/api/v1/data-sync/ws"
-_READ_GLOBAL = {"config.get", "models.list", "commands.list", "skills.list", "project.list", "session.list", "cloud.runtime.list"}
+_READ_GLOBAL = {"config.get", "models.list", "commands.list", "skills.list", "project.list", "session.list", "cloud.runtime.list", "cloud.runtime.models"}
 _RUNTIME_DEVICE_METHODS = {"cloud.runtime.create", "cloud.runtime.start"}
 
 

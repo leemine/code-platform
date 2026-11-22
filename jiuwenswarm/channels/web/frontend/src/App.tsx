@@ -89,7 +89,7 @@ import { normalizeTeamLeaderIdentity } from './features/teamLeaderIdentity';
 import { normalizeTeamGroupIdentity } from './features/teamGroupIdentity';
 import { useWebSocket, mergePersistedGoalCompletionMessages, stampGoalObjectiveMessages, useResponsiveLayout, useResponsivePanelResize } from './hooks';
 import { CloudRuntimePanel } from './features/cloudWorkspace/CloudRuntimePanel';
-import { refreshCloudRuntime, useCloudRuntimes } from './features/cloudWorkspace/useProjectRuntime';
+import { refreshCloudRuntime, useCloudRuntimes, type CloudRuntime } from './features/cloudWorkspace/useProjectRuntime';
 import { isOpenCodeNativeModel } from './features/cloudWorkspace/opencodeModels';
 import { webClient, webRequest, isCloudResource } from './services/webClient';
 import { attachTeamSession, resetTeamAttachments } from './services/teamAttach';
@@ -3273,15 +3273,18 @@ function AppContent({
     requestComposerFocus();
   }, [disposeInFlightHistoryHandles, mode, navigate, requestComposerFocus, setCurrentSession, setSelectedProject, setSingleAgentPanelExpanded, setTeamAreaExpanded]);
 
-  const useRuntimeInCode = useCallback((runtimeId: string) => {
+  const useRuntimeInCode = useCallback((runtime: CloudRuntime) => {
+    if (!runtime.runtime_id || !runtime.available) return;
     const workspace = useWorkspaceStore.getState();
     void workspace.setWorkMode('code');
     if (cloudRuntimes?.remote) workspace.setCodeLocation('cloud');
     enterNewConversation('agent', { forceMode: 'agent', preserveProject: true });
     const sessions = useSessionStore.getState();
     const previous = sessions.getRuntime(NEW_CONVERSATION_ID);
-    sessions.setExecutionProvider(NEW_CONVERSATION_ID, 'opencode-direct', runtimeId);
-    if (previous?.executionProvider !== 'opencode-direct') {
+    sessions.setExecutionProvider(NEW_CONVERSATION_ID, runtime.provider_id, runtime.runtime_id);
+    if (runtime.model_id) {
+      sessions.setSelectedModelSelection(NEW_CONVERSATION_ID, { type: 'model', id: runtime.model_id });
+    } else if (previous?.executionProvider !== runtime.provider_id) {
       sessions.setSelectedModelSelection(NEW_CONVERSATION_ID, null);
     }
   }, [cloudRuntimes?.remote, enterNewConversation]);

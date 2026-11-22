@@ -20,9 +20,15 @@ Gateway 可以统一设置 `provider_relay_origin` 和 `provider_relay_ca_file`�
 
 Gateway 启用独立 OpenCode 中继后，通过现有已认证请求通道处理只读 `project.runtime.status`。请求只接受当前账号可访问的具体 `project_id`。Gateway 复用原账号环境、项目路径和共用执行池准入规则，返回固定的执行 Provider 和运行时标识、可选展示名称及准入结果。查询阶段无分配和工作区写入。Web 仅在 Code 普通会话草稿中将当前项目的结果叠加到原 Provider 下拉框，旧 Gateway 沿用原选项。首次实际发送仍由账号 Worker 和中继按原独立容器流程实施准入与分配，同一会话沿用已存的 Provider 与原生会话绑定。
 
-账号级 `cloud.runtime.list` 投影默认运行时、当前账号的命名设备和部署模板。创建与启动使用 `cloud.runtime.create`、`cloud.runtime.start`，均不接受项目选择器。登记写入现有 OpenCode 持久绑定，重试使用同一创建标识，默认设备仍兼容原项目接口。设备中继的签名路径包含设备 ID，启动阶段只允许模型同步与健康检查。Code 会话创建校验账号设备和当前项目，固化设备 ID，发送和恢复继续复用这个绑定。命名设备使用账号工作区根，每台设备使用各自的 Provider 状态卷。
+账号级 `cloud.runtime.list` 返回默认运行时、当前账号的命名设备和部署模板。OpenCode 和 Codex 复用 `cloud.runtime.create`、`cloud.runtime.start`。创建提交模板、名称、创建标识，Codex 可额外提交账号模型 ID。启动只提交已有设备 ID。登记按账号、环境、Provider 和创建标识幂等，模板可用性由对应 Provider 准入决定。设备记录与项目无关，每个设备使用自己的 Provider 状态卷。OpenCode 无项目启动沿设备签名路径同步模型并确认健康，项目级的默认设备接口保留。
 
-OpenCode 和 Codex 通过共用初始化器升级 `provider_bindings`。旧记录保留绑定、代次和实例 ID，新增的 `display_name` 默认为空。名称唯一约束只覆盖同账号的命名 OpenCode 设备。两个 Provider 按列名插入，包括没有设备名称的绑定。升级后的数据库应使用兼容该列的 Gateway 版本。
+Codex 设备模板声明模型选择能力时，浏览器用 `models.list` 显示账号模型，并以 `cloud.runtime.models` 返回的兼容 ID 筛选。账号默认模型符合条件时预选。显式模型在创建设备登记前由当前账号 Worker 核验，初次启动和后续重试均按持久化 ID 解析。旧客户端省略模型 ID 时初次使用账号默认模型。
+
+Codex 设备通过原 Worker 签名 WSS 的准备操作解析并固定账号模型。模型密钥不进入设备目录或绑定表，Gateway 沿用模型端点准入和现有模型中继。准备操作仅限账号工作区根及该账号已登记的命名设备，启动走元戎、Docker 物理确认和应用健康探测。设备准备阶段不登记原生会话。请求模型缺失、不同于设备绑定或不受支持时，保持设备归属并返回明确的模型错误。
+
+命名设备用于 Code 普通会话。Worker 校验账号设备、项目及目录，固化 `runtime_id` 和 Codex 的模型选择。后续发送、续聊与恢复沿用原绑定；已有会话的设备不可切换。没有设备 ID 的 Codex 会话使用已有共享账号绑定。命名设备和默认设备使用相同的 Provider 分配锁、持久状态机及回收机制。
+
+OpenCode 和 Codex 用共同初始化器升级 `provider_bindings`。旧记录保留绑定、代次和实例 ID，`display_name` 默认为空。设备名称按账号和 Provider 唯一。两个 Provider 均按列名插入，兼容旧的无名绑定。数据库升级后应使用兼容该列的 Gateway。
 
 `cloud.runtime.list` 在账号范围内只读返回同一名称、准入和绑定状态，端云桥只为这个确切方法开放无项目选择器的转发。项目状态查询继续核验具体项目。状态来自现有持久绑定和当前分配代次的已确认健康结果。Gateway 重启后，已分配但未重新确认的代次显示「待核验」。
 
@@ -34,7 +40,7 @@ OpenCode 和 Codex 通过共用初始化器升级 `provider_bindings`。旧记�
 
 共享版 OpenCode 发布清单同时固定新镜像 ID、启动栈树摘要和原完整镜像 ID。发布工具在所有指定元戎节点完成预置与核验后才输出 Gateway 配置及 Docker 边界参数。新节点先核验同一清单再接入调度。原完整镜像在节点保留，可按现有离线迁移流程回滚。
 
-独立 Codex 按认证账号和 Worker 环境 ID 固定执行容器及状态卷。同一 Worker 的多个授权项目可共享容器。Gateway 将每个 Swarm 会话固定到原项目路径，容器为该会话单独持久化 CODEX_HOME。Worker 继续负责模型选择、原生线程映射、审批及取消。Worker 使用签名 WSS 连接 Gateway，Gateway 经带代次令牌的私有中继接到容器内的官方 App Server stdio。Gateway 保留连接令牌和模型 API Key，容器接收令牌摘要及限定模型的 Unix socket。同一绑定固定 Responses 模型连接配置，模型不一致时显式拒绝。已分配实例先核对元戎归属、Docker 物理证明，再完成带令牌的 App Server 初始化探测。
+默认独立 Codex 按认证账号和 Worker 环境 ID 固定执行容器及状态卷。同一 Worker 的多个授权项目可共享容器。Gateway 将每个 Swarm 会话固定到原项目路径，容器为该会话单独持久化 CODEX_HOME。Worker 继续负责模型选择、原生线程映射、审批及取消。Worker 使用签名 WSS 连接 Gateway，Gateway 经带代次令牌的私有中继接到容器内的官方 App Server stdio。Gateway 保留连接令牌和模型 API Key，容器接收令牌摘要及限定模型的 Unix socket。同一绑定固定 Responses 模型连接配置，模型不一致时显式拒绝。已分配实例先核对元戎归属、Docker 物理证明，再完成带令牌的 App Server 初始化探测。
 
 Worker 的签名 WSS 握手、就绪应答和双向帧收发由同一个异步事件循环处理。该循环以异步管道连接官方 SDK 的 stdio，远端关闭时取消仍在等待 SDK 输入的任务。
 

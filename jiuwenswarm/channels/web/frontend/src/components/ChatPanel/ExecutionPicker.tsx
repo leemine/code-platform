@@ -10,7 +10,7 @@ import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
 import { useCloudRuntimes, useProjectRuntime } from '../../features/cloudWorkspace/useProjectRuntime';
 import './ExecutionPicker.css';
 
-type RuntimeOption = ExecutionProviderOption & { runtimeId?: string; runtimeState?: string };
+type RuntimeOption = ExecutionProviderOption & { runtimeId?: string; runtimeState?: string; modelId?: string | null };
 
 export function ExecutionPicker({ sessionId, disabled = false, runtimeProjectId = null }: {
   sessionId: string; disabled?: boolean; runtimeProjectId?: string | null;
@@ -36,8 +36,9 @@ export function ExecutionPicker({ sessionId, disabled = false, runtimeProjectId 
         const namedOptions = (namedCatalog?.runtimes ?? [])
           .filter(device => device.runtime_id && device.provider_id === option.id)
           .map(device => ({
-            ...option, runtimeId: device.runtime_id, runtimeState: device.state, label: `${option.label} · ${device.display_name}`,
-            available: option.available && device.available && device.state !== 'starting',
+            ...option, runtimeId: device.runtime_id, runtimeState: device.state, modelId: device.model_id, label: `${option.label} · ${device.display_name}`,
+            available: option.available && device.available && device.state !== 'starting'
+              && (device.provider_id !== 'codex-direct' || Boolean(device.model_id)),
           }));
         return [defaultOption, ...namedOptions];
       });
@@ -90,7 +91,9 @@ export function ExecutionPicker({ sessionId, disabled = false, runtimeProjectId 
     const current = state.runtimes[sessionId];
     const policy = readManagedOpenCodeModels(cloud.catalog?.config);
     state.setExecutionProvider(sessionId, option.id, option.runtimeId);
-    if (option.id === 'opencode-direct' && policy && current?.executionProvider !== option.id) {
+    if (option.modelId) {
+      state.setSelectedModelSelection(sessionId, { type: 'model', id: option.modelId });
+    } else if (option.id === 'opencode-direct' && policy && current?.executionProvider !== option.id) {
       state.setSelectedModelSelection(sessionId, policy.default ? { type: 'model', id: policy.default.id } : null);
     } else if (option.id !== 'opencode-direct' && isOpenCodeNativeModel(current?.selectedModelSelection)) {
       state.setSelectedModelSelection(sessionId, null);

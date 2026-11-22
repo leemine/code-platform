@@ -13,8 +13,10 @@ import re
 import secrets
 import shutil
 import time
+import uuid
 
-from gateway.common.managed_codex import IDENTITY_TARGET, NATIVE_PORT
+from gateway.common.managed_codex import IDENTITY_TARGET, NATIVE_PORT, PROFILE_ID, validate_device_model_id
+from gateway.common.runtime_device import DEVICE_ID, WORKER_ROOT as PROJECT_ROOT, device_prefix, validate_registration
 from gateway.common.opencode_runtime import RUNTIME_TARGET
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
@@ -25,18 +27,23 @@ from gateway.services.cloud_provider_allocation import (
     private_initial_file,
     read_binding,
     read_private_file,
+    register_named_binding,
+    RuntimeDeviceNameConflict,
 )
 from gateway.services.managed_codex_models import CATALOG_FILENAME, CodexModelBroker, native_model_catalog
 
 
 logger = logging.getLogger(__name__)
 PROVIDER = "codex"
-PROJECT_ROOT = PurePosixPath("/data/agent/workspace")
 _COMMAND = (
     "python3.11 -B /opt/codex-candidate/model_bridge.py --socket /run/codex/model.sock "
     '--model "$CODEX_SELECTED_MODEL" --port 17543 & '
     "exec python3.11 -B /opt/codex-candidate/stdio_bridge.py"
 )
+
+
+class CodexRuntimeModelMismatch(PermissionError):
+    """The request differs from the model fixed to a Codex binding."""
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,7 @@ class CloudCodexPool:
         self._locks = defaultdict(asyncio.Lock)
         self._holds: dict[tuple[str, str, str], dict[str, asyncio.Event]] = {}
         self._brokers = {}
+        self._ready_operations: set[str] = set()
         self.ready_check = None
         self.idle_check = None
         _private_directory(self.storage)
@@ -79,42 +87,174 @@ class CloudCodexPool:
     def _key(row):
         return row["account_id"], row["project_id"], row["provider"]
 
-    def _binding(self, key, account, directory, model):
+    @staticmethod
+    def _device_key(account, runtime_id):
+        if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
+            raise ValueError("Invalid Codex device ID")
+        return account["account_id"], device_prefix(account) + runtime_id, PROVIDER
+
+    def _profile(self, account):
+        return {
+            "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
+            "account_workspace": account["workspace"], "shared_runtime": self.options["shared_runtime"],
+            "cpu": self.options.get("cpu", 1000), "memory": self.options.get("memory", 1024),
+            "physical_verification": True,
+        }
+
+    @staticmethod
+    def _source(account):
+        source = Path(account["workspace"]) / "agent/workspace"
+        if not source.is_dir() or source.resolve(strict=True) != source:
+            raise PermissionError("Codex account workspace is unavailable")
+        return source
+
+    def _project(self, account, directory):
         path = PurePosixPath(directory)
         if str(path) != directory or path == PROJECT_ROOT or not path.is_relative_to(PROJECT_ROOT) or ".." in path.parts:
             raise PermissionError("Codex needs an authorized project workspace")
-        source = Path(account["workspace"]) / "agent/workspace"
+        source = self._source(account)
         project = source.joinpath(*path.relative_to(PROJECT_ROOT).parts)
         if not project.is_dir() or project.resolve(strict=True) != project:
             raise PermissionError("Codex project workspace is unavailable")
+        return source
+
+    @staticmethod
+    def _insert(db, key, binding_id, source, profile, name=None):
+        db.execute("""INSERT INTO provider_bindings
+            (account_id, project_id, provider, binding_id, directory, project_source, profile_json,
+             generation, operation_id, state, instance_id, used_at, display_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?, ?)""",
+            (*key, binding_id, str(PROJECT_ROOT), str(source), json.dumps(profile),
+             secrets.token_hex(16), time.time(), name))
+
+    def runtime_template(self, account):
+        return {"runtime_profile_id": PROFILE_ID, "cpu": self.options.get("cpu", 1000),
+                "memory": self.options.get("memory", 1024),
+                "available": account["state"] == "ALLOCATED" and self.admits(account), "supports_model_selection": True}
+
+    def _public_device(self, row):
+        profile = json.loads(row["profile_json"])
+        lock = self._locks.get(self._key(row))
+        if row["state"] in {"DELETING", "RETIRING_UNDISPATCHED"}:
+            state = "reconciling"
+        elif lock is not None and lock.locked():
+            state = "starting"
+        elif row["state"] == "ALLOCATED":
+            state = "ready" if row["operation_id"] in self._ready_operations else "unknown"
+        elif row["state"] == "NEW":
+            state = "idle" if row["generation"] > 1 else "not_started"
+        else:
+            state = "unknown"
+        return {
+            "runtime_id": row["binding_id"], "display_name": row["display_name"], "state": state,
+            "available": self.admits(row), "model_id": profile.get("model_id"),
+        }
+
+    def account_devices(self, account):
+        if not self.admits(account):
+            return []
+        prefix = device_prefix(account)
+        with self.store.connect() as db:
+            rows = db.execute("""SELECT * FROM provider_bindings
+                WHERE account_id=? AND provider=? AND substr(project_id, 1, ?)=? AND display_name IS NOT NULL
+                ORDER BY display_name""", (account["account_id"], PROVIDER, len(prefix), prefix)).fetchall()
+        return [self._public_device(row) for row in rows]
+
+    def register_device(self, account, name, create_token, model_id=None):
+        current = self._current(account)
+        validate_registration(name, create_token)
+        if model_id is not None:
+            validate_device_model_id(model_id)
+        prefix = device_prefix(current)
+        runtime_id = uuid.uuid5(uuid.NAMESPACE_URL, json.dumps((current["account_id"], prefix, PROVIDER, create_token))).hex
+        key = self._device_key(current, runtime_id)
+
+        def insert(db):
+            profile = self._profile(current)
+            if model_id is not None:
+                profile["requested_model_id"] = model_id
+            self._insert(db, key, runtime_id, self._source(current), profile, name)
+
+        row = register_named_binding(self.store, current, key, runtime_id, name, insert)
+        if json.loads(row["profile_json"]).get("requested_model_id") != model_id:
+            raise RuntimeDeviceNameConflict("RUNTIME_DEVICE_NAME_CONFLICT")
+        return self._public_device(row)
+
+    def _named_binding(self, account, runtime_id):
+        row = read_binding(self.store, self._device_key(account, runtime_id))
+        if (row is None or row["binding_id"] != runtime_id or row["display_name"] is None
+                or row["project_source"] != str(self._source(account)) or row["directory"] != str(PROJECT_ROOT)):
+            raise PermissionError("Codex device does not belong to this account environment")
+        return row
+
+    def device_runtime(self, account, runtime_id):
+        return self._public_device(self._named_binding(self._current(account), runtime_id))
+
+    def device_model_id(self, account, runtime_id):
+        row = self._named_binding(self._current(account), runtime_id)
+        profile = json.loads(row["profile_json"])
+        return profile.get("model_id", profile.get("requested_model_id"))
+
+    @staticmethod
+    def _model_profile(model):
+        profile = {"model_name": model.name, "model_revision": model.revision}
+        if model.context_window is not None:
+            profile["context_window"] = model.context_window
+        return profile
+
+    @staticmethod
+    def _require_model(row, model):
+        profile = json.loads(row["profile_json"])
+        if (profile.get("model_revision") != model.revision
+                or profile.get("context_window") != model.context_window):
+            raise CodexRuntimeModelMismatch("Codex workspace or model differs from its persistent Worker binding")
+
+    def _binding(self, key, account, directory, model):
+        source = self._project(account, directory)
         row = read_binding(self.store, key)
         if row is None:
-            profile = {
-                "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
-                "account_workspace": account["workspace"], "shared_runtime": self.options["shared_runtime"],
-                "cpu": self.options.get("cpu", 1000), "memory": self.options.get("memory", 1024),
-                "model_name": model.name, "model_revision": model.revision, "physical_verification": True,
-            }
-            if model.context_window is not None:
-                profile["context_window"] = model.context_window
             with self.store.connect() as db:
-                db.execute("""INSERT INTO provider_bindings
-                    (account_id, project_id, provider, binding_id, directory, project_source, profile_json,
-                     generation, operation_id, state, instance_id, used_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
-                    (*key, secrets.token_hex(16), str(PROJECT_ROOT), str(source), json.dumps(profile),
-                     secrets.token_hex(16), time.time()))
+                profile = self._profile(account) | self._model_profile(model)
+                self._insert(db, key, secrets.token_hex(16), source, profile)
             row = read_binding(self.store, key)
-        profile = json.loads(row["profile_json"])
-        if ((row["directory"], row["project_source"]) != (str(PROJECT_ROOT), str(source))
-                or profile["model_revision"] != model.revision
-                or profile.get("context_window") != model.context_window):
+        if (row["directory"], row["project_source"]) != (str(PROJECT_ROOT), str(source)):
             raise PermissionError("Codex workspace or model differs from its persistent Worker binding")
+        self._require_model(row, model)
         return row
+
+    async def prepare_device(self, account, runtime_id, model, model_id):
+        key = self._device_key(account, runtime_id)
+        async with self._locks[key]:
+            current = self._current(account)
+            row = self._named_binding(current, runtime_id)
+            profile = json.loads(row["profile_json"])
+            if profile.get("requested_model_id", model_id) != model_id:
+                raise CodexRuntimeModelMismatch("Codex device model selection differs")
+            if "model_id" not in profile:
+                profile |= self._model_profile(model) | {"model_id": model_id}
+                with self.store.guard_binding({"authority": current["authority"], "user_id": key[0]}, current) as db:
+                    updated = db.execute("""UPDATE provider_bindings SET profile_json=?
+                        WHERE binding_id=? AND state='NEW' AND operation_id=? AND profile_json=?""",
+                        (json.dumps(profile), runtime_id, row["operation_id"], row["profile_json"]))
+                    if updated.rowcount != 1:
+                        raise EnvironmentUnavailable("Codex device model configuration changed")
+                row = read_binding(self.store, key)
+            if profile["model_id"] != model_id:
+                raise CodexRuntimeModelMismatch("Codex device model selection differs")
+            self._require_model(row, model)
+            row, _ = await self._ensure_lease(row, model)
+            self._current(account)
+            self._touch(row)
 
     def _bind_session(self, row, session_id, directory):
         key = row["binding_id"], session_id
         with self.store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("""SELECT 1 FROM codex_session_owners AS owner
+                JOIN provider_bindings AS binding ON owner.binding_id=binding.binding_id
+                WHERE binding.account_id=? AND binding.provider=? AND owner.session_id=? AND owner.binding_id<>?""",
+                (row["account_id"], PROVIDER, session_id, row["binding_id"])).fetchone():
+                raise PermissionError("Codex session belongs to another runtime device")
             db.execute("INSERT OR IGNORE INTO codex_session_owners VALUES (?, ?, ?)", (*key, directory))
             saved = db.execute("SELECT directory FROM codex_session_owners WHERE binding_id=? AND session_id=?",
                                key).fetchone()
@@ -226,6 +366,7 @@ class CloudCodexPool:
         return await self._advance_generation(row)
 
     async def _advance_generation(self, row):
+        self._ready_operations.discard(row["operation_id"])
         broker = self._brokers.pop(row["operation_id"], None)
         if broker:
             await asyncio.to_thread(broker.close)
@@ -240,11 +381,49 @@ class CloudCodexPool:
             logger.warning("Codex generation cleanup deferred: %s", type(exc).__name__)
         return updated
 
+    def _touch(self, row):
+        with self.store.connect() as db:
+            db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
+                       (time.time(), row["binding_id"], row["generation"]))
+
+    async def _ensure_lease(self, row, model):
+        key = self._key(row)
+        plan = self._plan(row)
+        if row["state"] == "RETIRING_UNDISPATCHED":
+            row = await self._retire_undispatched(row, plan)
+            plan = self._plan(row)
+        if row["state"] == "DELETING":
+            if not await self.yuanrong.instance_absent(row["instance_id"]):
+                raise EnvironmentUnavailable("Codex deletion is pending")
+            row = await self._finish_retirement(row, plan)
+            plan = self._plan(row)
+        generation = row["operation_id"]
+        if generation not in self._brokers:
+            self._brokers[generation] = CodexModelBroker(self._generation(row), model)
+        if row["state"] != "ALLOCATED":
+            env = {"HOME": "/state/home", "CODEX_SELECTED_MODEL": model.name,
+                   "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
+            row = await allocate_provider(self.yuanrong, self.namespace, row, plan, self._transition,
+                                          env_vars=env, provider_name="Codex")
+        self._ready_operations.discard(row["operation_id"])
+        try:
+            lease = await self._ready(row, plan)
+        except (TimeoutError, YuanrongAgentApiError):
+            if not self._holds.get(key):
+                try:
+                    await self._fence_unready(row, plan)
+                except (EnvironmentUnavailable, YuanrongAgentApiError, OSError, RuntimeError, ValueError) as exc:
+                    logger.warning("Codex failed allocation fencing deferred: %s", type(exc).__name__)
+            raise
+        self._ready_operations.add(row["operation_id"])
+        return row, lease
+
     @asynccontextmanager
-    async def hold(self, account, session_id, directory, model):
+    async def hold(self, account, session_id, directory, model, *, runtime_id=None):
         if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session_id):
             raise ValueError("Invalid Codex session")
-        key = account["account_id"], "@" + account["environment_id"], PROVIDER
+        key = (self._device_key(account, runtime_id) if runtime_id is not None
+               else (account["account_id"], "@" + account["environment_id"], PROVIDER))
         prior = self._holds.get(key, {}).get(session_id)
         if prior is not None:
             async with asyncio.timeout(5):
@@ -252,34 +431,15 @@ class CloudCodexPool:
         async with self._locks[key]:
             if session_id in self._holds.get(key, {}):
                 raise EnvironmentUnavailable("Codex session already has a transport")
-            row = self._binding(key, self._current(account), directory, model)
+            current = self._current(account)
+            if runtime_id is None:
+                row = self._binding(key, current, directory, model)
+            else:
+                self._project(current, directory)
+                row = self._named_binding(current, runtime_id)
+                self._require_model(row, model)
             self._bind_session(row, session_id, directory)
-            plan = self._plan(row)
-            if row["state"] == "RETIRING_UNDISPATCHED":
-                row = await self._retire_undispatched(row, plan)
-                plan = self._plan(row)
-            if row["state"] == "DELETING":
-                if not await self.yuanrong.instance_absent(row["instance_id"]):
-                    raise EnvironmentUnavailable("Codex deletion is pending")
-                row = await self._finish_retirement(row, plan)
-                plan = self._plan(row)
-            generation = row["operation_id"]
-            if generation not in self._brokers:
-                self._brokers[generation] = CodexModelBroker(self._generation(row), model)
-            if row["state"] != "ALLOCATED":
-                env = {"HOME": "/state/home", "CODEX_SELECTED_MODEL": model.name,
-                       "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
-                row = await allocate_provider(self.yuanrong, self.namespace, row, plan, self._transition,
-                                              env_vars=env, provider_name="Codex")
-            try:
-                lease = await self._ready(row, plan)
-            except (TimeoutError, YuanrongAgentApiError):
-                if not self._holds.get(key):
-                    try:
-                        await self._fence_unready(row, plan)
-                    except (EnvironmentUnavailable, YuanrongAgentApiError, OSError, RuntimeError, ValueError) as exc:
-                        logger.warning("Codex failed allocation fencing deferred: %s", type(exc).__name__)
-                raise
+            row, lease = await self._ensure_lease(row, model)
             self._current(account)
             self._holds.setdefault(key, {})[session_id] = asyncio.Event()
         try:
@@ -290,9 +450,7 @@ class CloudCodexPool:
                 live.pop(session_id).set()
                 if not live:
                     del self._holds[key]
-                with self.store.connect() as db:
-                    db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
-                               (time.time(), row["binding_id"], row["generation"]))
+                self._touch(row)
 
     async def reclaim_idle(self):
         cutoff = time.time() - self.idle_seconds
@@ -348,3 +506,4 @@ class CloudCodexPool:
         for broker in self._brokers.values():
             await asyncio.to_thread(broker.close)
         self._brokers.clear()
+        self._ready_operations.clear()

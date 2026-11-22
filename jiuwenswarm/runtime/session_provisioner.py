@@ -771,16 +771,24 @@ class RuntimeSessionProvisioner:
             )
             is_swarm = provision_input.is_swarm or resolved.is_team
             runtime_id = provision_input.runtime_id
+            device_model_id = None
             if runtime_id is not None:
-                from gateway.common.opencode_runtime import DEVICE_ID
-                from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_managed import validate_device
+                from gateway.common.runtime_device import DEVICE_ID
 
                 if (not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id)
-                        or selected_provider != "opencode-direct" or canonical_mode != "agent.code.normal"
-                        or is_swarm or is_default_project_id(project_id) or explicit_tui_session or provision_input.cron_id):
-                    raise SessionProvisionError("Managed device requires an OpenCode ordinary Code session")
+                        or selected_provider not in {"opencode-direct", "codex-direct"}
+                        or canonical_mode != "agent.code.normal" or is_swarm
+                        or is_default_project_id(project_id) or explicit_tui_session or provision_input.cron_id):
+                    raise SessionProvisionError("Managed device requires a supported ordinary Code session")
                 try:
-                    await validate_device(runtime_id, project_id, project_dir, provision_input.user_id)
+                    if selected_provider == "codex-direct":
+                        from jiuwenswarm.server.runtime.agent_adapter.providers.codex_device import validate_device
+
+                        device_model_id = await validate_device(runtime_id, project_dir, provision_input.user_id)
+                    else:
+                        from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_managed import validate_device
+
+                        await validate_device(runtime_id, project_id, project_dir, provision_input.user_id)
                 except ValueError as exc:
                     raise SessionProvisionError(str(exc), code="RUNTIME_DEVICE_UNAVAILABLE") from exc
             from jiuwenswarm.common.config import get_config
@@ -789,6 +797,12 @@ class RuntimeSessionProvisioner:
 
             raw_selection = provision_input.model_selection or existing_metadata.get("model_selection")
             selection = ModelSelection.model_validate(raw_selection) if raw_selection is not None else None
+            if device_model_id is not None:
+                bound_model = ModelSelection(type="model", id=device_model_id)
+                if selection is not None and selection != bound_model:
+                    raise SessionProvisionError("Use the model bound to this Codex device",
+                                                code="RUNTIME_DEVICE_MODEL_UNAVAILABLE")
+                selection = bound_model
             role_binding = None
             try:
                 if provision_input.role_template_ref is not None:

@@ -24,8 +24,10 @@ from gateway.common.opencode_model_policy import account_models_revision, base_p
 from gateway.common.opencode_runtime import DEVICE_CONTEXT, DEVICE_ID, RUNTIME_TARGET, WORKER_ROOT, runtime_source
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
+from gateway.common.runtime_device import device_prefix, validate_registration
 from gateway.services.cloud_provider_allocation import (
     allocate_provider, ensure_bindings_table, matches_allocation, read_binding,
+    register_named_binding, RuntimeDeviceNameConflict,
 )
 
 
@@ -244,7 +246,7 @@ class CloudOpencodePool:
                     """SELECT 1 FROM provider_bindings
                        WHERE account_id=? AND provider=?
                          AND (substr(project_id, 1, 1)<>'@' OR project_id LIKE ?) LIMIT 1""",
-                    (account["account_id"], PROVIDER, self._device_prefix(account) + "%"),
+                    (account["account_id"], PROVIDER, device_prefix(account) + "%"),
                 ).fetchone()
             if inherited is None:
                 return None
@@ -287,14 +289,10 @@ class CloudOpencodePool:
         key = account["account_id"], "@" + account["environment_id"], PROVIDER
         return self._public_runtime(key, self._get(key))
 
-    @staticmethod
-    def _device_prefix(account):
-        return f"@device:{account['environment_id']}:"
-
     def _device_key(self, account, runtime_id):
         if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
             raise ValueError("Invalid managed device ID")
-        return account["account_id"], self._device_prefix(account) + runtime_id, PROVIDER
+        return account["account_id"], device_prefix(account) + runtime_id, PROVIDER
 
     def _device_runtime(self, row):
         return {
@@ -308,7 +306,7 @@ class CloudOpencodePool:
                 "available": account["state"] == "ALLOCATED" and self._admits_new_binding(account["account_id"])}
 
     def account_devices(self, account):
-        prefix = self._device_prefix(account)
+        prefix = device_prefix(account)
         with self.store.connect() as db:
             rows = db.execute("""SELECT * FROM provider_bindings
                 WHERE account_id=? AND provider=? AND substr(project_id, 1, ?)=? AND display_name IS NOT NULL
@@ -321,23 +319,20 @@ class CloudOpencodePool:
         return self._device_runtime(self._binding(key, target, source, current))
 
     def register_device(self, account, name, create_token):
-        if (not isinstance(name, str) or not 1 <= len(name) <= 30
-                or name != name.strip() or not name.isprintable()
-                or not isinstance(create_token, str) or not DEVICE_ID.fullmatch(create_token)):
-            raise ValueError("Invalid managed device registration")
-        runtime_id = self._new_binding_id((account["account_id"], self._device_prefix(account) + create_token, PROVIDER))
+        validate_registration(name, create_token)
+        runtime_id = self._new_binding_id((account["account_id"], device_prefix(account) + create_token, PROVIDER))
         key = self._device_key(account, runtime_id)
-        with self.store.guard_binding({"authority": account["authority"], "user_id": account["account_id"]}, account) as db:
-            row = db.execute("SELECT * FROM provider_bindings WHERE binding_id=?", (runtime_id,)).fetchone()
-            if row is not None and self._key(row) == key and row["display_name"] == name:
-                return self._device_runtime(row)
-            if row is not None or db.execute("""SELECT 1 FROM provider_bindings WHERE account_id=? AND provider='opencode' AND display_name=?""",
-                                             (account["account_id"], name)).fetchone():
-                raise OpenCodeConfigurationError("RUNTIME_DEVICE_NAME_CONFLICT")
+
+        def insert(db):
             if not self._admits_new_binding(account["account_id"]):
                 raise PermissionError("Account is not admitted for a new managed OpenCode binding")
             self._insert_binding(db, key, runtime_id, str(WORKER_ROOT), self._shared_source(account), account, name)
-        return self._device_runtime(self._get(key))
+
+        try:
+            row = register_named_binding(self.store, account, key, runtime_id, name, insert)
+        except RuntimeDeviceNameConflict as exc:
+            raise OpenCodeConfigurationError(str(exc)) from exc
+        return self._device_runtime(row)
 
     def _insert_binding(self, db, key, binding_id, directory, source, account, display_name=None):
         profile = {
@@ -365,7 +360,7 @@ class CloudOpencodePool:
     def _binding(self, key, directory, source, account):
         row = self._get(key)
         if row is None:
-            if key[1].startswith(self._device_prefix(account)):
+            if key[1].startswith(device_prefix(account)):
                 raise PermissionError("Managed device is not registered for this account")
             if not self._admits_new_binding(account["account_id"]):
                 raise PermissionError("Account is not admitted for a new managed OpenCode binding")

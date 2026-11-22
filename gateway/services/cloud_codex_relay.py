@@ -12,9 +12,13 @@ from urllib.parse import unquote
 from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import WebSocketException
 
-from gateway.common.managed_codex import ASSERTION_HEADER, AUDIENCE, DIRECTORY_HEADER, MAX_FRAME_BYTES, NATIVE_PORT
+from gateway.common.managed_codex import (
+    ASSERTION_HEADER, AUDIENCE, DIRECTORY_HEADER, MAX_FRAME_BYTES, MODEL_UNAVAILABLE, NATIVE_PORT, validate_device_model_id,
+)
+from gateway.common.runtime_device import WORKER_ROOT
 from gateway.common.security.provider_relay_auth import parse_assertion, verify_assertion
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
+from gateway.services.cloud_codex_pool import CodexRuntimeModelMismatch
 from gateway.services.cloud_environments import EnvironmentUnavailable
 from gateway.services.cloud_workspace_projects import project_snapshot
 from gateway.services.managed_codex_models import ManagedModel, model_endpoint
@@ -134,11 +138,27 @@ class CloudCodexRelay:
         if len(self._replays) >= 10000 or signature in self._replays:
             raise PermissionError("Codex assertion was replayed")
         self._replays[signature] = claims["exp"]
-        projects = project_snapshot(row)
+        return row
+
+    @staticmethod
+    def _require_project(account, directory):
+        projects = project_snapshot(account)
         if sum(isinstance(item, dict) and not item.get("hidden") and item.get("project_dir") == directory
                for item in projects) != 1:
             raise PermissionError("Codex requires a project owned by this account")
-        return row
+
+    async def _prepare(self, websocket, account, opening):
+        runtime_id = opening.pop("runtime_id")
+        model_id = opening.pop("model_id")
+        self.pool.device_runtime(account, runtime_id)
+        validate_device_model_id(model_id)
+        try:
+            model = ManagedModel.parse(opening, self.allowed_endpoints)
+            await self.pool.prepare_device(account, runtime_id, model, model_id)
+        except (CodexRuntimeModelMismatch, ValueError):
+            await websocket.send_json({"code": MODEL_UNAVAILABLE})
+            return
+        await websocket.send_json({"ready": True})
 
     async def handle(self, websocket):
         close_code = 1011
@@ -148,17 +168,36 @@ class CloudCodexRelay:
             if not directory or len(directory) > 4096 or websocket.query_params:
                 raise PermissionError("Invalid Codex route")
             account = self._account(websocket, directory)
+            if directory != str(WORKER_ROOT):
+                self._require_project(account, directory)
             await websocket.accept()
             async with asyncio.timeout(15):
                 opening = await websocket.receive_text()
                 if len(opening.encode("utf-8")) > 16 * 1024:
                     raise ValueError("Codex model configuration exceeds bounds")
                 data = json.loads(opening)
-                if not isinstance(data, dict) or "session_id" not in data:
+                if not isinstance(data, dict):
                     raise ValueError("Codex handshake fields differ")
-                session_id = data.pop("session_id")
-                model = ManagedModel.parse(data, self.allowed_endpoints)
-            async with self.pool.hold(account, session_id, directory, model) as lease, _native(
+            operation = data.pop("op", "stream")
+            if operation == "prepare":
+                if directory != str(WORKER_ROOT):
+                    raise PermissionError("Invalid Codex device preparation scope")
+                await self._prepare(websocket, account, data)
+                close_code = 1000
+                return
+            if directory == str(WORKER_ROOT):
+                raise PermissionError("Codex requires an authorized project")
+            if operation == "check" and set(data) == {"runtime_id"}:
+                status = self.pool.device_runtime(account, data["runtime_id"])
+                await websocket.send_json({"runtime_id": status["runtime_id"], "model_id": status["model_id"]})
+                close_code = 1000
+                return
+            if operation != "stream" or "session_id" not in data:
+                raise ValueError("Codex handshake fields differ")
+            session_id = data.pop("session_id")
+            runtime_id = data.pop("runtime_id", None)
+            model = ManagedModel.parse(data, self.allowed_endpoints)
+            async with self.pool.hold(account, session_id, directory, model, runtime_id=runtime_id) as lease, _native(
                     lease, "stream", session_id=session_id, directory=directory) as server:
                 await websocket.send_json({"ready": True})
 
