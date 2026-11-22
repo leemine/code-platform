@@ -154,7 +154,7 @@ class CloudCodexRelay:
                 if len(opening.encode("utf-8")) > 16 * 1024:
                     raise ValueError("Codex model configuration exceeds bounds")
                 data = json.loads(opening)
-                if not isinstance(data, dict) or set(data) != {"session_id", "model", "base_url", "api_key"}:
+                if not isinstance(data, dict) or "session_id" not in data:
                     raise ValueError("Codex handshake fields differ")
                 session_id = data.pop("session_id")
                 model = ManagedModel.parse(data, self.allowed_endpoints)

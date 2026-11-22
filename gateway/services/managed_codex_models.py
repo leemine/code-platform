@@ -18,6 +18,11 @@ from gateway.common.managed_codex import MAX_FRAME_BYTES
 from gateway.common.security.service_auth import canonical
 
 
+MODEL_FIELDS = frozenset({"model", "base_url", "api_key"})
+CATALOG_FILENAME = "model-catalog.json"
+_EFFECTIVE_CONTEXT_PERCENT = 95
+
+
 def model_endpoint(value: str) -> str:
     url = urlsplit(value)
     if (url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment
@@ -34,6 +39,7 @@ class ManagedModel:
     name: str
     endpoint: str
     key: str = field(repr=False)
+    context_window: int | None = None
 
     @property
     def revision(self) -> str:
@@ -41,7 +47,7 @@ class ManagedModel:
 
     @classmethod
     def parse(cls, data, allowed_endpoints):
-        if not isinstance(data, dict) or set(data) != {"model", "base_url", "api_key"}:
+        if not isinstance(data, dict) or set(data) not in (MODEL_FIELDS, MODEL_FIELDS | {"context_window"}):
             raise ValueError("Managed Codex model fields differ")
         name, base, key = (data[k] for k in ("model", "base_url", "api_key"))
         if (not isinstance(name, str) or not name.strip() or len(name) > 200
@@ -51,7 +57,40 @@ class ManagedModel:
         endpoint = model_endpoint(base)
         if endpoint not in allowed_endpoints:
             raise ValueError("Selected model endpoint is outside managed Codex admission")
-        return cls(name, endpoint, key)
+        context_window = data.get("context_window")
+        if "context_window" in data and (type(context_window) is not int
+                or not 0 < context_window <= (2**63 - 1) // _EFFECTIVE_CONTEXT_PERCENT):
+            raise ValueError("Invalid managed Codex model context window")
+        return cls(name, endpoint, key, context_window)
+
+
+def native_model_catalog(name: str, context_window: int) -> bytes:
+    # Codex caps the thread override at the catalog maximum. Keep custom model
+    # capabilities conservative and leave the upstream connection in the broker.
+    return canonical({"models": [{
+        "slug": name,
+        "display_name": name,
+        "description": None,
+        "supported_reasoning_levels": [],
+        "shell_type": "unified_exec",
+        "visibility": "none",
+        "supported_in_api": True,
+        "priority": 99,
+        "model_messages": {
+            "instructions_template": "You are a coding assistant. Follow the user's instructions and configured permissions.",
+        },
+        "availability_nux": None,
+        "upgrade": None,
+        "include_apps_usage_instructions": False,
+        "support_verbosity": False,
+        "default_verbosity": None,
+        "apply_patch_tool_type": None,
+        "truncation_policy": {"mode": "bytes", "limit": 10000},
+        "context_window": context_window,
+        "max_context_window": context_window,
+        "effective_context_window_percent": _EFFECTIVE_CONTEXT_PERCENT,
+        "experimental_supported_tools": [],
+    }]})
 
 
 class _Responses(BaseHTTPRequestHandler):

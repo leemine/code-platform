@@ -6,6 +6,8 @@ The Gateway keeps the capability token and upstream model API key in the control
 
 The initial managed path supports a fixed Responses-compatible model connection per Worker binding. Requests with another model connection are rejected by the binding. An explicit Worker-local native model catalog or MCP configuration carrying local credentials requires the existing local Codex path. TLS and the upstream model endpoint allowlist are set by deployment.
 
+When the selected account model has a configured context window, the Worker passes it over the signed relay and the Gateway pins it to the binding. Each generation mounts a read-only native model catalog at `/run/codex/model-catalog.json`. Its configured and maximum context windows come from the account model, with the Codex custom-model effective percentage of 95. The mounted catalog contains model metadata only. The Responses broker remains the sole consumer of the upstream endpoint and key on the Gateway side. A binding with no explicit context window continues to use Codex's native defaults.
+
 ## Build and stage
 
 Build `Dockerfile.codex` with an explicit context containing `codex_model_bridge.py`, `codex_stdio_bridge.py`, and the complete `codex_cli_bin/` directory from the lock's Linux amd64 Codex CLI wheel. Verify the original wheel and package file digests. Keep the versioned Python 3.11, YuanRong Runtime and Executor tree on the host. Use the same Linux user ID in the account, Gateway and managed containers. The Gateway creates the native state and home directories before requesting allocation so the YuanRong bootstrap can initialize.

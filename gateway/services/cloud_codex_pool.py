@@ -26,7 +26,7 @@ from gateway.services.cloud_provider_allocation import (
     read_binding,
     read_private_file,
 )
-from gateway.services.managed_codex_models import CodexModelBroker
+from gateway.services.managed_codex_models import CATALOG_FILENAME, CodexModelBroker, native_model_catalog
 
 
 logger = logging.getLogger(__name__)
@@ -95,14 +95,18 @@ class CloudCodexPool:
                 "cpu": self.options.get("cpu", 1000), "memory": self.options.get("memory", 1024),
                 "model_name": model.name, "model_revision": model.revision, "physical_verification": True,
             }
+            if model.context_window is not None:
+                profile["context_window"] = model.context_window
             with self.store.connect() as db:
                 db.execute("""INSERT INTO provider_bindings VALUES
                     (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
                     (*key, secrets.token_hex(16), str(PROJECT_ROOT), str(source), json.dumps(profile),
                      secrets.token_hex(16), time.time()))
             row = read_binding(self.store, key)
+        profile = json.loads(row["profile_json"])
         if ((row["directory"], row["project_source"]) != (str(PROJECT_ROOT), str(source))
-                or json.loads(row["profile_json"])["model_revision"] != model.revision):
+                or profile["model_revision"] != model.revision
+                or profile.get("context_window") != model.context_window):
             raise PermissionError("Codex workspace or model differs from its persistent Worker binding")
         return row
 
@@ -150,6 +154,10 @@ class CloudCodexPool:
             encoded = json.dumps(document, sort_keys=True).encode()
             if private_initial_file(path, encoded) != encoded:
                 raise EnvironmentUnavailable("Codex physical scope changed")
+        if profile.get("context_window") is not None:
+            catalog = native_model_catalog(profile["model_name"], profile["context_window"])
+            if private_initial_file(generation / CATALOG_FILENAME, catalog) != catalog:
+                raise EnvironmentUnavailable("Codex native model catalog changed")
         mounts = [
             {"source": row["project_source"], "target": row["directory"], "readonly": False},
             {"source": str(state), "target": "/state", "readonly": False},

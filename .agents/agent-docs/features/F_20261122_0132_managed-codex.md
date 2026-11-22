@@ -5,7 +5,7 @@ type: F
 author: leemine
 author_email: leewanlong@gmail.com
 modules: [gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter]
-files: [gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, deploy/cloud-workspace/physical_resources.py, deploy/cloud-workspace/Dockerfile.codex, deploy/cloud-workspace/codex_stdio_bridge.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py]
+files: [gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/services/managed_codex_models.py, deploy/cloud-workspace/physical_resources.py, deploy/cloud-workspace/Dockerfile.codex, deploy/cloud-workspace/codex_stdio_bridge.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py]
 designs: []
 design_note: 用户确认独立 Codex 接入、逐节点发布及灰度任务。宿主契约续写 S_01_cloud-account-instance。
 ---
@@ -25,3 +25,9 @@ Gateway 仅为 allowlist 中当前 Worker 验证签名。应用连接令牌按�
 ## CPU 配额耗尽后的清退
 
 隔离元戎 0.10.3 分配了未调度实例 ID，但该代从未发起 Docker 创建。删除时控制面已清除实例，Frontend 的清理观察未闭合，约 30 秒后返回该实例的 `kill accepted but not fully cleared`。修复候选用现有物理槽位创建锁封住该代，持久化 Gateway 清退状态，并只识别这条带相同实例 ID 的元戎响应。正常容器仍由原删除确认流程回收。定向验证覆盖重启继续清退、未知删除错误保留绑定、阻止迟到创建和同一 Worker 并发重试只推进一次代次。
+
+## 从账号模型同步原生上下文
+
+此前账号配置已能向原生线程传递窗口，但 Codex 0.163.0 对未登记的自定义模型仍按原生回退目录上限裁减，实际报告 258,400 token。隔离候选在绑定中保存账号模型的窗口，每次分配自动生成原生只读目录。目录采用通用编码助手指令和保守的自定义模型元数据，未配置窗口的模型继续走原生回退路径。
+
+以 `fbc1a178` 和锁定的 Codex 0.163.0 为基线，隔离元戎 0.10.3 中从 leebot 的现有 `deepseek-v4.1-flash` 配置读取 1,048,576 token。新 Worker 和 Provider 冷启动后，首条消息产生连续流式增量及最终回复。原生 `token_count` 和 Worker 的使用量事件均记录 996,147。会话内未创建手工 `config.toml`。定向回归通过 144 项，覆盖无上下文旧请求、非法值、容量不一致及物理回收后重建目录。记录见管理仓任务 `PLATFORM-CODEX-NATIVE-CATALOG-20261122`。

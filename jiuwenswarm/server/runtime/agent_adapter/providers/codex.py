@@ -414,11 +414,12 @@ class CodexAdapter:
         if managed:
             if selection is not None and selection.env:
                 raise ValueError("Managed Codex cannot transfer Worker-local MCP credentials")
+            binding = {"session_id": session.swarm_id, "model": model.model_name,
+                       "base_url": model.api_base, "api_key": model.api_key}
+            if model.context_window is not None:
+                binding["context_window"] = model.context_window
             env = {MANAGED_RELAY_ENV: managed, "SWARM_CODEX_WORKSPACE": session.directory,
-                   "SWARM_CODEX_MODEL_BINDING": json.dumps({
-                       "session_id": session.swarm_id, "model": model.model_name,
-                       "base_url": model.api_base, "api_key": model.api_key,
-                   })}
+                   "SWARM_CODEX_MODEL_BINDING": json.dumps(binding)}
             config = CodexConfig(launch_args_override=(
                 sys.executable, "-m", "jiuwenswarm.server.runtime.agent_adapter.providers.codex_managed_stdio",
             ), cwd=session.directory, env=env, client_name="swarm_agent_adapter")
