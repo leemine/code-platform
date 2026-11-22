@@ -123,6 +123,7 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             assert requests[0]["env_vars"]["CODEX_SESSION_MODELS"] == "1"
         async with pool.hold(account, "web_session", DIRECTORY, model, runtime_id=runtime_id) as first:
             description = requests[0]
+            assert description["runtime_spec"]["memory"] == 1024
             assert hashlib.sha256(first.capability.encode()).hexdigest() == description["env_vars"]["CODEX_CAPABILITY_DIGEST"]
             assert all(value not in repr(description) for value in (first.capability, model.key, account["auth_file"]))
             assert {mount["target"] for mount in description["mounts"]} == {
@@ -141,6 +142,7 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
                 assert catalog["context_window"] == catalog["max_context_window"] == context_window
                 assert catalog["effective_context_window_percent"] == 95
             other_model = ManagedModel("alternate", MODEL_URL, "separate-fixture-key", 4096) if session_models else model
+            config.codex_provider["session_model_canary"]["memory"] = 4096
             async with pool.hold(account, "another_session", OTHER_DIRECTORY, other_model, runtime_id=runtime_id) as another:
                 assert another.address == first.address and another.capability == first.capability
                 if session_models:
@@ -181,7 +183,10 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
         await pool.close()
         pool = CloudCodexPool(store, yuanrong, config, resources)
         pool.ready_check = pool.idle_check = AsyncMock(return_value=True)
+        expected_memory = 4096 if session_models else 1024
+        assert pool.runtime_template(account)["memory"] == expected_memory
         async with pool.hold(account, "web_session", DIRECTORY, model, runtime_id=runtime_id) as second:
+            assert requests[1]["runtime_spec"]["memory"] == expected_memory
             assert requests[0]["workspace"] == requests[1]["workspace"]
             assert requests[0]["name"] != requests[1]["name"]
             assert first.capability != second.capability

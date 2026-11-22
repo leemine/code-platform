@@ -27,6 +27,8 @@ designs: [D-20261122-0920-managed-runtime-devices]
 
 旧模板通过 `supports_model_selection` 保留设备模型选择。桌面端连接远程账号后，仍按当前会话的执行位置识别默认 Codex。正式灰度验证了默认 Codex 和四个旧设备从原聊天下拉框选用账号 Qwen 模型。五个正式元戎/Docker 容器均完成回收，同一会话在新容器收到第二轮回复，沿用了原生线程与状态卷。Qwen 0.5B 的跨轮算术出现复述或错误，内容准确性未通过。
 
+新建云端设备显示可直接选择的 Provider 模板卡片与当前资源规格。按账号将 Codex 内存提高到 4 GiB 时，模板规格和元戎分配使用同一灰度配置。既有设备在当前容器自然回收后的下一次分配获得新规格。
+
 基于 PR #61 合入树 `eb8ea50f1f368f704684d2a27602c2337326b69e` 在独立分支 `codex/named-codex-runtime-20261122` 实施。[当前契约](../specs/gateway/S_01_cloud-account-instance.md) 记录公共目录、绑定和回收规则。[原 OpenCode 实施记录](F_20261122_0955_managed-runtime-devices.md) 保留其发布证据。
 
 ## 实施决策

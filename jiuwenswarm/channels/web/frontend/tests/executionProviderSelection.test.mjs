@@ -223,7 +223,7 @@ test('Codex starts without a model and selects an account model in the Code comp
     display_name: 'Backend review', available: true, state: 'ready', session_models: true, model_id: null };
   const templates = [
     { runtime_profile_id: 'opencode-cloud', cpu: 1000, memory: 4096, available: true },
-    { runtime_profile_id: 'codex-cloud', cpu: 1000, memory: 1024, available: true, default_session_models: true },
+    { runtime_profile_id: 'codex-cloud', cpu: 1000, memory: 4096, available: true, default_session_models: true },
   ];
   const requests = [];
   const used = [];
@@ -248,10 +248,11 @@ test('Codex starts without a model and selects an account model in the Code comp
       templates, runtimes: [], remote: false, onUse: (runtime) => used.push(runtime),
     })));
     await act(async () => element('cloud-workspace-runtime-create').click());
-    await act(async () => element('cloud-workspace-runtime-profile').click());
-    const codex = document.querySelector('[data-testid="ui-select-option"][data-variant="codex-cloud"]');
+    const codex = document.querySelector('[data-testid="cloud-workspace-runtime-profile"][data-variant="codex-cloud"]');
     assert.ok(codex);
+    assert.equal(document.querySelectorAll('[data-testid="cloud-workspace-runtime-profile-resources"]').length, 2);
     await act(async () => codex.click());
+    assert.equal(codex.checked, true);
     assert.equal(element('cloud-workspace-runtime-model-trigger'), null);
     assert.equal(requests.some(req => req.method === 'cloud.runtime.models' || req.method === 'models.list'), false);
     const input = element('cloud-workspace-runtime-device-name');
@@ -364,8 +365,7 @@ test('legacy Codex templates keep the account model picker in the runtime dialog
       templates, runtimes: [], remote: false, onUse: (runtime) => used.push(runtime),
     })));
     await act(async () => element('cloud-workspace-runtime-create').click());
-    await act(async () => element('cloud-workspace-runtime-profile').click());
-    const codex = document.querySelector('[data-testid="ui-select-option"][data-variant="codex-cloud"]');
+    const codex = document.querySelector('[data-testid="cloud-workspace-runtime-profile"][data-variant="codex-cloud"]');
     assert.ok(codex);
     await act(async () => codex.click());
     assert.equal(element('cloud-workspace-runtime-model-label').textContent, 'Account default');
