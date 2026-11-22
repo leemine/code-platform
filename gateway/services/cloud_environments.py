@@ -193,7 +193,7 @@ class EnvironmentStore:
             keys = ("environment_id", "epoch", "operation_id", "instance_id", "workspace", "state", "auth_override")
             if row is None or row["state"] != "ALLOCATED" or any(row[key] != expected[key] for key in keys):
                 raise EnvironmentUnavailable("environment binding changed during request")
-            yield
+            yield db
 
     def rows(self):
         with self.connect() as db:
@@ -220,6 +220,11 @@ class EnvironmentStore:
         # Prepare it before the infrastructure bootstrap imports native SDKs.
         for leaf in ("agent", "config", "home"):
             _private_directory(workspace / leaf)
+        # The private agent directory already bounds access. The Worker owns
+        # the mode of its workspace, which can change after project setup.
+        agent_workspace = workspace / "agent" / "workspace"
+        if not agent_workspace.exists() and not agent_workspace.is_symlink():
+            agent_workspace.mkdir(mode=0o700, exist_ok=True)
         target = Path(row["auth_file"])
         _private_directory(target.parent)
         revocations = target.parent / "revocations.json"

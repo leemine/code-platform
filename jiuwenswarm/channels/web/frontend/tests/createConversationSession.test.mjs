@@ -115,3 +115,17 @@ test('requires create_token and does not swallow non-timeout errors', async () =
     (error) => error.code === 'BAD_REQUEST',
   );
 });
+
+test('refuses to send through an older server which did not acknowledge the selected device', async () => {
+  const runtimeId = 'a'.repeat(32);
+  const params = { create_token: 'named-device', execution_provider: 'opencode-direct', runtime_id: runtimeId };
+  await assert.rejects(
+    () => createConversationSession(async () => ({ session_id: 'web_old' }), params),
+    /did not confirm the selected runtime device/,
+  );
+  const result = await createConversationSession(async (_, sent) => {
+    assert.equal(sent.runtime_id, runtimeId);
+    return { session_id: 'web_device', runtime_id: runtimeId };
+  }, params);
+  assert.equal(result.session_id, 'web_device');
+});

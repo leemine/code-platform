@@ -34,14 +34,23 @@ def private_initial_file(path: Path, content: bytes) -> bytes:
 
 def ensure_bindings_table(store):
     with store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
         db.execute("""
             CREATE TABLE IF NOT EXISTS provider_bindings (
                 account_id TEXT NOT NULL, project_id TEXT NOT NULL, provider TEXT NOT NULL,
                 binding_id TEXT NOT NULL UNIQUE, directory TEXT NOT NULL, project_source TEXT NOT NULL,
                 profile_json TEXT NOT NULL, generation INTEGER NOT NULL, operation_id TEXT NOT NULL UNIQUE,
-                state TEXT NOT NULL, instance_id TEXT, used_at REAL NOT NULL,
+                state TEXT NOT NULL, instance_id TEXT, used_at REAL NOT NULL, display_name TEXT,
                 PRIMARY KEY (account_id, project_id, provider)
             )
+        """)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(provider_bindings)")}
+        if "display_name" not in columns:
+            db.execute("ALTER TABLE provider_bindings ADD COLUMN display_name TEXT")
+        db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS named_opencode_device
+            ON provider_bindings(account_id, display_name)
+            WHERE provider = 'opencode' AND display_name IS NOT NULL
         """)
 
 

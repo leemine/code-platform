@@ -36,7 +36,7 @@ import { isConversationModelGroupBlocked } from '../../multi-session/state/conve
 import { useMultiModelCollaborationEnabled } from '../../features/multiModelCollaboration/featureConfig';
 import { seedAgentCatalog, useAgentCatalogStore } from '../../stores/agentCatalogStore';
 import { getSelectedAgentGroup } from '../../stores/agentGroupCatalogSeed';
-import { supportsPlanMode } from '../../features/planMode/wireMode';
+import { resolvePlanWireMode, supportsPlanMode } from '../../features/planMode/wireMode';
 import { isReachableTeamMemberStatus } from '../../features/teamMemberDeparture';
 import { applyPlanToggle, evaluatePlanToggle } from '../../features/planMode/planModeGate';
 import { applyGoalArm, evaluateGoalArm } from '../../features/goalMode/goalModeGate';
@@ -941,6 +941,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   const isDesignLanding = workMode === 'design' && activeSessionId === NEW_CONVERSATION_ID;
   const designLandingSubmitting = isDesignLanding && isProcessing;
   const [workspaceBlocked, setWorkspaceBlocked] = useState(true);
+  const [cloudRuntimeProject, setCloudRuntimeProject] = useState<string | null>(null);
   const workspaceSendBlocked = workMode === 'code' && activeSessionId === NEW_CONVERSATION_ID && workspaceBlocked;
   const composerDisabled =
     agentGroupUnavailable ||
@@ -5111,6 +5112,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                   <ExecutionPicker
                     sessionId={activeSessionId || NEW_CONVERSATION_ID}
                     disabled={isProcessing || composerDisabled}
+                    runtimeProjectId={resolvePlanWireMode(mode, planActive, workMode) === 'agent.code.normal' ? cloudRuntimeProject : null}
                   />
                 )}
                 </>
@@ -5480,7 +5482,7 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
                 />
               )}
               <div ref={workMenuRef} className="chat-work-context-row" data-testid="chat-panel-work-context-row">
-                <CodeWorkspaceControls sessionId={activeSessionId ?? undefined} enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} localControl={
+                <CodeWorkspaceControls sessionId={activeSessionId ?? undefined} enabled={workMode === 'code'} disabled={isProcessing || isWorkContextLocked} onBlockedChange={setWorkspaceBlocked} onCloudProjectChange={setCloudRuntimeProject} localControl={
                 <div
                   className={clsx('chat-work-select', workMenuOpen === 'project' && 'chat-work-select--open')}
                   data-testid="chat-panel-work-select"

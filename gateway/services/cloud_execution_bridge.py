@@ -25,7 +25,8 @@ from gateway.services.project_gitcode import METHODS as GITCODE_METHODS
 from gateway.services.project_environments import ENVIRONMENT_METHODS
 
 PATH = "/api/v1/data-sync/ws"
-_READ_GLOBAL = {"config.get", "models.list", "commands.list", "skills.list", "project.list", "session.list"}
+_READ_GLOBAL = {"config.get", "models.list", "commands.list", "skills.list", "project.list", "session.list", "cloud.runtime.list"}
+_RUNTIME_DEVICE_METHODS = {"cloud.runtime.create", "cloud.runtime.start"}
 
 
 class CloudExecutionBridge:
@@ -131,7 +132,7 @@ class CloudExecutionBridge:
                         # its registered extension methods (for example command.goal).
                         stage = "address_" + method
                         params = addresses.params(data["params"])
-                        if method not in _READ_GLOBAL | GITHUB_METHODS | GITCODE_METHODS | ENVIRONMENT_METHODS | {"session.create"} and not any(
+                        if method not in _READ_GLOBAL | _RUNTIME_DEVICE_METHODS | GITHUB_METHODS | GITCODE_METHODS | ENVIRONMENT_METHODS | {"session.create"} and not any(
                                 params.get(key) for key in ("session_id", "project_id", "session_ids", "project_ids")):
                             raise ValueError("cloud resource selector required")
                         if method == "session.create" and not params.get("project_id"):

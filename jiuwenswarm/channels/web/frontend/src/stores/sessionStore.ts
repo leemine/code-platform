@@ -657,6 +657,7 @@ export interface TeamMemberExecutionEvent {
 export interface SessionRuntime {
   executionTarget?: 'local' | 'cloud';
   executionProvider: string;
+  executionRuntimeId?: string;
   mode: AgentMode;
   selectedModelName: string | null;
   /** Stable `{type,id}` selection; preferred over model_name for runtime/session APIs. */
@@ -816,7 +817,7 @@ interface SessionState {
   setAvailableModelGroups: (groups: ModelGroup[]) => void;
   setSelectedModelName: (sessionId: string, name: string | null) => void;
   setSelectedModelSelection: (sessionId: string, selection: ModelSelection | null) => void;
-  setExecutionProvider: (sessionId: string, provider: string) => void;
+  setExecutionProvider: (sessionId: string, provider: string, runtimeId?: string) => void;
   /** Prefer stable selection; fall back to model_name only when no selection is set. */
   getOutgoingModelParams: (sessionId: string) => Record<string, unknown>;
 
@@ -1043,6 +1044,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ...baseRuntime,
         mode: normalizedSession.mode || baseRuntime.mode,
         executionProvider: normalizedSession.execution_provider ?? baseRuntime.executionProvider,
+        executionRuntimeId: normalizedSession.runtime_id ?? baseRuntime.executionRuntimeId,
         selectedModelSelection: Object.prototype.hasOwnProperty.call(normalizedSession, 'model_selection')
           ? parseModelSelection(normalizedSession.model_selection)
           : baseRuntime.selectedModelSelection,
@@ -2364,12 +2366,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  setExecutionProvider: (sessionId, provider) => {
+  setExecutionProvider: (sessionId, provider, runtimeId) => {
     if (!provider.trim()) return;
     set((state) => {
       const runtime = state.runtimes[sessionId];
       if (!runtime) return state;
-      return { runtimes: { ...state.runtimes, [sessionId]: { ...runtime, executionProvider: provider } } };
+      return { runtimes: { ...state.runtimes, [sessionId]: {
+        ...runtime, executionProvider: provider, executionRuntimeId: provider === 'opencode-direct' ? runtimeId : undefined,
+      } } };
     });
   },
 

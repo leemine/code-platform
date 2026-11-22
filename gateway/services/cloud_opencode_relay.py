@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from gateway.common.opencode_model_policy import account_models_revision, validate_account_providers
 from gateway.common.security.opencode_relay_auth import HEADER, parse_assertion, verify_assertion
+from gateway.common.work_mode import is_default_project_id
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable
 from gateway.services.cloud_opencode_pool import OpenCodeConfigurationError, OpenCodeFault
@@ -102,6 +103,19 @@ class CloudOpencodeRelay:
         pool.ready_check = self._ready
         pool.idle_check = self._idle
         pool.fault_check = self._fault
+
+    def account_runtime(self, identity: dict) -> dict:
+        return self.pool.account_runtime(self.store.get(identity))
+
+    def project_available(self, identity: dict, project_id: str) -> bool:
+        return self.project_runtime(identity, project_id)["available"]
+
+    def project_runtime(self, identity: dict, project_id: str) -> dict:
+        """Use the same trusted project lookup for the Web catalog and relay."""
+        if is_default_project_id(project_id):
+            raise PermissionError("Managed OpenCode requires a registered project")
+        account = self.store.get(identity)
+        return self.pool.project_runtime(account, project_id, _project_directory(account, project_id))
 
     async def close(self):
         await self._client.aclose()
@@ -263,11 +277,19 @@ class CloudOpencodeRelay:
     async def handle_shared(self, request: Request):
         return await self._handle(request, shared=True)
 
-    async def _handle(self, request: Request, *, shared: bool):
+    async def handle_device(self, request: Request):
+        return await self._handle(request, shared=True, runtime_id=request.path_params["runtime_id"])
+
+    async def _handle(self, request: Request, *, shared: bool, runtime_id=None):
+        from gateway.common.opencode_runtime import DEVICE_CONTEXT, WORKER_ROOT
+
         project_id, path = request.path_params["project_id"], request.path_params["path"]
         sync = request.method == "POST" and path == "account-models/sync"
-        if not (sync or (request.method == "GET" and _GET.fullmatch(path))
-                or (request.method == "POST" and _POST.fullmatch(path))):
+        lookup = runtime_id is not None and request.method == "GET" and path == "device/check"
+        projectless = runtime_id is not None and project_id == DEVICE_CONTEXT
+        if (projectless and not (sync or request.method == "GET" and path == "global/health")
+                or not (lookup or sync or (request.method == "GET" and _GET.fullmatch(path))
+                or (request.method == "POST" and _POST.fullmatch(path)))):
             return JSONResponse({"code": "NOT_FOUND"}, status_code=404)
         if not request.headers.get(HEADER):
             return JSONResponse({"code": "OPENCODE_FORBIDDEN"}, status_code=403)
@@ -285,9 +307,14 @@ class CloudOpencodeRelay:
                     return JSONResponse({"code": "BODY_TOO_LARGE"}, status_code=413)
             body = bytes(raw)
             account = self._account(request, body, supplied_dir)
-            directory = _project_directory(account, project_id)
+            directory = str(WORKER_ROOT) if projectless else _project_directory(account, project_id)
             if supplied_dir and supplied_dir != directory:
                 raise PermissionError("Project workspace differs")
+            if runtime_id is not None:
+                device = self.pool.device_runtime(account, runtime_id, project_id, directory)
+                if lookup:
+                    return JSONResponse({"runtime_id": device["runtime_id"]}, headers={"Cache-Control": "no-store"})
+            options = {"runtime_id": runtime_id} if runtime_id is not None else {}
             if sync:
                 change = json.loads(body)
                 providers = None
@@ -301,9 +328,9 @@ class CloudOpencodeRelay:
                 else:
                     return JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
                 current = await self.pool.sync_models(account, project_id, directory, revision,
-                                                      shared=shared, models=providers, previous=change.get("previous"))
+                                                      shared=shared, models=providers, previous=change.get("previous"), **options)
                 return JSONResponse({"revision": current}, headers={"Cache-Control": "no-store"})
-            hold = (self.pool.hold(account, project_id, directory, shared=True) if shared
+            hold = (self.pool.hold(account, project_id, directory, shared=True, **options) if shared
                     else self.pool.hold(account, project_id, directory))
             lease = await scope.enter_async_context(hold)
             if shared and not await self._authorize_shared(lease, project_id, request.method, path, body):

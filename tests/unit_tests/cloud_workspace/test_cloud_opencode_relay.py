@@ -20,6 +20,31 @@ SHARED_ROUTE = ROUTE + "-worker"
 DIRECTORY = "/data/agent/workspace/demo"
 
 
+@pytest.mark.parametrize(("shared", "runtime_id", "suffix"), [
+    (False, None, ""),
+    (True, None, "-worker"),
+    (True, "a" * 32, "-device/" + "a" * 32),
+])
+def test_worker_relay_paths_use_deployment_tls_context(monkeypatch, relay, shared, runtime_id, suffix):
+    import ssl
+
+    from gateway.common.security import provider_relay_tls
+    from jiuwenswarm.server.runtime.agent_adapter.providers import opencode_managed
+
+    context = ssl.create_default_context()
+    captured = {}
+    monkeypatch.setattr(provider_relay_tls, "relay_ssl_context", lambda: context)
+    monkeypatch.setattr(opencode_managed.httpx, "AsyncClient", lambda **options: captured.update(options))
+
+    _, _, credentials, _ = relay
+    origin = "https://relay.example.test/provider/managed/opencode"
+    opencode_managed.relay_client(origin, credentials["one"], "project", shared=shared, runtime_id=runtime_id)
+
+    assert captured["base_url"] == origin + suffix + "/project"
+    assert captured["verify"] is context
+    assert captured["trust_env"] is False
+
+
 @pytest.fixture
 def relay(tmp_path):
     accounts, credentials = {}, {}

@@ -1,3 +1,4 @@
+import { Server } from 'lucide-react';
 /**
  * SessionSidebar Component
  *
@@ -87,6 +88,7 @@ const personalContextNavIcon = (
 const mainNavItems: NavItem[] = [
   { key: 'chat', labelKey: 'nav.work', icon: <WorkIcon aria-hidden /> },
   { key: 'agents', labelKey: 'nav.agent', icon: <AgentDesignIcon aria-hidden /> },
+  { key: 'runtime', labelKey: 'nav.runtime', icon: <Server size={16} aria-hidden /> },
   { key: 'skills', labelKey: 'nav.skills', icon: <SkillDesignIcon aria-hidden /> },
   { key: 'connectorMarket', labelKey: 'nav.connectorMarket', icon: connectorMarketNavIcon },
   { key: 'experiments', labelKey: 'nav.experiments', icon: experimentsNavIcon },

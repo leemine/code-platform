@@ -146,6 +146,26 @@ async def test_bound_runtime_home_is_private_persistent_and_not_a_symlink(config
         app.store.prepare(actor["user_id"])
 
 @pytest.mark.asyncio
+async def test_worker_workspace_mode_does_not_prevent_environment_reconnect(config):
+    infra = Infrastructure()
+    _, app = service(config, infra)
+    actor = await registered(app)
+    await app.instances.connect("")
+    try:
+        initial = await app.ensure(actor)
+        workspace = Path(initial["workspace"]) / "agent" / "workspace"
+        assert workspace.is_dir()
+        workspace.chmod(0o755)
+        recovered = await app.ensure(actor)
+        assert recovered["state"] == "READY" and recovered["instance_id"] == initial["instance_id"]
+        assert infra.create_calls == 1
+        assert workspace.stat().st_mode & 0o777 == 0o755
+        assert workspace.parent.stat().st_mode & 0o777 == 0o700
+    finally:
+        await app.instances.disconnect()
+
+
+@pytest.mark.asyncio
 async def test_parallel_connections_and_restart_use_original_singleflight(config):
     infra = Infrastructure()
     _, app = service(config, infra)
@@ -302,13 +322,107 @@ async def test_plugin_uses_original_http_contributions_and_leaves_session_option
         await plugin.shutdown()
 
 @pytest.mark.asyncio
+async def test_runtime_catalog_reply_is_project_scoped_and_public(config, monkeypatch):
+    from unittest.mock import Mock
+
+    plugin = CloudWorkspacePlugin(replace(config, opencode_provider={"display_name": "Review runtime"}))
+    status = {"available": True, "reason": None, "state": "not_created"}
+    available = Mock(return_value=status)
+    account_runtime = Mock(return_value=status)
+    device = {"runtime_id": "a" * 32, "display_name": "独立开发", **status, "state": "ready"}
+    template = {"runtime_profile_id": "opencode-cloud", "cpu": 1000, "memory": 4096, "available": True}
+    pool = SimpleNamespace(account_runtime=account_runtime, account_devices=Mock(return_value=[device]),
+                           device_runtime=Mock(return_value=device),
+                           runtime_template=Mock(return_value=template), register_device=Mock(return_value=device))
+    account = {"account_id": "owner"}
+    plugin.environments = SimpleNamespace(opencode_relay=SimpleNamespace(
+        project_runtime=available, store=SimpleNamespace(get=Mock(return_value=account)), pool=pool,
+    ))
+    prewarm = AsyncMock(return_value=(True, {"ready": True}))
+    monkeypatch.setattr("gateway.routing.e2a_proxy.fetch_agent_unary", prewarm)
+    monkeypatch.setattr("gateway.services.project_environments.ProjectEnvironments", Mock())
+    methods = {}
+    responses = AsyncMock()
+    channel = SimpleNamespace(
+        register_method=lambda name, handler, **options: methods.update({name: (handler, options)}),
+        send_response=responses, channel_id="web",
+    )
+    plugin.bind_web_channel(channel, SimpleNamespace(require_agent_client=lambda: object()))
+    request, options = methods["project.runtime.status"]
+    assert options == {"local_only": True}
+    ws = object()
+    check = AsyncMock(return_value={"user_id": "owner", "authority": "isolated-test"})
+    get_account = Mock(return_value=None)
+    monkeypatch.setattr("gateway.extensions.cloud_workspace.extension.current_account", get_account)
+    await request(ws, "unauthorized", {"project_id": "repo"}, None)
+    responses.assert_awaited_with(ws, "unauthorized", ok=False, code="PROJECT_RUNTIME_FORBIDDEN")
+    get_account.return_value = SimpleNamespace(check=check)
+    await request(ws, "unsupported-selector", {"project_id": "repo", "user_id": "another"}, None)
+    responses.assert_awaited_with(ws, "unsupported-selector", ok=False, code="INVALID_REQUEST")
+    available.assert_not_called()
+    await request(ws, "valid", {"project_id": "repo"}, None)
+    available.assert_called_once_with(check.return_value, "repo")
+    assert check.await_count == 3
+    responses.assert_awaited_with(ws, "valid", ok=True, payload={
+        "provider_id": "opencode-direct", "runtime_profile_id": "opencode-cloud",
+        "display_name": "Review runtime", **status,
+    })
+
+    list_request, options = methods["cloud.runtime.list"]
+    assert options == {"local_only": True}
+    await list_request(ws, "list", {}, None)
+    account_runtime.assert_called_once_with(account)
+    responses.assert_awaited_with(ws, "list", ok=True, payload={"runtimes": [{
+        "provider_id": "opencode-direct", "runtime_profile_id": "opencode-cloud",
+        "display_name": "Review runtime", **status,
+    }, {
+        "provider_id": "opencode-direct", "runtime_profile_id": "opencode-cloud", **device,
+    }], "templates": [template]})
+
+    create, options = methods["cloud.runtime.create"]
+    assert options == {"local_only": True}
+    fields = {"runtime_profile_id": "opencode-cloud", "display_name": "独立开发", "create_token": "b" * 32}
+    await create(ws, "project-selector", {**fields, "project_id": "repo"}, None)
+    responses.assert_awaited_with(ws, "project-selector", ok=False, code="INVALID_REQUEST")
+    pool.register_device.assert_not_called()
+
+    ensure, options = methods["project.runtime.ensure"]
+    assert options == {"local_only": True}
+    await ensure(ws, "unknown-provider", {"project_id": "repo", "provider_id": "other"}, None)
+    responses.assert_awaited_with(ws, "unknown-provider", ok=False, code="INVALID_REQUEST")
+    prewarm.assert_not_called()
+    paused = {"available": False, "reason": "managed_admission_closed", "state": "not_created"}
+    available.return_value = paused
+    await ensure(ws, "paused", {"project_id": "repo", "provider_id": "opencode-direct"}, None)
+    assert responses.await_args.kwargs["payload"]["available"] is False
+    prewarm.assert_not_called()
+
+    ready = {**status, "state": "ready"}
+    available.side_effect = [status, ready]
+    await ensure(ws, "ensure", {"project_id": "repo", "provider_id": "opencode-direct"}, None)
+    assert prewarm.await_args.kwargs["req_method"].value == "project.runtime.prepare"
+    assert prewarm.await_args.kwargs["params"] == {"project_id": "repo"}
+    assert prewarm.await_args.kwargs["session_id"] is None
+    assert prewarm.await_args.kwargs["user_id"] == "owner"
+    assert responses.await_args.kwargs["payload"]["state"] == "ready"
+
+    await create(ws, "create", fields, None)
+    pool.register_device.assert_called_once_with(account, "独立开发", "b" * 32)
+    assert prewarm.await_args.kwargs["params"] == {"runtime_id": device["runtime_id"]}
+    assert prewarm.await_args.kwargs["session_id"] is None
+    assert responses.await_args.kwargs["payload"] == {
+        "provider_id": "opencode-direct", "runtime_profile_id": "opencode-cloud", **device, "start_failed": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_web_model_rejection_records_authenticated_account_and_only_reason(config, caplog, monkeypatch):
     infra = Infrastructure()
     accounts, service_ = service(config, infra)
     plugin = CloudWorkspacePlugin(config)
     plugin.accounts, plugin.environments = accounts, service_
     plugin.authenticator = AccountAuthenticator(accounts)
-    service_.opencode_relay = SimpleNamespace(handle=plugin.http, handle_shared=plugin.http)
+    service_.opencode_relay = SimpleNamespace(handle=plugin.http, handle_shared=plugin.http, handle_device=plugin.http)
     registry = ExtensionRegistry(None, {}, None)
     registry.register_application_plugin(plugin)
     app = FastAPI()
@@ -619,13 +733,15 @@ async def test_managed_opencode_policy_reaches_existing_account_launch(config, t
 
 def test_managed_relay_paths_use_existing_signed_handlers(config):
     plugin = CloudWorkspacePlugin(config)
-    relay = SimpleNamespace(handle=AsyncMock(), handle_shared=AsyncMock())
+    relay = SimpleNamespace(handle=AsyncMock(), handle_shared=AsyncMock(), handle_device=AsyncMock())
     plugin.environments = SimpleNamespace(opencode_relay=relay)
     relay_routes = {route.path.removeprefix(config.api_prefix).split("/{project_id}")[0]: route.endpoint
                     for route in plugin.http_routes() if "/{project_id}" in route.path}
     assert relay_routes == {
         "/provider/opencode": relay.handle, "/provider/opencode-worker": relay.handle_shared,
         "/provider/managed/opencode": relay.handle, "/provider/managed/opencode-worker": relay.handle_shared,
+        "/provider/opencode-device/{runtime_id}": relay.handle_device,
+        "/provider/managed/opencode-device/{runtime_id}": relay.handle_device,
     }
 
 

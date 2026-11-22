@@ -18,6 +18,16 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 
 Gateway 可以统一设置 `provider_relay_origin` 和 `provider_relay_ca_file`。同一 Worker 的 OpenCode HTTPS 和 Codex WSS 共用 origin 的主机和端口、API 前缀及同一份只读部署 CA。Worker 使用系统信任并追加配置的 CA，维持证书链和主机名校验。省略统一 origin 时沿用公共 origin。旧 OpenCode 绑定继续核对已保存的中继身份。准入、消息签名和 Provider 分配语义保持原样。
 
+Gateway 启用独立 OpenCode 中继后，通过现有已认证请求通道处理只读 `project.runtime.status`。请求只接受当前账号可访问的具体 `project_id`。Gateway 复用原账号环境、项目路径和共用执行池准入规则，返回固定的执行 Provider 和运行时标识、可选展示名称及准入结果。查询阶段无分配和工作区写入。Web 仅在 Code 普通会话草稿中将当前项目的结果叠加到原 Provider 下拉框，旧 Gateway 沿用原选项。首次实际发送仍由账号 Worker 和中继按原独立容器流程实施准入与分配，同一会话沿用已存的 Provider 与原生会话绑定。
+
+账号级 `cloud.runtime.list` 投影默认运行时、当前账号的命名设备和部署模板。创建与启动使用 `cloud.runtime.create`、`cloud.runtime.start`，均不接受项目选择器。登记写入现有 OpenCode 持久绑定，重试使用同一创建标识，默认设备仍兼容原项目接口。设备中继的签名路径包含设备 ID，启动阶段只允许模型同步与健康检查。Code 会话创建校验账号设备和当前项目，固化设备 ID，发送和恢复继续复用这个绑定。命名设备使用账号工作区根，每台设备使用各自的 Provider 状态卷。
+
+OpenCode 和 Codex 通过共用初始化器升级 `provider_bindings`。旧记录保留绑定、代次和实例 ID，新增的 `display_name` 默认为空。名称唯一约束只覆盖同账号的命名 OpenCode 设备。两个 Provider 按列名插入，包括没有设备名称的绑定。升级后的数据库应使用兼容该列的 Gateway 版本。
+
+`cloud.runtime.list` 在账号范围内只读返回同一名称、准入和绑定状态，端云桥只为这个确切方法开放无项目选择器的转发。项目状态查询继续核验具体项目。状态来自现有持久绑定和当前分配代次的已确认健康结果。Gateway 重启后，已分配但未重新确认的代次显示「待核验」。
+
+`project.runtime.ensure` 接收可见的 Code 项目 ID 与 `provider_id=opencode-direct`。Gateway 使用原用户断言请求账号 Worker 的内部 `project.runtime.prepare`，由 Worker 重新读取项目记录及工作目录，复用首发的模型同步和签名健康中继。健康确认后返回公开状态。申请不创建平台会话、原生会话或 Turn。并行显式申请和首发共享原分配锁、账号绑定、镜像与原生状态卷。Worker 不支持该内部方法时返回可重试的不可用状态，正常首发沿原链路执行。
+
 账号 Worker 经既有认证中继向自己的绑定同步由目录生成的模型。Gateway 仅接受固定 SDK 和字段的私有模型片段；未变化的配置只交换摘要。同步按绑定加锁并比较上一版本，沿用原有归属、空闲和物理回收检查。运行中的请求、待回复的审批或问题会推迟换代。替代实例复用原生状态卷和会话归属。浏览器只读取账号模型和准入结果。 账号目录声明的正整数上下文上限同步为 OpenCode 的 `models.<model>.limit.context`，保留原生输出上限回退。账号改动上下文时只更新私有配置版本，模型标识及凭据继续沿用。
 
 启用 `opencode_provider.shared_runtime` 后，绑定固定启动栈的版本路径。Docker 边界按镜像 ID 校验本节点的授权和资产摘要，只允许只读的 `/opt/yuanrong-python` 挂载。缺失资产的节点在 Docker 创建前拒绝启动。操作员可在完成物理回收且下一代尚未计划时，停写并比较当前镜像后更新绑定快照。迁移或回滚保留绑定、项目授权、原生会话索引和状态卷。

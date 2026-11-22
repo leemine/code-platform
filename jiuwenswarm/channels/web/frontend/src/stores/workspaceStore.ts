@@ -10,7 +10,8 @@ import { useSessionStore } from './sessionStore';
 import { useCronStore } from './cronStore';
 import { parseChatRoute } from '../multi-session/routing/route';
 
-const draftChoices = new Map<string, { selectedModelName: string | null; selectedModelSelection: import('../types').ModelSelection | null; executionProvider: string }>();
+const draftChoices = new Map<string, Pick<import('./sessionStore').SessionRuntime,
+  'selectedModelName' | 'selectedModelSelection' | 'executionProvider' | 'executionRuntimeId'>>();
 function setDraftTarget(target: 'local' | 'cloud'): void {
   const state = useSessionStore.getState();
   const runtime = state.runtimes['new'];
@@ -19,10 +20,11 @@ function setDraftTarget(target: 'local' | 'cloud'): void {
     selectedModelName: runtime.selectedModelName,
     selectedModelSelection: runtime.selectedModelSelection,
     executionProvider: runtime.executionProvider,
+    executionRuntimeId: runtime.executionRuntimeId,
   });
   useSessionStore.setState({ runtimes: { ...state.runtimes, new: {
     ...runtime, executionTarget: target, selectedModelName: null, selectedModelSelection: null,
-    executionProvider: 'harness', ...draftChoices.get(target),
+    executionProvider: 'harness', executionRuntimeId: undefined, ...draftChoices.get(target),
   } } });
 }
 export const PROJECT_SESSION_PAGE_SIZE = 10;

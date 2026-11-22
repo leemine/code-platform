@@ -21,7 +21,7 @@ import uuid
 import httpx
 
 from gateway.common.opencode_model_policy import account_models_revision, base_permission_rules, deployment_model_policy
-from gateway.common.opencode_runtime import RUNTIME_TARGET, runtime_source
+from gateway.common.opencode_runtime import DEVICE_CONTEXT, DEVICE_ID, RUNTIME_TARGET, WORKER_ROOT, runtime_source
 from gateway.extensions.yuanrong_frontend_client import YuanrongAgentApiError
 from gateway.services.cloud_environments import EnvironmentUnavailable, _private_directory
 from gateway.services.cloud_provider_allocation import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 PROVIDER = "opencode"
 PORT = 4096
 READY_RETRY_SECONDS = 0.25
-WORKER_ROOT = PurePosixPath("/data/agent/workspace")
+PROFILE_ID = "opencode-cloud"
 FAULT_GRACE_SECONDS = 30.0
 STALL_GRACE_SECONDS = 60.0
 _INFRASTRUCTURE_ERRORS = (YuanrongAgentApiError, OSError, TimeoutError)
@@ -242,8 +242,9 @@ class CloudOpencodePool:
             with self.store.connect() as db:
                 inherited = db.execute(
                     """SELECT 1 FROM provider_bindings
-                       WHERE account_id=? AND provider=? AND substr(project_id, 1, 1)<>'@' LIMIT 1""",
-                    (account["account_id"], PROVIDER),
+                       WHERE account_id=? AND provider=?
+                         AND (substr(project_id, 1, 1)<>'@' OR project_id LIKE ?) LIMIT 1""",
+                    (account["account_id"], PROVIDER, self._device_prefix(account) + "%"),
                 ).fetchone()
             if inherited is None:
                 return None
@@ -263,24 +264,113 @@ class CloudOpencodePool:
         allowlist = self.options.get("account_allowlist")
         return allowlist is None or account_id in allowlist
 
+    def _public_runtime(self, key, row):
+        available = row is not None or self._admits_new_binding(key[0])
+        lock = self._locks.get(key)
+        if row and row["state"] == "DELETING":
+            state = "reconciling"
+        elif row and row["state"] == "ALLOCATED" and row["operation_id"] in self._ready_operations:
+            state = "ready"
+        elif lock is not None and lock.locked():
+            state = "starting"
+        elif row and (row["state"] == "ALLOCATED" or row["display_name"] is not None and row["state"] != "NEW"):
+            state = "unknown"
+        elif row and row["generation"] > 1:
+            state = "idle"
+        elif row and row["display_name"] is not None and row["state"] == "NEW":
+            state = "not_started"
+        else:
+            state = "not_created"
+        return {"available": available, "reason": None if available else "managed_admission_closed", "state": state}
+
+    def account_runtime(self, account: dict) -> dict:
+        key = account["account_id"], "@" + account["environment_id"], PROVIDER
+        return self._public_runtime(key, self._get(key))
+
+    @staticmethod
+    def _device_prefix(account):
+        return f"@device:{account['environment_id']}:"
+
+    def _device_key(self, account, runtime_id):
+        if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
+            raise ValueError("Invalid managed device ID")
+        return account["account_id"], self._device_prefix(account) + runtime_id, PROVIDER
+
+    def _device_runtime(self, row):
+        return {
+            "runtime_id": row["binding_id"], "display_name": row["display_name"],
+            **self._public_runtime(self._key(row), row),
+        }
+
+    def runtime_template(self, account):
+        return {"runtime_profile_id": PROFILE_ID, "cpu": int(self.options.get("cpu", 1000)),
+                "memory": int(self.options.get("memory", 1024)),
+                "available": account["state"] == "ALLOCATED" and self._admits_new_binding(account["account_id"])}
+
+    def account_devices(self, account):
+        prefix = self._device_prefix(account)
+        with self.store.connect() as db:
+            rows = db.execute("""SELECT * FROM provider_bindings
+                WHERE account_id=? AND provider=? AND substr(project_id, 1, ?)=? AND display_name IS NOT NULL
+                ORDER BY display_name""", (account["account_id"], PROVIDER, len(prefix), prefix)).fetchall()
+        return [self._device_runtime(row) for row in rows]
+
+    def device_runtime(self, account, runtime_id, project_id=DEVICE_CONTEXT, directory=str(WORKER_ROOT)):
+        current = self._check_account(account)
+        key, target, source = self._binding_scope(current, project_id, directory, True, runtime_id)
+        return self._device_runtime(self._binding(key, target, source, current))
+
+    def register_device(self, account, name, create_token):
+        if (not isinstance(name, str) or not 1 <= len(name) <= 30
+                or name != name.strip() or not name.isprintable()
+                or not isinstance(create_token, str) or not DEVICE_ID.fullmatch(create_token)):
+            raise ValueError("Invalid managed device registration")
+        runtime_id = self._new_binding_id((account["account_id"], self._device_prefix(account) + create_token, PROVIDER))
+        key = self._device_key(account, runtime_id)
+        with self.store.guard_binding({"authority": account["authority"], "user_id": account["account_id"]}, account) as db:
+            row = db.execute("SELECT * FROM provider_bindings WHERE binding_id=?", (runtime_id,)).fetchone()
+            if row is not None and self._key(row) == key and row["display_name"] == name:
+                return self._device_runtime(row)
+            if row is not None or db.execute("""SELECT 1 FROM provider_bindings WHERE account_id=? AND provider='opencode' AND display_name=?""",
+                                             (account["account_id"], name)).fetchone():
+                raise OpenCodeConfigurationError("RUNTIME_DEVICE_NAME_CONFLICT")
+            if not self._admits_new_binding(account["account_id"]):
+                raise PermissionError("Account is not admitted for a new managed OpenCode binding")
+            self._insert_binding(db, key, runtime_id, str(WORKER_ROOT), self._shared_source(account), account, name)
+        return self._device_runtime(self._get(key))
+
+    def _insert_binding(self, db, key, binding_id, directory, source, account, display_name=None):
+        profile = {
+            "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
+            "account_workspace": account["workspace"], "physical_verification": self.resources is not None,
+            "cpu": int(self.options.get("cpu", 1000)), "memory": int(self.options.get("memory", 1024)),
+        }
+        if "shared_runtime" in self.options:
+            profile["shared_runtime"] = runtime_source(self.options["shared_runtime"])
+        db.execute("""INSERT INTO provider_bindings
+            (account_id, project_id, provider, binding_id, directory, project_source, profile_json,
+             generation, operation_id, state, instance_id, used_at, display_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?, ?)""",
+            (*key, binding_id, directory, source, json.dumps(profile), secrets.token_hex(16), time.time(), display_name),
+        )
+
+    def project_runtime(self, account: dict, project_id: str, directory: str) -> dict:
+        current = self._check_account(account)
+        key, target, source = self._binding_scope(current, project_id, directory, shared=True)
+        row = self._get(key)
+        if row is not None and (row["directory"], row["project_source"]) != (target, source):
+            raise PermissionError("OpenCode workspace differs from its persistent binding")
+        return self._public_runtime(key, row)
+
     def _binding(self, key, directory, source, account):
         row = self._get(key)
         if row is None:
+            if key[1].startswith(self._device_prefix(account)):
+                raise PermissionError("Managed device is not registered for this account")
             if not self._admits_new_binding(account["account_id"]):
                 raise PermissionError("Account is not admitted for a new managed OpenCode binding")
-            profile = {
-                "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
-                "account_workspace": account["workspace"], "physical_verification": self.resources is not None,
-                "cpu": int(self.options.get("cpu", 1000)), "memory": int(self.options.get("memory", 1024)),
-            }
-            if "shared_runtime" in self.options:
-                profile["shared_runtime"] = runtime_source(self.options["shared_runtime"])
             with self.store.connect() as db:
-                db.execute("""INSERT INTO provider_bindings VALUES
-                    (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
-                    (*key, self._new_binding_id(key), directory, source, json.dumps(profile),
-                     secrets.token_hex(16), time.time()),
-                )
+                self._insert_binding(db, key, self._new_binding_id(key), directory, source, account)
             row = self._get(key)
         if (row["directory"], row["project_source"]) != (directory, source):
             raise PermissionError("OpenCode workspace differs from its persistent binding")
@@ -500,22 +590,36 @@ class CloudOpencodePool:
                     round((time.monotonic() - started) * 1000), round(self.ready_timeout * 1000), attempts,
                 )
 
-    def _binding_scope(self, account, project_id, directory, shared):
+    @staticmethod
+    def _shared_source(account):
+        source = Path(account["workspace"]) / "agent/workspace"
+        if not source.is_dir() or source.resolve(strict=True) != source:
+            raise PermissionError("OpenCode requires the canonical account workspace")
+        return str(source)
+
+    def _binding_scope(self, account, project_id, directory, shared, runtime_id=None):
         if not isinstance(project_id, str) or not project_id or project_id.startswith("@") or len(project_id) > 200:
             raise ValueError("OpenCode requires a valid project ID")
-        source = self._project_source(account, directory)
+        if runtime_id is not None and project_id == DEVICE_CONTEXT:
+            if directory != str(WORKER_ROOT):
+                raise PermissionError("Invalid managed device directory")
+            source = None
+        else:
+            source = self._project_source(account, directory)
+        if runtime_id is not None:
+            return self._device_key(account, runtime_id), str(WORKER_ROOT), self._shared_source(account)
         # Existing project rows keep their original key. '@' is outside the
         # project ID alphabet and reserves one allocation per Worker environment.
         placement = "@" + account["environment_id"] if shared else project_id
         key = account["account_id"], placement, PROVIDER
         mount_target = str(WORKER_ROOT) if shared else directory
-        mount_source = str(Path(account["workspace"]) / "agent/workspace") if shared else source
+        mount_source = self._shared_source(account) if shared else source
         return key, mount_target, mount_source
 
     @asynccontextmanager
-    async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False):
+    async def hold(self, account: dict, project_id: str, directory: str, *, shared: bool = False, runtime_id=None):
         current = self._check_account(account)
-        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared)
+        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared, runtime_id)
         try:
             async with self._locks[key]:
                 current = self._check_account(account)
@@ -549,10 +653,10 @@ class CloudOpencodePool:
                     db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
                                (time.time(), row["binding_id"], row["generation"]))
 
-    async def sync_models(self, account, project_id, directory, revision, *, shared, models=None, previous=None):
+    async def sync_models(self, account, project_id, directory, revision, *, shared, models=None, previous=None, runtime_id=None):
         """Install a Worker-generated private fragment at an idle generation boundary."""
         current = self._check_account(account)
-        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared)
+        key, mount_target, mount_source = self._binding_scope(current, project_id, directory, shared, runtime_id)
         async with self._locks[key]:
             current = self._check_account(account)
             row = self._binding(key, mount_target, mount_source, current)

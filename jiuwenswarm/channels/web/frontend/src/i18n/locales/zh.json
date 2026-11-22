@@ -43,6 +43,7 @@
     "unsupportedProtocol": "不支持的 A2UI 协议版本：{{version}}"
   },
   "nav": {
+    "runtime": "运行时",
     "chat": "对话",
     "work": "任务",
     "agent": "专家",
@@ -2060,7 +2061,9 @@
       "retry": "重试",
       "loading": "正在加载…",
       "selectionUnavailable": "已选引擎当前不可用，请重新选择；不会自动切换。",
+      "cloudRuntimeName": "云端开发环境",
       "reason": {
+        "managed_admission_closed": "此运行时已暂停新设备申请",
         "unavailable": "插件暂不可用",
         "ambiguous": "插件注册冲突",
         "unsupported_mode": "当前入口尚未开放"
@@ -5614,6 +5617,31 @@
     "logoutFailed": "退出未确认成功，已关闭当前连接。请重试。",
     "retry": "重试",
     "logout": "退出登录"
+  },
+  "cloudRuntime": {
+    "createDevice": "新建设备",
+    "createAndStart": "创建并启动",
+    "template": "Provider 模板",
+    "openCodeStandard": "OpenCode 标准型",
+    "resources": "{{cpu}} vCPU · {{memory}} MiB",
+    "name": "设备名称",
+    "start": "启动",
+    "useInCode": "在 Code 中使用",
+    "nameConflict": "已有同名设备，请换一个名称。",
+    "requestFailed": "暂时无法确认设备操作结果，请重试。",
+    "startFailed": "设备已登记，暂未确认启动成功。请在列表中重试启动。",
+    "loading": "正在读取运行时",
+    "empty": "当前账号暂无云端运行时",
+    "admissionClosed": "暂停新申请",
+    "state": {
+      "not_created": "未创建",
+      "not_started": "未启动",
+      "starting": "启动中",
+      "ready": "已就绪",
+      "idle": "已休眠",
+      "reconciling": "正在回收",
+      "unknown": "待核验"
+    }
   },
   "codeWorkspace": {
     "draftPending": "有未发送内容",

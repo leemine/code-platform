@@ -91,7 +91,7 @@ def _resolve_ws_auth_session(ws: Any) -> str:
     return ""
 
 _HANDLER_BEFORE_CALLBACK_METHODS = frozenset({ReqMethod.CHAT_SEND.value})
-_LOCAL_ONLY_METHODS: frozenset[str] = frozenset()
+_LOCAL_ONLY_METHODS: frozenset[str] = frozenset({"project.runtime.prepare"})
 _SWARMFLOW_CONTROL_METHODS = frozenset(
     {
         ReqMethod.SWARMFLOW_PAUSE.value,

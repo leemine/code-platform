@@ -210,10 +210,15 @@ class CloudConfig:
         profile = self.opencode_provider
         if (not isinstance(profile, dict) or "image" not in profile
                 or profile.keys() - {"image", "model_config", "cpu", "memory", "idle_seconds", "auth_transport",
-                                     "account_allowlist", "admit_new_bindings", "shared_runtime"}
+                                     "account_allowlist", "admit_new_bindings", "shared_runtime", "display_name"}
                 or not isinstance(profile["image"], str)
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
             raise ValueError("Managed OpenCode requires an immutable image")
+        if "display_name" in profile:
+            name = profile["display_name"]
+            if (not isinstance(name, str) or name != name.strip()
+                    or not 0 < len(name) <= 64 or not name.isprintable()):
+                raise ValueError("Managed OpenCode display_name must contain 1 to 64 printable characters")
         if "admit_new_bindings" in profile:
             if type(profile["admit_new_bindings"]) is not bool:
                 raise ValueError("Managed OpenCode admit_new_bindings must be a boolean")

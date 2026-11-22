@@ -98,8 +98,10 @@ class CloudCodexPool:
             if model.context_window is not None:
                 profile["context_window"] = model.context_window
             with self.store.connect() as db:
-                db.execute("""INSERT INTO provider_bindings VALUES
-                    (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
+                db.execute("""INSERT INTO provider_bindings
+                    (account_id, project_id, provider, binding_id, directory, project_source, profile_json,
+                     generation, operation_id, state, instance_id, used_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
                     (*key, secrets.token_hex(16), str(PROJECT_ROOT), str(source), json.dumps(profile),
                      secrets.token_hex(16), time.time()))
             row = read_binding(self.store, key)
