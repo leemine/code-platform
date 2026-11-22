@@ -19,7 +19,11 @@ from gateway.extensions.cloud_workspace.config import (
     OPENCODE_MANAGED_RELAY_PATH, OPENCODE_MANAGED_WORKER_RELAY_PATH,
 )
 from gateway.services.cloud_environments import EnvironmentUnavailable
-from gateway.common.managed_codex import RELAY_PATH as CODEX_RELAY_PATH
+from gateway.common.managed_codex import (
+    MODEL_UNAVAILABLE, PROFILE_ID as CODEX_PROFILE_ID, RELAY_PATH as CODEX_RELAY_PATH, validate_device_model_id,
+)
+from gateway.common.runtime_device import DEVICE_ID
+from gateway.services.cloud_provider_allocation import RuntimeDeviceNameConflict
 from gateway.extensions.sdk.application_plugin import (
     ApplicationPluginExtension,
     HTTPRouteContribution,
@@ -112,21 +116,41 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
         from gateway.services.project_environments import ProjectEnvironments
         self.projects = ProjectEnvironments(channel, services.require_agent_client())
         self.projects.register()
-        if self.environments is not None and self.environments.opencode_relay:
+        opencode = getattr(self.environments, "opencode_relay", None)
+        codex = getattr(self.environments, "codex_relay", None)
+        if opencode or codex:
             from functools import partial
 
             from gateway.routing.e2a_proxy import fetch_agent_unary
             from jiuwenswarm.common.schema.message import ReqMethod
 
-            relay = self.environments.opencode_relay
+            providers = {}
+            if opencode:
+                providers[PROFILE_ID] = ("opencode-direct", opencode.pool)
+            if codex:
+                providers[CODEX_PROFILE_ID] = ("codex-direct", codex.pool)
 
-            def public_runtime(status):
-                return {
-                    "provider_id": "opencode-direct",
-                    "runtime_profile_id": PROFILE_ID,
-                    "display_name": self.config.opencode_provider.get("display_name"),
-                    **status,
-                }
+            def public_runtime(profile_id, status):
+                payload = {"provider_id": providers[profile_id][0], "runtime_profile_id": profile_id, **status}
+                if profile_id == PROFILE_ID and "display_name" not in status:
+                    payload["display_name"] = self.config.opencode_provider.get("display_name")
+                return payload
+
+            async def codex_device_models(account, model_id=None):
+                if not codex or not codex.pool.runtime_template(account)["available"]:
+                    raise PermissionError("Codex device template unavailable")
+                ok, catalog = await fetch_agent_unary(
+                    agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
+                    params={"provider_id": "codex-direct", "allowed_model_endpoints": sorted(codex.allowed_endpoints),
+                            "model_id": model_id},
+                    session_id=None, user_id=account["account_id"], channel_id=channel.channel_id,
+                    label="cloud-runtime-models", timeout_seconds=30,
+                )
+                if not ok or not isinstance(catalog.get("model_ids"), list):
+                    raise EnvironmentUnavailable("Codex device models are unavailable")
+                ids = [validate_device_model_id(value) for value in catalog["model_ids"]]
+                default_id = catalog.get("default_model_id")
+                return {"model_ids": ids, "default_model_id": default_id if default_id in ids else None}
 
             async def runtime_request(method, ws, req_id, params, session_id):
                 try:
@@ -139,35 +163,83 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                     if method == "cloud.runtime.list":
                         if params:
                             raise ValueError("runtime list takes no selectors")
-                        account = await asyncio.to_thread(relay.store.get, identity)
-                        payload = {
-                            "runtimes": [public_runtime(relay.pool.account_runtime(account)), *[
-                                public_runtime(device) for device in await asyncio.to_thread(relay.pool.account_devices, account)
-                            ]],
-                            "templates": [relay.pool.runtime_template(account)],
-                        }
+                        account = await asyncio.to_thread((opencode or codex).store.get, identity)
+                        runtimes = (
+                            [public_runtime(PROFILE_ID, await asyncio.to_thread(opencode.pool.account_runtime, account))]
+                            if opencode else []
+                        )
+                        templates = []
+                        for profile_id, (_, pool) in providers.items():
+                            devices = await asyncio.to_thread(pool.account_devices, account)
+                            runtimes.extend(public_runtime(profile_id, device) for device in devices)
+                            templates.append(pool.runtime_template(account))
+                        payload = {"runtimes": runtimes, "templates": templates}
+                    elif method == "cloud.runtime.models":
+                        if params:
+                            raise ValueError("runtime model catalog takes no selectors")
+                        account = await asyncio.to_thread(codex.store.get, identity)
+                        payload = await codex_device_models(account)
                     elif method in {"cloud.runtime.create", "cloud.runtime.start"}:
                         create = method == "cloud.runtime.create"
                         fields = {"runtime_profile_id", "display_name", "create_token"} if create else {"runtime_id"}
-                        if set(params) != fields or create and params["runtime_profile_id"] != PROFILE_ID:
+                        explicit_model = create and "model_id" in params
+                        if explicit_model:
+                            fields.add("model_id")
+                        if set(params) != fields:
                             raise ValueError("invalid managed device selector")
-                        account = await asyncio.to_thread(relay.store.get, identity)
+                        account = await asyncio.to_thread((opencode or codex).store.get, identity)
                         if create:
-                            status = await asyncio.to_thread(
-                                relay.pool.register_device, account, params["display_name"], params["create_token"],
-                            )
+                            profile_id = params["runtime_profile_id"]
+                            if not isinstance(profile_id, str) or profile_id not in providers:
+                                raise ValueError("unknown managed device template")
+                            _, pool = providers[profile_id]
+                            if explicit_model:
+                                if profile_id != CODEX_PROFILE_ID:
+                                    raise ValueError("only the Codex template accepts a device model")
+                                model_id = validate_device_model_id(params["model_id"])
+                                models = await codex_device_models(account, model_id)
+                                if model_id not in models["model_ids"]:
+                                    await principal.check()
+                                    await channel.send_response(ws, req_id, ok=False, code=MODEL_UNAVAILABLE)
+                                    return
+                                await principal.check()
+                                status = await asyncio.to_thread(
+                                    pool.register_device, account, params["display_name"], params["create_token"], model_id,
+                                )
+                            else:
+                                status = await asyncio.to_thread(
+                                    pool.register_device, account, params["display_name"], params["create_token"],
+                                )
                         else:
-                            status = await asyncio.to_thread(relay.pool.device_runtime, account, params["runtime_id"])
+                            runtime_id = params["runtime_id"]
+                            if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
+                                raise ValueError("invalid managed device identifier")
+                            matches = []
+                            for candidate, (_, pool) in providers.items():
+                                devices = await asyncio.to_thread(pool.account_devices, account)
+                                if any(device["runtime_id"] == runtime_id for device in devices):
+                                    matches.append(candidate)
+                            if len(matches) != 1:
+                                raise PermissionError("unknown managed device")
+                            profile_id = matches[0]
+                            _, pool = providers[profile_id]
+                            status = await asyncio.to_thread(pool.device_runtime, account, runtime_id)
                         runtime_id = status["runtime_id"]
                         await principal.check()
+                        prepare = {"runtime_id": runtime_id}
+                        if profile_id == CODEX_PROFILE_ID:
+                            model_id = await asyncio.to_thread(pool.device_model_id, account, runtime_id)
+                            prepare.update(provider_id="codex-direct", model_id=model_id)
                         ok, result = await fetch_agent_unary(
                             agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
-                            params={"runtime_id": runtime_id}, session_id=None, user_id=identity["user_id"],
+                            params=prepare, session_id=None, user_id=identity["user_id"],
                             channel_id=channel.channel_id, label="cloud-runtime-device", timeout_seconds=150,
                         )
-                        status = await asyncio.to_thread(relay.pool.device_runtime, account, runtime_id)
-                        payload = {**public_runtime(status), "start_failed": not ok or result.get("ready") is not True
-                                   or status["state"] != "ready"}
+                        status = await asyncio.to_thread(pool.device_runtime, account, runtime_id)
+                        payload = {**public_runtime(profile_id, status), "start_failed": not ok
+                                   or result.get("ready") is not True or status["state"] != "ready"}
+                        if not ok and result.get("code") == MODEL_UNAVAILABLE:
+                            payload["start_error"] = MODEL_UNAVAILABLE
                     else:
                         ensure = method == "project.runtime.ensure"
                         fields = {"project_id", "provider_id"} if ensure else {"project_id"}
@@ -175,7 +247,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                                 or ensure and params["provider_id"] != "opencode-direct"):
                             raise ValueError("invalid project runtime selector")
                         project_id = params["project_id"]
-                        status = await asyncio.to_thread(relay.project_runtime, identity, project_id)
+                        status = await asyncio.to_thread(opencode.project_runtime, identity, project_id)
                         if ensure and status["available"]:
                             await principal.check()
                             ok, result = await fetch_agent_unary(
@@ -188,13 +260,13 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                                 if result.get("code") == "PROJECT_RUNTIME_FORBIDDEN":
                                     raise PermissionError("project prewarm denied")
                                 raise EnvironmentUnavailable("project prewarm unavailable")
-                            status = await asyncio.to_thread(relay.project_runtime, identity, project_id)
+                            status = await asyncio.to_thread(opencode.project_runtime, identity, project_id)
                             if status["state"] != "ready":
                                 raise EnvironmentUnavailable("project runtime is no longer ready")
-                        payload = public_runtime(status)
+                        payload = public_runtime(PROFILE_ID, status)
                     await principal.check()
                     await channel.send_response(ws, req_id, ok=True, payload=payload)
-                except OpenCodeConfigurationError as exc:
+                except (OpenCodeConfigurationError, RuntimeDeviceNameConflict) as exc:
                     await channel.send_response(ws, req_id, ok=False, code=str(exc))
                 except (PermissionError, FileNotFoundError):
                     await channel.send_response(ws, req_id, ok=False, code="PROJECT_RUNTIME_FORBIDDEN")
@@ -203,8 +275,12 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                 except ValueError:
                     await channel.send_response(ws, req_id, ok=False, code="INVALID_REQUEST")
 
-            for method in ("cloud.runtime.list", "cloud.runtime.create", "cloud.runtime.start",
-                           "project.runtime.status", "project.runtime.ensure"):
+            methods = ("cloud.runtime.list", "cloud.runtime.create", "cloud.runtime.start")
+            if opencode:
+                methods += ("project.runtime.status", "project.runtime.ensure")
+            if codex:
+                methods += ("cloud.runtime.models",)
+            for method in methods:
                 channel.register_method(method, partial(runtime_request, method), local_only=True)
         for method in ("cloud.environment.ensure", "cloud.environment.status"):
             def make_handler(name):

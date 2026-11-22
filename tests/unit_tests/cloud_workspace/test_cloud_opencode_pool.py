@@ -159,6 +159,7 @@ async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbo
 
     with store.connect() as db:
         db.execute("DROP INDEX named_opencode_device")
+        db.execute("DROP INDEX named_codex_device")
         db.execute("ALTER TABLE provider_bindings DROP COLUMN display_name")
         legacy_rows = [dict(row) for row in db.execute("SELECT * FROM provider_bindings ORDER BY provider")]
         assert len(legacy_rows) == 2

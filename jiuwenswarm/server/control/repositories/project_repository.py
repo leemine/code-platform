@@ -56,15 +56,27 @@ async def handle_project_request(request: AgentRequest) -> AgentResponse:
     params = request.params if isinstance(request.params, dict) else {}
     try:
         if request.req_method == ReqMethod.PROJECT_RUNTIME_PREPARE:
+            from gateway.common.managed_codex import MODEL_UNAVAILABLE
             from jiuwenswarm.server.control.opencode_preparation import prepare_project_runtime
+            from jiuwenswarm.server.runtime.agent_adapter.providers.codex_device import (
+                CodexDeviceModelUnavailable, account_device_models, prepare_device,
+            )
 
             try:
-                if await prepare_project_runtime(request):
+                if params.get("provider_id") == "codex-direct":
+                    if "allowed_model_endpoints" in params:
+                        return _ok(request, await asyncio.to_thread(account_device_models, request))
+                    ready = await prepare_device(request)
+                else:
+                    ready = await prepare_project_runtime(request)
+                if ready:
                     return _ok(request, {"ready": True})
+            except CodexDeviceModelUnavailable:
+                return build_error_response(request, "Codex device model unavailable", code=MODEL_UNAVAILABLE)
             except (PermissionError, ValueError):
                 return build_error_response(request, "Project runtime denied", code="PROJECT_RUNTIME_FORBIDDEN")
             except Exception as exc:
-                logger.warning("Managed OpenCode prewarm failed: %s", type(exc).__name__)
+                logger.warning("Managed device prewarm failed: %s", type(exc).__name__)
                 return build_error_response(request, "Project runtime unavailable", code="PROJECT_RUNTIME_UNAVAILABLE")
         if request.req_method == ReqMethod.PROJECT_IMPORT:
             from jiuwenswarm.server.control.project_import import execute

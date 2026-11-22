@@ -815,3 +815,78 @@ def test_provider_relay_context_verifies_peer_and_fails_on_invalid_bundle(monkey
     monkeypatch.setenv(CA_ENV, str(ca))
     with pytest.raises(ssl.SSLError):
         relay_ssl_context()
+
+
+@pytest.mark.asyncio
+async def test_codex_runtime_catalog_and_start_use_the_account_worker_without_a_project(config, monkeypatch):
+    from unittest.mock import Mock
+
+    from gateway.common.managed_codex import MODEL_UNAVAILABLE
+
+    account = {"account_id": "owner"}
+    identity = {"user_id": "owner", "authority": "isolated-test"}
+    runtime_id = "a" * 32
+    registered = {"runtime_id": runtime_id, "display_name": "Codex device", "state": "not_started",
+                  "model_id": None, "available": True}
+    ready = {**registered, "state": "ready", "model_id": "account-model"}
+    template = {"runtime_profile_id": "codex-cloud", "cpu": 1000, "memory": 1024, "available": True}
+    pool = SimpleNamespace(
+        account_devices=Mock(return_value=[ready]), device_runtime=Mock(return_value=ready),
+        runtime_template=Mock(return_value=template), register_device=Mock(return_value=registered),
+        device_model_id=Mock(side_effect=[None, "account-model", "selected-model"]),
+    )
+    plugin = CloudWorkspacePlugin(config)
+    plugin.environments = SimpleNamespace(codex_relay=SimpleNamespace(pool=pool, store=SimpleNamespace(get=Mock(return_value=account)),
+        allowed_endpoints={"https://models.example.test/v1"}))
+    monkeypatch.setattr("gateway.extensions.cloud_workspace.extension.current_account",
+                        lambda: SimpleNamespace(check=AsyncMock(return_value=identity)))
+    monkeypatch.setattr("gateway.services.project_environments.ProjectEnvironments", Mock())
+    prewarm = AsyncMock(return_value=(True, {"ready": True}))
+    monkeypatch.setattr("gateway.routing.e2a_proxy.fetch_agent_unary", prewarm)
+    methods = {}
+    channel = SimpleNamespace(register_method=lambda name, handler, **_: methods.update({name: handler}),
+                              channel_id="web", send_response=AsyncMock())
+    plugin.bind_web_channel(channel, SimpleNamespace(require_agent_client=lambda: object()))
+    assert "project.runtime.status" not in methods
+    ws = object()
+    public = {"provider_id": "codex-direct", "runtime_profile_id": "codex-cloud", **ready}
+    await methods["cloud.runtime.list"](ws, "list", {}, None)
+    channel.send_response.assert_awaited_with(ws, "list", ok=True, payload={"runtimes": [public], "templates": [template]})
+
+    await methods["cloud.runtime.create"](ws, "create", {
+        "runtime_profile_id": "codex-cloud", "display_name": "Codex device", "create_token": "b" * 32,
+    }, None)
+    pool.register_device.assert_called_once_with(account, "Codex device", "b" * 32)
+    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id, "model_id": None}
+    assert prewarm.await_args.kwargs["session_id"] is None and prewarm.await_args.kwargs["user_id"] == "owner"
+    channel.send_response.assert_awaited_with(ws, "create", ok=True, payload={**public, "start_failed": False})
+
+    prewarm.return_value = False, {"code": MODEL_UNAVAILABLE}
+    await methods["cloud.runtime.start"](ws, "start", {"runtime_id": runtime_id}, None)
+    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id,
+                                                  "model_id": "account-model"}
+    channel.send_response.assert_awaited_with(ws, "start", ok=True, payload={
+        **public, "start_failed": True, "start_error": MODEL_UNAVAILABLE,
+    })
+    await methods["cloud.runtime.start"](ws, "foreign", {"runtime_id": "c" * 32}, None)
+    channel.send_response.assert_awaited_with(ws, "foreign", ok=False, code="PROJECT_RUNTIME_FORBIDDEN")
+    assert prewarm.await_count == 2
+
+
+    catalog = {"model_ids": ["account-model", "selected-model"], "default_model_id": "account-model"}
+    prewarm.return_value = True, catalog
+    await methods["cloud.runtime.models"](ws, "models", {}, None)
+    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "model_id": None,
+                                                  "allowed_model_endpoints": ["https://models.example.test/v1"]}
+    channel.send_response.assert_awaited_with(ws, "models", ok=True, payload=catalog)
+    pool.register_device.reset_mock()
+    fields = {"runtime_profile_id": "codex-cloud", "display_name": "Codex device", "create_token": "b" * 32}
+    await methods["cloud.runtime.create"](ws, "unsupported", {**fields, "model_id": "unsupported"}, None)
+    pool.register_device.assert_not_called()
+    channel.send_response.assert_awaited_with(ws, "unsupported", ok=False, code=MODEL_UNAVAILABLE)
+
+    prewarm.side_effect = [(True, {"model_ids": ["selected-model"]}), (True, {"ready": True})]
+    await methods["cloud.runtime.create"](ws, "selected", {**fields, "model_id": "selected-model"}, None)
+    pool.register_device.assert_called_once_with(account, "Codex device", "b" * 32, "selected-model")
+    assert prewarm.await_args.kwargs["params"] == {"provider_id": "codex-direct", "runtime_id": runtime_id,
+                                                  "model_id": "selected-model"}

@@ -60,6 +60,8 @@ function ConversationModelSelector({
   const boundSessionId = sessionId || activeSessionId;
   const cloud = useCloudCatalog(boundSessionId || NEW_CONVERSATION_ID);
   const provider = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.executionProvider);
+  const runtimeId = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.executionRuntimeId);
+  const codexDevice = provider === 'codex-direct' && Boolean(runtimeId);
   const managed = provider === 'opencode-direct' ? readManagedOpenCodeModels(cloud.catalog?.config) : null;
   const loadingOpenCode = provider === 'opencode-direct' && !cloud.catalog;
   const preserveSelection = cloud.active || loadingOpenCode || managed !== null;
@@ -253,7 +255,7 @@ function ConversationModelSelector({
         onSelectionChange={(next) => {
           void persistSelection(next);
         }}
-        disabled={disabled || saving || Boolean(selectedChildTeam) || loadingOpenCode || (cloud.active && !cloud.catalog)}
+        disabled={disabled || codexDevice || saving || Boolean(selectedChildTeam) || loadingOpenCode || (cloud.active && !cloud.catalog)}
         onAddModel={cloud.active ? undefined : openModelSettings}
       />
       {admissionError ? (

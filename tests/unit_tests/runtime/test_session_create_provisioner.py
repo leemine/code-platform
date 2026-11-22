@@ -932,3 +932,43 @@ async def test_session_create_pins_installed_role_and_rejects_rebinding(monkeypa
             execution_provider=provider, role_template_ref="different",
         ))
     assert session_metadata.get_session_metadata(sid, cache_bust=True)["main_agent_role"] == stored["main_agent_role"]
+
+
+@pytest.mark.parametrize("selection", [None, {"type": "model", "id": "another-model"}])
+@pytest.mark.asyncio
+async def test_codex_named_device_pins_provider_workspace_and_model(monkeypatch, tmp_path, selection):
+    from unittest.mock import AsyncMock
+
+    from jiuwenswarm.server.runtime.agent_adapter import agent_adapters
+    from jiuwenswarm.server.runtime.agent_adapter.providers import codex_device
+    from jiuwenswarm.server.runtime.session import project_store, session_metadata
+
+    state = _State()
+    _install_product_hooks(monkeypatch, tmp_path, state)
+    monkeypatch.setattr(agent_adapters, "entry_points", lambda **_: (SimpleNamespace(),))
+    monkeypatch.setattr(project_store, "resolve_session_project_binding",
+                        lambda project_id, project_dir: (project_id, project_dir, None, None))
+    monkeypatch.setattr(project_store, "get_project_by_id", lambda *_args, **_kwargs: SimpleNamespace(
+        work_mode="code", hidden=False, project_dir=str(tmp_path),
+    ))
+    validate = AsyncMock(return_value="bound-model")
+    monkeypatch.setattr(codex_device, "validate_device", validate)
+
+    provisioner = _provisioner(state)
+    runtime_id = "b" * 32
+    request = _input(execution_provider="codex-direct", runtime_id=runtime_id, mode="agent.code.normal",
+                     project_id="repo", project_dir=str(tmp_path), work_mode="code", user_id="owner",
+                     model_selection=selection)
+    if selection is not None:
+        with pytest.raises(SessionProvisionError) as error:
+            await provisioner.prepare_session_create(request)
+        assert error.value.code == "RUNTIME_DEVICE_MODEL_UNAVAILABLE"
+        assert not (tmp_path / "created-session" / "metadata.json").exists()
+    else:
+        prepared = await provisioner.prepare_session_create(request)
+        metadata = session_metadata.get_session_metadata(prepared.result.session_id, cache_bust=True)
+        assert prepared.result.runtime_id == metadata["runtime_id"] == runtime_id
+        assert metadata["execution_provider"] == "codex-direct"
+        assert metadata["project_id"] == "repo" and metadata["model_selection"]["id"] == "bound-model"
+        await provisioner.abort_session_provision(prepared)
+    validate.assert_awaited_once_with(runtime_id, str(tmp_path), "owner")

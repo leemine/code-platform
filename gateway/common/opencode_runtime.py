@@ -3,10 +3,10 @@
 import re
 from pathlib import PurePosixPath
 
+from gateway.common.runtime_device import DEVICE_ID, WORKER_ROOT
+
 RUNTIME_TARGET = "/opt/yuanrong-python"
 DEVICE_CONTEXT = "_"
-DEVICE_ID = re.compile(r"[a-f0-9]{32}")
-WORKER_ROOT = PurePosixPath("/data/agent/workspace")
 
 
 def runtime_source(value: object) -> str:

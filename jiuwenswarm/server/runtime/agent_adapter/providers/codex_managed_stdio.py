@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import sys
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from urllib.parse import quote, urlsplit
 
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -74,7 +74,8 @@ async def _relay_stdio(socket):
         input_transport.close()
 
 
-async def relay(url, auth_file, directory, model):
+@asynccontextmanager
+async def connection(url, auth_file, directory):
     parsed = urlsplit(url)
     if (parsed.scheme != "wss" or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or not parsed.path.startswith("/")):
@@ -86,6 +87,11 @@ async def relay(url, auth_file, directory, model):
     headers = {_HEADERS_OPTION: {ASSERTION_HEADER: assertion, DIRECTORY_HEADER: quote(directory, safe="/")}}
     async with connect(url, ssl=relay_ssl_context(), open_timeout=20, close_timeout=3,
                        max_size=MAX_FRAME_BYTES, max_queue=4, **headers) as socket:
+        yield socket
+
+
+async def relay(url, auth_file, directory, model):
+    async with connection(url, auth_file, directory) as socket:
         await socket.send(json.dumps(model, ensure_ascii=False, allow_nan=False))
         async with asyncio.timeout(155):
             ready = await socket.recv()

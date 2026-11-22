@@ -53,6 +53,30 @@ def ensure_bindings_table(store):
             WHERE provider = 'opencode' AND display_name IS NOT NULL
         """)
 
+        db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS named_codex_device
+            ON provider_bindings(account_id, display_name)
+            WHERE provider = 'codex' AND display_name IS NOT NULL
+        """)
+
+
+class RuntimeDeviceNameConflict(ValueError):
+    """A device name is already registered for the same Provider."""
+
+
+def register_named_binding(store, account, key, binding_id, name, insert):
+    with store.guard_binding({"authority": account["authority"], "user_id": account["account_id"]}, account) as db:
+        row = db.execute("SELECT * FROM provider_bindings WHERE binding_id=?", (binding_id,)).fetchone()
+        if row is not None and tuple(row[field] for field in ("account_id", "project_id", "provider")) == key and row["display_name"] == name:
+            return dict(row)
+        if row is not None or db.execute(
+            "SELECT 1 FROM provider_bindings WHERE account_id=? AND provider=? AND display_name=?",
+            (key[0], key[2], name),
+        ).fetchone():
+            raise RuntimeDeviceNameConflict("RUNTIME_DEVICE_NAME_CONFLICT")
+        insert(db)
+    return read_binding(store, key)
+
 
 def read_binding(store, key):
     with store.connect() as db:

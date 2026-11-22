@@ -593,7 +593,7 @@ export default function ModelPicker({
               </button>
             )}
           </div>,
-          document.body,
+          rootRef.current?.closest('dialog') ?? document.body,
         )}
       {open && !disabled && activePlanGroup && nestedPosition && createPortal(
         <div
@@ -650,7 +650,7 @@ export default function ModelPicker({
             );
           })}
         </div>,
-        document.body,
+        rootRef.current?.closest('dialog') ?? document.body,
       )}
     </div>
   );

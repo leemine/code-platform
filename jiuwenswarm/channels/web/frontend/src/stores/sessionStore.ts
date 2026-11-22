@@ -2372,7 +2372,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const runtime = state.runtimes[sessionId];
       if (!runtime) return state;
       return { runtimes: { ...state.runtimes, [sessionId]: {
-        ...runtime, executionProvider: provider, executionRuntimeId: provider === 'opencode-direct' ? runtimeId : undefined,
+        ...runtime, executionProvider: provider, executionRuntimeId: provider === 'opencode-direct' || provider === 'codex-direct' ? runtimeId : undefined,
       } } };
     });
   },
