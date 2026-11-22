@@ -5,7 +5,7 @@ id: S_01_cloud-account-instance
 title: 云账号与原实例链契约
 type: S
 modules: [gateway, server/front]
-files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py]
+files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py, gateway/common/security/provider_relay_tls.py]
 ---
 
 # 云账号与原实例链契约
@@ -15,6 +15,8 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 共用执行池配置 `opencode_provider.account_allowlist` 时，Gateway 以当前已认证 Worker 所属的账号 ID 判断新绑定准入。未列入的账号无法通过模型同步或中继创建绑定。空列表关闭新绑定，已保存绑定仍可按原账号与工作区恢复，普通账号注册独立配置。没有历史绑定且不在名单中的 Worker 在启动时不注入托管 OpenCode 中继和模型策略。省略名单的独占部署沿用原行为。
 
 采用固定中继入口的共池部署显式配置布尔值 `opencode_provider.admit_new_bindings`。开关与旧名单互斥。Gateway 在 Worker 启动时下发固定托管地址，关闭开关后在创建绑定的入口拒绝新请求，并继续服务已有绑定和独立的普通注册。固定路由和旧中继共用原签名、归属、配额与回收链。已绑定的托管会话在同一 origin 和 API 前缀下接受已知路由别名，恢复仍核对原账号、项目和状态卷。
+
+Gateway 可以统一设置 `provider_relay_origin` 和 `provider_relay_ca_file`。同一 Worker 的 OpenCode HTTPS 和 Codex WSS 共用 origin 的主机和端口、API 前缀及同一份只读部署 CA。Worker 使用系统信任并追加配置的 CA，维持证书链和主机名校验。省略统一 origin 时沿用公共 origin。旧 OpenCode 绑定继续核对已保存的中继身份。准入、消息签名和 Provider 分配语义保持原样。
 
 账号 Worker 经既有认证中继向自己的绑定同步由目录生成的模型。Gateway 仅接受固定 SDK 和字段的私有模型片段；未变化的配置只交换摘要。同步按绑定加锁并比较上一版本，沿用原有归属、空闲和物理回收检查。运行中的请求、待回复的审批或问题会推迟换代。替代实例复用原生状态卷和会话归属。浏览器只读取账号模型和准入结果。 账号目录声明的正整数上下文上限同步为 OpenCode 的 `models.<model>.limit.context`，保留原生输出上限回退。账号改动上下文时只更新私有配置版本，模型标识及凭据继续沿用。
 

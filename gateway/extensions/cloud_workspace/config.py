@@ -14,6 +14,7 @@ from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
 from gateway.common.managed_codex import RELAY_ENV as CODEX_RELAY_ENV
 from gateway.common.opencode_runtime import runtime_source
 from gateway.common.security.opencode_relay_auth import OPENCODE_MANAGED_RELAY_PATH, OPENCODE_RELAY_PATH
+from gateway.common.security.provider_relay_tls import CA_ENV, CA_TARGET
 
 CONFIG_ENV = "CODE_PLATFORM_CLOUD_CONFIG"
 OPENCODE_RELAY_ENV = "JIUWENSWARM_OPENCODE_RELAY_URL"
@@ -46,6 +47,8 @@ class CloudConfig:
     resource_reconciler_socket: str | None = None
     opencode_provider: dict | None = None
     codex_provider: dict | None = None
+    provider_relay_origin: str | None = None
+    provider_relay_ca_file: str | None = None
 
     @classmethod
     def load(cls, path=None):
@@ -72,6 +75,34 @@ class CloudConfig:
         if self.resource_reconciler_socket is not None:
             profile["physical_verification"] = True
         return profile
+
+    @property
+    def provider_relay_base(self) -> str:
+        return (self.provider_relay_origin or self.public_origin).rstrip("/") + self.api_prefix
+
+    @property
+    def uses_provider_relay_tls(self) -> bool:
+        return self.provider_relay_origin is not None or self.provider_relay_ca_file is not None
+
+    def _validate_provider_relay(self):
+        origin = self.provider_relay_origin
+        if origin is not None:
+            if not isinstance(origin, str) or any(char.isspace() or char == "\\" for char in origin):
+                raise ValueError("provider_relay_origin must be an HTTPS origin")
+            target = urlsplit(origin)
+            if (target.scheme != "https" or not target.hostname or target.username is not None
+                    or target.password is not None or target.path not in ("", "/")
+                    or "?" in origin or "#" in origin or target.port == 0):
+                raise ValueError("provider_relay_origin must be an HTTPS origin")
+        ca_file = self.provider_relay_ca_file
+        if ca_file is not None:
+            if not isinstance(ca_file, str):
+                raise ValueError("provider_relay_ca_file must be an absolute deployment file path")
+            path = Path(ca_file)
+            if (not path.is_absolute() or ".." in path.parts or str(path) != ca_file
+                    or path == path.parent or any(char in ca_file for char in (":", "\0", "\n", "\r"))
+                    or any(path.is_relative_to(root) for root in (self.state_root, self.workspace_root))):
+                raise ValueError("provider_relay_ca_file must be outside account and state directories")
 
     def _runtime_account(self):
         # Yuanrong also uses this login in /home/<user>; Docker UID:GID syntax
@@ -114,9 +145,9 @@ class CloudConfig:
         for mount in self.extra_mounts:
             target = str(mount.get("target", ""))
             if not target.startswith("/") or any(Path(target) == Path(x) or Path(target).is_relative_to(x) or Path(x).is_relative_to(target)
-                                                    for x in ("/data", "/run/jiuwenswarm")):
+                                                    for x in ("/data", "/run/jiuwenswarm", CA_TARGET)):
                 raise ValueError("extra mount overlaps isolated runtime storage")
-        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV, CODEX_RELAY_ENV, MODEL_POLICY_ENV}:
+        if set(dict(self.runtime_env)) & {"HOME", "PYTHONPATH", "PYTHONHOME", "JIUWENSWARM_DATA_DIR", "JIUWENSWARM_CONFIG_DIR", "JIUWENSWARM_INSTANCE_AUTH_FILE", OPENCODE_RELAY_ENV, CODEX_RELAY_ENV, MODEL_POLICY_ENV, CA_ENV}:
             raise ValueError("runtime environment overrides isolated paths")
         public = urlsplit(self.public_origin)
         if (public.scheme != "https" or not public.hostname or public.username or public.password
@@ -132,6 +163,7 @@ class CloudConfig:
         if (self.state_root == self.workspace_root or self.state_root.is_relative_to(self.workspace_root)
                 or self.workspace_root.is_relative_to(self.state_root)):
             raise ValueError("control and workspace roots must be separate")
+        self._validate_provider_relay()
         if self.cpu <= 0 or self.memory <= 0 or self.ready_timeout <= 0:
             raise ValueError("positive resource limits and deadline required")
 

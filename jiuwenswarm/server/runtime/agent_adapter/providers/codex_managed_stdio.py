@@ -12,6 +12,7 @@ from websockets.sync.client import connect
 
 from gateway.common.managed_codex import ASSERTION_HEADER, AUDIENCE, DIRECTORY_HEADER, MAX_FRAME_BYTES, RELAY_ENV
 from gateway.common.security.provider_relay_auth import sign_assertion
+from gateway.common.security.provider_relay_tls import relay_ssl_context
 from gateway.common.security.service_auth import SERVICE_AUTH_ENV, ServiceAuthenticator
 
 
@@ -38,7 +39,7 @@ def relay(url, auth_file, directory, model):
         path=parsed.path, directory=directory, body=b"",
     )
     headers = {ASSERTION_HEADER: assertion, DIRECTORY_HEADER: quote(directory, safe="/")}
-    with connect(url, additional_headers=headers, open_timeout=20, close_timeout=3,
+    with connect(url, ssl=relay_ssl_context(), additional_headers=headers, open_timeout=20, close_timeout=3,
                  max_size=MAX_FRAME_BYTES, max_queue=4) as socket:
         socket.send(json.dumps(model, ensure_ascii=False, allow_nan=False))
         if json.loads(socket.recv(timeout=155)) != {"ready": True}:

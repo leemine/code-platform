@@ -627,3 +627,75 @@ def test_managed_relay_paths_use_existing_signed_handlers(config):
         "/provider/opencode": relay.handle, "/provider/opencode-worker": relay.handle_shared,
         "/provider/managed/opencode": relay.handle, "/provider/managed/opencode-worker": relay.handle_shared,
     }
+
+
+def test_provider_relay_ca_applies_only_to_admitted_worker(config, tmp_path):
+    from gateway.common.managed_codex import RELAY_ENV as CODEX_RELAY_ENV
+    from gateway.common.security.provider_relay_tls import CA_ENV, CA_TARGET
+    from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
+
+    ca = tmp_path / "relay-ca.pem"
+    deployment = replace(config, provider_relay_origin="https://relay.example.test:8443/",
+                         provider_relay_ca_file=str(ca))
+    deployment.validate()
+    assert deployment.provider_relay_base == "https://relay.example.test:8443" + config.api_prefix
+    assert config.provider_relay_base == config.public_origin + config.api_prefix
+    assert deployment.runtime_profile() == config.runtime_profile()
+
+    store = EnvironmentStore(config.state_root / "environments.db", config.authority,
+                             config.workspace_root, config.state_root / "auth", config.runtime_profile())
+    actor = {"authority": config.authority, "username": "relay-user", "user_id": "relay-user"}
+    intent = store.registration(actor["username"], "long-test-password")
+    store.bind_registration(intent, actor)
+    info = AgentInfo(user_id=actor["user_id"], agent_type="jiuwenswarm")
+    base = deployment.provider_relay_base
+    policy = CloudInstancePolicy(store, opencode_relay_url=base + "/provider/opencode",
+                                 codex_relay_url="wss://" + base.removeprefix("https://") + "/provider/managed/codex",
+                                 codex_admits=lambda row: True,
+                                 provider_relay_tls=True, provider_relay_ca_file=str(ca))
+    plan = policy.plan(info)
+    assert plan.env_vars[OPENCODE_RELAY_ENV] == base + "/provider/opencode"
+    assert plan.env_vars[CODEX_RELAY_ENV] == "wss://" + base.removeprefix("https://") + "/provider/managed/codex"
+    assert plan.env_vars[CA_ENV] == CA_TARGET
+    assert [mount for mount in plan.mounts if mount["target"] == CA_TARGET] == [
+        {"source": str(ca), "target": CA_TARGET, "readonly": True},
+    ]
+    policy.opencode_model_policy = lambda row: None
+    policy.codex_admits = lambda row: False
+    plan = policy.plan(info)
+    assert {OPENCODE_RELAY_ENV, CODEX_RELAY_ENV, CA_ENV}.isdisjoint(plan.env_vars)
+    assert all(mount["target"] != CA_TARGET for mount in plan.mounts)
+
+
+def test_provider_relay_configuration_rejects_unsafe_values(config):
+    from gateway.common.security.provider_relay_tls import CA_ENV, CA_TARGET
+
+    for origin in ("http://relay.test", "https://user@relay.test", "https://relay.test/path",
+                   "https://relay.test?", "https://relay.test#", "https://relay.test:0"):
+        with pytest.raises(ValueError, match="provider_relay_origin"):
+            replace(config, provider_relay_origin=origin).validate()
+    for ca in ("relative.pem", "/certs/../ca.pem", str(config.workspace_root / "ca.pem"),
+               str(config.state_root / "ca.pem")):
+        with pytest.raises(ValueError, match="provider_relay_ca_file"):
+            replace(config, provider_relay_ca_file=ca).validate()
+    with pytest.raises(ValueError, match="overrides isolated paths"):
+        replace(config, runtime_env=((CA_ENV, "/tmp/user.pem"),)).validate()
+    with pytest.raises(ValueError, match="extra mount overlaps"):
+        replace(config, extra_mounts=({"source": "/tmp/user-ca", "target": CA_TARGET},)).validate()
+
+
+def test_provider_relay_context_verifies_peer_and_fails_on_invalid_bundle(monkeypatch, tmp_path):
+    import ssl
+    from gateway.common.security.provider_relay_tls import CA_ENV, relay_ssl_context
+
+    monkeypatch.delenv(CA_ENV, raising=False)
+    assert relay_ssl_context() is None
+    monkeypatch.setenv(CA_ENV, "")
+    context = relay_ssl_context()
+    assert context.check_hostname
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    ca = tmp_path / "invalid.pem"
+    ca.write_text("invalid PEM")
+    monkeypatch.setenv(CA_ENV, str(ca))
+    with pytest.raises(ssl.SSLError):
+        relay_ssl_context()
