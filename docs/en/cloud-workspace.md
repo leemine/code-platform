@@ -16,13 +16,27 @@ For a shared execution pool, configure `opencode_provider.admit_new_bindings`. W
 
 Route the fixed `/api/v1/auth/organization/provider/managed/` prefix to the pool's Gateway, with the deployment's configured API prefix. Preserve the complete signed request path and headers. Gateway verifies the Worker identity and project ownership. Existing deployments can continue to use `account_allowlist` and the original routes. Remove `account_allowlist` when explicitly configuring the switch. Managed session recovery accepts the two known route forms on the same origin and API prefix.
 
+```json
+{
+  "opencode_provider": {
+    "display_name": "Team OpenCode Sandbox"
+  }
+}
+```
+
+In the JSON file selected by `CODE_PLATFORM_CLOUD_CONFIG`, add `display_name` to the existing independent Provider configuration. After selecting a cloud project, the Provider menu in a new normal Code chat displays “OpenCode · Team OpenCode Sandbox”. The default display name is “Cloud development environment”. Older Gateways retain the existing OpenCode option. Opening the menu only reads admission for the selected project. The first send starts the independent OpenCode container on demand if the device is idle or has yet to be created. Later turns reuse the bound session and Provider state.
+
+For a connected cloud account, open **Runtimes** between **Experts** and **Skills** in the sidebar. Choose **New device**, enter a name, then create and start the OpenCode device. Devices belong to the account environment and require no project during creation. In a regular Code chat with a cloud project selected, pick the device by name from the existing Provider menu. The same device is available to authorized cloud projects in the account. Each device keeps its own OpenCode state within the existing account workspace boundary. Startup syncs the account models and verifies readiness through the existing allocation path. After idle reclamation, sending a message restores the same binding on demand.
+
+Gateway upgrades the existing shared Provider allocation table at startup and preserves OpenCode and Codex bindings. For a Gateway rollback, use a version compatible with the upgraded table.
+
 Set `opencode_provider.shared_runtime` to use a host-provisioned startup stack with a pinned image. Each binding stores its image and read-only asset path. A node without the asset refuses launch. After confirmed physical recycling, an operator can migrate or roll back the binding while keeping its original state volume. See the [shared startup stack runbook](../../deploy/cloud-workspace/README.md#独立-opencode-共享启动栈).
 
 Use the [release and node provisioning flow](../../deploy/cloud-workspace/OPENCODE_RELEASE.md) to freeze the image and runtime together and verify each scheduler node before changing the deployment configuration.
 
 Managed OpenCode syncs endpoints, resolved credentials, and configured context limits for compatible models saved by the account when sending a message. The context limit is expressed in tokens, such as 1,048,576 for a 1M context configured at 1,048,576 tokens. Changing the limit keeps the model identifier and uses the existing idle recycling flow for that binding.
 
-Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW; environment ensure or the existing connection warmup invokes the sole Router creator. The plugin contributes only cloud environment RPCs and leaves `session.execution.options` in place.
+Original account API paths and cookies remain. Registration records a recoverable intent and image snapshot and returns NEW. Environment ensure or the existing connection warmup invokes the sole Router creator. The plugin provides `cloud.environment.ensure/status` and adds `project.runtime.status` when the independent OpenCode relay is configured. The existing `session.execution.options` continues to provide execution options.
 
 An ambiguous create is reconciled through bounded inventory and exact instance details, never another POST. Startup cleanup protects account instances. A DELETE acknowledgement is insufficient: an authoritative instance GET returning 404 is required. Bindings with physical_verification additionally require physical completion before DELETED permits a new epoch. Pending deletion may retry only the known instance. Rebuild retains image and data; network loss closes the cloud connection without deleting the binding.
 

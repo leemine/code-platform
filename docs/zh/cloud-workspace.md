@@ -13,6 +13,20 @@
 
 在共用执行池中配置 `opencode_provider.admit_new_bindings`。设为 `true` 时，已认证账号可以按需申请独立 OpenCode。设为 `false` 时暂停创建新绑定，已有绑定仍可挂回原状态卷重建。普通账号注册由 `registration_enabled` 独立控制。Gateway 启动时读取开关。使用开关配置启动的 Worker 在开关切换时沿用同一中继地址。
 
+```json
+{
+  "opencode_provider": {
+    "display_name": "团队 OpenCode 沙箱"
+  }
+}
+```
+
+在 `CODE_PLATFORM_CLOUD_CONFIG` 指向的 JSON 文件中，将 `display_name` 加到现有独立 Provider 配置。选择具体云端项目后，Code 普通会话草稿在输入框底部的 Provider 下拉框显示「OpenCode · 团队 OpenCode 沙箱」。省略名称使用「云端开发环境」，旧 Gateway 保留原 OpenCode 选项。查看选项只读取项目准入。尚未启动设备时，首次发送会按需启动独立 OpenCode 容器。续聊沿用已绑定的会话和 Provider 状态。
+
+已连接云账号后，从左栏「专家」与「技能」之间打开「运行时」，点击「新建设备」，填写名称并创建和启动 OpenCode。设备登记在当前账号环境下，创建时无需选项目。在 Code 普通会话中选择已有云端项目后，从输入框底部原 Provider 下拉框按名称选设备。切换账号内已授权的云项目仍可选同一设备。每台设备独立持有 OpenCode 状态，共用账号工作区文件边界。启动先同步账号模型，再通过现有分配链确认就绪。空闲回收后，发送会按需恢复原绑定。
+
+既有 Gateway 数据库会在启动时升级共享 Provider 分配表，保留 OpenCode 和 Codex 的绑定。回退 Gateway 时应选用兼容升级后表结构的版本。
+
 使用开关的部署把固定前缀 `/api/v1/auth/organization/provider/managed/` 转发到本执行池的 Gateway，其中 API 前缀取部署配置。代理保留完整签名路径和请求头，Gateway 沿用原 Worker 身份和项目验证。现有以 `account_allowlist` 部署的配置和旧中继路径仍可继续使用。切换部署方式时删除 `account_allowlist`，再显式设置开关。同源同 API 前缀的两个托管地址可用于恢复原绑定。
 
 可通过 `opencode_provider.shared_runtime` 为固定镜像配置宿主启动栈。镜像与只读资产路径随绑定保存，资产缺失的节点拒绝启动。已回收的绑定可离线迁移或回滚，并复用原状态卷。操作步骤见[共享启动栈部署说明](../../deploy/cloud-workspace/README.md#独立-opencode-共享启动栈)。
@@ -21,7 +35,7 @@
 
 独立 OpenCode 在发送时同步当前账号兼容模型的服务地址、凭据引用解析结果及已配置的上下文上限。上下文按 token 数传给 OpenCode，例如 1 Mi token 为 1,048,576。修改上限沿用已有模型标识，按原绑定的空闲回收流程生效。
 
-原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件仅贡献 `cloud.environment.ensure/status`，不接管 `session.execution.options`。
+原账号HTTP路径 `/api/v1/auth/organization/{register,login,logout,status}` 和Cookie保持；新增环境查询/ensure使用同前缀。注册持久化意图与固定镜像，返回NEW；显式 `environment/ensure` 或原连接预热调用唯一Router创建、连接。插件提供 `cloud.environment.ensure/status` 以及启用独立 OpenCode 后的 `project.runtime.status`。执行选项仍由原 `session.execution.options` 提供。
 
 创建超时或取消后的未知结果保留回执，以有界清单和实例详情精确对账；零匹配、多匹配均不再POST。启动清理保护本控制面已有账号实例。DELETE需原实例查询明确404；启用physical_verification的绑定还须物理完成确认才闭合，未确认时维持DELETING；下次ensure可重试该已知实例删除。重建增加epoch、保持原镜像和数据。普通网络断开仅关闭云连接，不自动删除绑定实例。
 

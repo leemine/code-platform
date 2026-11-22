@@ -4,6 +4,9 @@ import re
 from pathlib import PurePosixPath
 
 RUNTIME_TARGET = "/opt/yuanrong-python"
+DEVICE_CONTEXT = "_"
+DEVICE_ID = re.compile(r"[a-f0-9]{32}")
+WORKER_ROOT = PurePosixPath("/data/agent/workspace")
 
 
 def runtime_source(value: object) -> str:

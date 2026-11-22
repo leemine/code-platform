@@ -14,6 +14,7 @@ export type SessionCreateRequestFn = <T = unknown>(
 ) => Promise<T>;
 
 export interface SessionCreatePayload {
+  runtime_id?: string;
   session_id?: string;
   sessionId?: string;
   project_id?: string;
@@ -106,6 +107,9 @@ async function invokeSessionCreate(
   const payload = await request<SessionCreatePayload>('session.create', createParams, {
     timeoutMs: SESSION_CREATE_TIMEOUT_MS,
   });
+  if (createParams.runtime_id !== undefined && payload?.runtime_id !== createParams.runtime_id) {
+    throw new Error('session.create did not confirm the selected runtime device');
+  }
   return normalizeCreatedSession(payload);
 }
 

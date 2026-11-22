@@ -55,6 +55,17 @@ async def handle_project_request(request: AgentRequest) -> AgentResponse:
         )
     params = request.params if isinstance(request.params, dict) else {}
     try:
+        if request.req_method == ReqMethod.PROJECT_RUNTIME_PREPARE:
+            from jiuwenswarm.server.control.opencode_preparation import prepare_project_runtime
+
+            try:
+                if await prepare_project_runtime(request):
+                    return _ok(request, {"ready": True})
+            except (PermissionError, ValueError):
+                return build_error_response(request, "Project runtime denied", code="PROJECT_RUNTIME_FORBIDDEN")
+            except Exception as exc:
+                logger.warning("Managed OpenCode prewarm failed: %s", type(exc).__name__)
+                return build_error_response(request, "Project runtime unavailable", code="PROJECT_RUNTIME_UNAVAILABLE")
         if request.req_method == ReqMethod.PROJECT_IMPORT:
             from jiuwenswarm.server.control.project_import import execute
             try:

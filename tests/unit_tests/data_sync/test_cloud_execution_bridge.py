@@ -73,6 +73,14 @@ async def test_local_bridge_runs_original_cloud_requests_stream_history_and_appr
         await host.channel.send_event(ws, 'chat.chunk', {'session_id': 'sess_cloud', 'content': 'cloud result'})
     for method in ('session.create', 'chat.send', 'chat.user_answer', 'history.get', 'chat.interrupt', 'command.goal'):
         host.channel.register_method(method, handler)
+    runtime_calls = []
+
+    async def runtime_handler(ws, req_id, params, session_id):
+        runtime_calls.append(dict(params))
+        await host.channel.send_response(ws, req_id, ok=True, payload={"confirmed": True})
+
+    for method in ("cloud.runtime.list", "cloud.runtime.create", "cloud.runtime.start", "project.runtime.ensure"):
+        host.channel.register_method(method, runtime_handler, local_only=True)
     login = await host.client.post('/api/v1/data-sync/login', json={'username': 'ui-user', 'password': 'isolated-ui-password'})
     assert login.status_code == 200
     token = host.client.cookies.get(COOKIE)
@@ -94,6 +102,19 @@ async def test_local_bridge_runs_original_cloud_requests_stream_history_and_appr
                 assert (await receive(ws, 'res', method))['ok']
                 await receive(ws, 'event')
             assert all(p['session_id'] == 'sess_cloud' for p in received[1:])
+            await ws.send(json.dumps({"type": "req", "id": "runtime-list", "method": "cloud.runtime.list",
+                "params": {"execution_target": "cloud"}}))
+            assert (await receive(ws, "res", "runtime-list"))["ok"]
+            device_create = {"runtime_profile_id": "opencode-cloud", "display_name": "Review", "create_token": "a" * 32}
+            device_start = {"runtime_id": "b" * 32}
+            for method, params in (("cloud.runtime.create", device_create), ("cloud.runtime.start", device_start)):
+                await ws.send(json.dumps({"type": "req", "id": method, "method": method,
+                    "params": {**params, "execution_target": "cloud"}}))
+                assert (await receive(ws, "res", method))["ok"]
+            await ws.send(json.dumps({"type": "req", "id": "runtime-ensure", "method": "project.runtime.ensure",
+                "params": {"project_id": addresses.encode("p", "proj_cloud"), "provider_id": "opencode-direct"}}))
+            assert (await receive(ws, "res", "runtime-ensure"))["ok"]
+            assert runtime_calls == [{}, device_create, device_start, {"project_id": "proj_cloud", "provider_id": "opencode-direct"}]
             await host.local.local.execution.discard(token)
             with pytest.raises(ConnectionClosed): await ws.recv()
     assert len(received) == 6

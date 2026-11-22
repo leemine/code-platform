@@ -11,11 +11,14 @@ import pytest
 from starlette.applications import Starlette
 from starlette.routing import Route
 
+from gateway.common.opencode_runtime import DEVICE_CONTEXT, WORKER_ROOT
 from gateway.common.security.opencode_relay_auth import OpenCodeRelayAuth
+from gateway.services.cloud_codex_pool import CloudCodexPool
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentUnavailable
 from gateway.services import cloud_opencode_pool
-from gateway.services.cloud_opencode_pool import CloudOpencodePool, OpenCodeFault
+from gateway.services.cloud_opencode_pool import CloudOpencodePool, OpenCodeConfigurationError, OpenCodeFault
 from gateway.services.cloud_opencode_relay import CloudOpencodeRelay
+from gateway.services.managed_codex_models import ManagedModel
 
 
 PROJECT_DIR = "/data/agent/workspace/code/sample"
@@ -89,6 +92,152 @@ def sandbox(tmp_path):
         yield CloudOpencodePool(store, frontend, config), frontend, account, config
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_independent_devices_reuse_allocation_across_projects_and_isolate_native_history(sandbox):
+    pool, frontend, account, config = sandbox
+    owner = account("owner")
+    another = account("another")
+    other_project = "/data/agent/workspace/code/other"
+    Path(owner["workspace"], "agent/workspace/code/other").mkdir()
+    token = "a" * 32
+    devices = await asyncio.gather(*(asyncio.to_thread(pool.register_device, owner, "独立开发", token) for _ in range(3)))
+    device = devices[0]
+    assert devices == [device] * 3
+    assert device["state"] == "not_started"
+    with pytest.raises(OpenCodeConfigurationError, match="RUNTIME_DEVICE_NAME_CONFLICT"):
+        pool.register_device(owner, "独立开发", "b" * 32)
+    distinct = pool.register_device(owner, "单独验证", "b" * 32)["runtime_id"]
+    runtime_id = device["runtime_id"]
+    assert distinct != runtime_id
+    assert not frontend.created
+    assert not pool.account_devices(another)
+    with pytest.raises(PermissionError):
+        pool.device_runtime(another, runtime_id)
+
+    async with pool.hold(owner, DEVICE_CONTEXT, str(WORKER_ROOT), runtime_id=runtime_id) as prepared:
+        async with pool.hold(owner, "project", PROJECT_DIR, shared=True, runtime_id=runtime_id) as first:
+            pool.register_session(first, "project", "ses_same")
+            assert first.instance_id == prepared.instance_id
+            assert pool.owns_session(first, "project", "ses_same")
+        async with pool.hold(owner, "other", other_project, shared=True, runtime_id=runtime_id) as second:
+            assert second.instance_id == prepared.instance_id
+            assert not pool.owns_session(second, "other", "ses_same")
+        async with pool.hold(owner, "project", PROJECT_DIR, shared=True, runtime_id=distinct) as different:
+            assert different.instance_id != prepared.instance_id
+            assert not pool.owns_session(different, "project", "ses_same")
+    assert len(frontend.created) == 2
+    assert frontend.created[0]["mounts"][0]["target"] == str(WORKER_ROOT)
+    assert frontend.created[0]["workspace"] != frontend.created[1]["workspace"]
+    assert pool.device_runtime(owner, runtime_id)["state"] == "ready"
+    restarted = CloudOpencodePool(pool.store, frontend, config)
+    assert {row["runtime_id"] for row in restarted.account_devices(owner)} == {runtime_id, distinct}
+
+
+@pytest.mark.asyncio
+async def test_old_binding_table_upgrades_with_open_code_and_codex_active(sandbox):
+    opencode, frontend, account, config = sandbox
+    legacy = account("legacy")
+    fresh = account("fresh")
+    config.codex_provider = {
+        "image": "sha256:" + "c" * 64, "account_allowlist": ["legacy", "fresh"],
+        "shared_runtime": "/opt/runtime/" + "d" * 64, "idle_seconds": 0,
+    }
+    resources = SimpleNamespace(confirm_deleted=AsyncMock(), confirm_codex_address=AsyncMock(return_value="10.0.0.1"))
+    model = ManagedModel("test-model", "https://models.example.test/v1", "fixture-key")
+    store = opencode.store
+    codex = CloudCodexPool(store, frontend, config, resources)
+    codex.ready_check = codex.idle_check = AsyncMock(return_value=True)
+    try:
+        async with opencode.hold(legacy, "project", PROJECT_DIR, shared=True) as original:
+            opencode.register_session(original, "project", "ses_legacy")
+        async with codex.hold(legacy, "legacy-thread", PROJECT_DIR, model) as original_codex:
+            pass
+    finally:
+        await codex.close()
+
+    with store.connect() as db:
+        db.execute("DROP INDEX named_opencode_device")
+        db.execute("ALTER TABLE provider_bindings DROP COLUMN display_name")
+        legacy_rows = [dict(row) for row in db.execute("SELECT * FROM provider_bindings ORDER BY provider")]
+        assert len(legacy_rows) == 2
+        assert len(legacy_rows[0]) == 12
+
+    opencode = CloudOpencodePool(store, frontend, config)
+    opencode.idle_check = AsyncMock(return_value=True)
+    codex = CloudCodexPool(store, frontend, config, resources)
+    codex.ready_check = codex.idle_check = AsyncMock(return_value=True)
+    try:
+        with store.connect() as db:
+            rows = [dict(row) for row in db.execute("SELECT * FROM provider_bindings ORDER BY provider")]
+            assert rows == [dict(row, display_name=None) for row in legacy_rows]
+
+        runtime_id = opencode.register_device(fresh, "工作沙箱", "a" * 32)["runtime_id"]
+        async with opencode.hold(fresh, "project", PROJECT_DIR, shared=True, runtime_id=runtime_id) as new_device:
+            opencode.register_session(new_device, "project", "ses_new")
+        async with codex.hold(fresh, "fresh-thread", PROJECT_DIR, model) as new_codex:
+            assert new_codex != original_codex
+
+        async with opencode.hold(legacy, "project", PROJECT_DIR, shared=True) as resumed:
+            assert resumed == original
+            assert opencode.owns_session(resumed, "project", "ses_legacy")
+        async with codex.hold(legacy, "legacy-thread", PROJECT_DIR, model) as resumed:
+            assert resumed == original_codex
+        assert len(frontend.created) == 4
+
+        await opencode.reclaim_idle()
+        await codex.reclaim_idle()
+        async with opencode.hold(fresh, "project", PROJECT_DIR, shared=True, runtime_id=runtime_id) as resumed:
+            assert resumed.binding_id == new_device.binding_id
+            assert resumed.instance_id != new_device.instance_id
+            assert opencode.owns_session(resumed, "project", "ses_new")
+        async with codex.hold(fresh, "fresh-thread", PROJECT_DIR, model) as resumed:
+            assert resumed != new_codex
+        assert len(frontend.created) == 6
+        for original_request, resumed_request in zip(frontend.created[2:4], frontend.created[4:6]):
+            assert original_request["workspace"] == resumed_request["workspace"]
+            assert original_request["name"] != resumed_request["name"]
+        with store.connect() as db:
+            assert db.execute("SELECT directory FROM codex_session_owners WHERE session_id=?",
+                              ("fresh-thread",)).fetchone()[0] == PROJECT_DIR
+    finally:
+        await codex.close()
+
+
+@pytest.mark.asyncio
+async def test_project_runtime_read_checks_owner_and_admission_without_allocating(sandbox):
+    pool, frontend, account, _ = sandbox
+    owner = account("owner")
+    another = account("another")
+    for row, project in ((owner, "project"), (another, "other-project")):
+        Path(row["workspace"], "agent", "projects.json").write_text(json.dumps({
+            "projects": [{"project_id": project, "project_dir": PROJECT_DIR}],
+        }))
+    frontend.frontend_endpoint = "http://127.0.0.1:1"
+    relay = CloudOpencodeRelay(pool.store, pool)
+    pool.ready_check = None
+    try:
+        assert relay.project_available(owner | {"user_id": "owner"}, "project")
+        assert relay.account_runtime(owner | {"user_id": "owner"})["state"] == "not_created"
+        with pytest.raises(PermissionError):
+            relay.project_available(another | {"user_id": "another"}, "project")
+        with pytest.raises(PermissionError):
+            relay.project_available(owner | {"user_id": "owner"}, "default_code")
+        assert not frontend.created
+        with pool.store.connect() as db:
+            assert db.execute("SELECT count(*) FROM provider_bindings").fetchone()[0] == 0
+
+        async with pool.hold(owner, "project", PROJECT_DIR, shared=True):
+            pass
+        assert relay.project_runtime(owner | {"user_id": "owner"}, "project")["state"] == "ready"
+        assert relay.account_runtime(owner | {"user_id": "owner"})["state"] == "ready"
+        pool.options["admit_new_bindings"] = False
+        assert relay.project_available(owner | {"user_id": "owner"}, "project")
+        assert not relay.project_available(another | {"user_id": "another"}, "other-project")
+        assert len(frontend.created) == 1
+    finally:
+        await relay.close()
 
 
 @pytest.mark.asyncio

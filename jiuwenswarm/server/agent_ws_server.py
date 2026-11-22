@@ -13475,6 +13475,7 @@ class AgentWebSocketServer:
                         or ""
                     ).strip(),
                     execution_provider=params.get("execution_provider"),
+                    runtime_id=params.get("runtime_id"),
                     role_template_ref=params.get("role_template_ref"),
                     model_name=str(params.get("model_name") or "").strip(),
                     model_selection=params.get("model_selection"),
@@ -13502,6 +13503,8 @@ class AgentWebSocketServer:
                 "prewarm_hit": result.prewarm_hit,
                 "prewarm_status": result.prewarm_status,
             }
+            if result.runtime_id is not None:
+                payload["runtime_id"] = result.runtime_id
             if result.explicit_id_compatibility:
                 payload.update(
                     {

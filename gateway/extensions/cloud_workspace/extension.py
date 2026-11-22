@@ -25,6 +25,7 @@ from gateway.extensions.sdk.application_plugin import (
     HTTPRouteContribution,
     WebSocketRouteContribution,
 )
+from gateway.services.cloud_opencode_pool import PROFILE_ID, OpenCodeConfigurationError
 
 logger = logging.getLogger(__name__)
 COOKIE = "jiuwenswarm_organization"
@@ -101,12 +102,110 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                 (OPENCODE_RELAY_PATH, relay.handle), (OPENCODE_WORKER_RELAY_PATH, relay.handle_shared),
                 (OPENCODE_MANAGED_RELAY_PATH, relay.handle), (OPENCODE_MANAGED_WORKER_RELAY_PATH, relay.handle_shared),
             ))
+            routes += tuple(HTTPRouteContribution(
+                self.config.api_prefix + prefix + "-device/{runtime_id}/{project_id}/{path:path}",
+                relay.handle_device, ("GET", "POST"),
+            ) for prefix in (OPENCODE_RELAY_PATH, OPENCODE_MANAGED_RELAY_PATH))
         return routes
 
     def bind_web_channel(self, channel, services):
         from gateway.services.project_environments import ProjectEnvironments
         self.projects = ProjectEnvironments(channel, services.require_agent_client())
         self.projects.register()
+        if self.environments is not None and self.environments.opencode_relay:
+            from functools import partial
+
+            from gateway.routing.e2a_proxy import fetch_agent_unary
+            from jiuwenswarm.common.schema.message import ReqMethod
+
+            relay = self.environments.opencode_relay
+
+            def public_runtime(status):
+                return {
+                    "provider_id": "opencode-direct",
+                    "runtime_profile_id": PROFILE_ID,
+                    "display_name": self.config.opencode_provider.get("display_name"),
+                    **status,
+                }
+
+            async def runtime_request(method, ws, req_id, params, session_id):
+                try:
+                    principal = current_account()
+                    if principal is None:
+                        raise PermissionError("account login required")
+                    if not isinstance(params, dict):
+                        raise ValueError("invalid runtime request")
+                    identity = await principal.check()
+                    if method == "cloud.runtime.list":
+                        if params:
+                            raise ValueError("runtime list takes no selectors")
+                        account = await asyncio.to_thread(relay.store.get, identity)
+                        payload = {
+                            "runtimes": [public_runtime(relay.pool.account_runtime(account)), *[
+                                public_runtime(device) for device in await asyncio.to_thread(relay.pool.account_devices, account)
+                            ]],
+                            "templates": [relay.pool.runtime_template(account)],
+                        }
+                    elif method in {"cloud.runtime.create", "cloud.runtime.start"}:
+                        create = method == "cloud.runtime.create"
+                        fields = {"runtime_profile_id", "display_name", "create_token"} if create else {"runtime_id"}
+                        if set(params) != fields or create and params["runtime_profile_id"] != PROFILE_ID:
+                            raise ValueError("invalid managed device selector")
+                        account = await asyncio.to_thread(relay.store.get, identity)
+                        if create:
+                            status = await asyncio.to_thread(
+                                relay.pool.register_device, account, params["display_name"], params["create_token"],
+                            )
+                        else:
+                            status = await asyncio.to_thread(relay.pool.device_runtime, account, params["runtime_id"])
+                        runtime_id = status["runtime_id"]
+                        await principal.check()
+                        ok, result = await fetch_agent_unary(
+                            agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
+                            params={"runtime_id": runtime_id}, session_id=None, user_id=identity["user_id"],
+                            channel_id=channel.channel_id, label="cloud-runtime-device", timeout_seconds=150,
+                        )
+                        status = await asyncio.to_thread(relay.pool.device_runtime, account, runtime_id)
+                        payload = {**public_runtime(status), "start_failed": not ok or result.get("ready") is not True
+                                   or status["state"] != "ready"}
+                    else:
+                        ensure = method == "project.runtime.ensure"
+                        fields = {"project_id", "provider_id"} if ensure else {"project_id"}
+                        if (set(params) != fields or not isinstance(params["project_id"], str)
+                                or ensure and params["provider_id"] != "opencode-direct"):
+                            raise ValueError("invalid project runtime selector")
+                        project_id = params["project_id"]
+                        status = await asyncio.to_thread(relay.project_runtime, identity, project_id)
+                        if ensure and status["available"]:
+                            await principal.check()
+                            ok, result = await fetch_agent_unary(
+                                agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
+                                params={"project_id": project_id}, session_id=None,
+                                user_id=identity["user_id"], channel_id=channel.channel_id,
+                                label="cloud-runtime", timeout_seconds=150,
+                            )
+                            if not ok or result.get("ready") is not True:
+                                if result.get("code") == "PROJECT_RUNTIME_FORBIDDEN":
+                                    raise PermissionError("project prewarm denied")
+                                raise EnvironmentUnavailable("project prewarm unavailable")
+                            status = await asyncio.to_thread(relay.project_runtime, identity, project_id)
+                            if status["state"] != "ready":
+                                raise EnvironmentUnavailable("project runtime is no longer ready")
+                        payload = public_runtime(status)
+                    await principal.check()
+                    await channel.send_response(ws, req_id, ok=True, payload=payload)
+                except OpenCodeConfigurationError as exc:
+                    await channel.send_response(ws, req_id, ok=False, code=str(exc))
+                except (PermissionError, FileNotFoundError):
+                    await channel.send_response(ws, req_id, ok=False, code="PROJECT_RUNTIME_FORBIDDEN")
+                except (EnvironmentUnavailable, AccountAuthorityUnavailable, OSError, KeyError, TypeError):
+                    await channel.send_response(ws, req_id, ok=False, code="PROJECT_RUNTIME_UNAVAILABLE")
+                except ValueError:
+                    await channel.send_response(ws, req_id, ok=False, code="INVALID_REQUEST")
+
+            for method in ("cloud.runtime.list", "cloud.runtime.create", "cloud.runtime.start",
+                           "project.runtime.status", "project.runtime.ensure"):
+                channel.register_method(method, partial(runtime_request, method), local_only=True)
         for method in ("cloud.environment.ensure", "cloud.environment.status"):
             def make_handler(name):
                 async def handler(ws, req_id, params, session_id):

@@ -43,6 +43,7 @@
     "unsupportedProtocol": "Unsupported A2UI protocol version: {{version}}"
   },
   "nav": {
+    "runtime": "Runtimes",
     "chat": "Chat",
     "work": "Tasks",
     "agent": "Experts",
@@ -2053,6 +2054,7 @@
     "selectTeamMembers": "Select team members",
     "noTeamMembersAvailable": "No team members available",
     "executionProvider": {
+      "cloudRuntimeName": "Cloud development environment",
       "title": "Execution engine",
       "native": "Deepagent",
       "locked": "This conversation is bound. Start a new conversation to change engines.",
@@ -2061,6 +2063,7 @@
       "loading": "Loading…",
       "selectionUnavailable": "The selected engine is unavailable. Choose another engine; it will not switch automatically.",
       "reason": {
+        "managed_admission_closed": "New devices are paused for this runtime",
         "unavailable": "Plugin unavailable",
         "ambiguous": "Conflicting plugin registrations",
         "unsupported_mode": "Unavailable in this mode"
@@ -5617,6 +5620,31 @@
     "logoutFailed": "Logout was not confirmed. The current connection has been closed. Please retry.",
     "retry": "Retry",
     "logout": "Sign out"
+  },
+  "cloudRuntime": {
+    "createDevice": "New device",
+    "createAndStart": "Create and start",
+    "template": "Provider template",
+    "openCodeStandard": "OpenCode Standard",
+    "resources": "{{cpu}} vCPU · {{memory}} MiB",
+    "name": "Device name",
+    "start": "Start",
+    "useInCode": "Use in Code",
+    "nameConflict": "A device already uses this name. Choose another name.",
+    "requestFailed": "Could not confirm the device operation. Try again.",
+    "startFailed": "The device is registered. Start it again from the list.",
+    "loading": "Loading runtimes",
+    "empty": "No cloud runtimes for this account",
+    "admissionClosed": "New requests paused",
+    "state": {
+      "not_created": "Not created",
+      "not_started": "Not started",
+      "starting": "Starting",
+      "ready": "Ready",
+      "idle": "Idle",
+      "reconciling": "Reclaiming",
+      "unknown": "Status unconfirmed"
+    }
   },
   "codeWorkspace": {
     "draftPending": "Unsent content",

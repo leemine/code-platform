@@ -88,6 +88,8 @@ import { readAgentTemplateName } from './features/agentIdentity';
 import { normalizeTeamLeaderIdentity } from './features/teamLeaderIdentity';
 import { normalizeTeamGroupIdentity } from './features/teamGroupIdentity';
 import { useWebSocket, mergePersistedGoalCompletionMessages, stampGoalObjectiveMessages, useResponsiveLayout, useResponsivePanelResize } from './hooks';
+import { CloudRuntimePanel } from './features/cloudWorkspace/CloudRuntimePanel';
+import { refreshCloudRuntime, useCloudRuntimes } from './features/cloudWorkspace/useProjectRuntime';
 import { isOpenCodeNativeModel } from './features/cloudWorkspace/opencodeModels';
 import { webClient, webRequest, isCloudResource } from './services/webClient';
 import { attachTeamSession, resetTeamAttachments } from './services/teamAttach';
@@ -531,7 +533,7 @@ function AppContent({
     workspace.setCloudProject(null);
     const draft = useSessionStore.getState().runtimes[NEW_CONVERSATION_ID];
     if (draft?.executionTarget === 'cloud') useSessionStore.setState(state => ({ runtimes: { ...state.runtimes,
-      [NEW_CONVERSATION_ID]: { ...draft, selectedModelName: null, selectedModelSelection: null, executionProvider: 'harness' },
+      [NEW_CONVERSATION_ID]: { ...draft, selectedModelName: null, selectedModelSelection: null, executionProvider: 'harness', executionRuntimeId: undefined },
     } }));
     useWorkspaceStore.setState({ projectSessions: Object.fromEntries(Object.entries(workspace.projectSessions).filter(([id]) => !isCloudResource(id))),
       pinnedSessions: workspace.pinnedSessions.filter(s => !isCloudResource(s.session_id)) });
@@ -1346,6 +1348,8 @@ function AppContent({
     },
   });
   const applicationPluginState = useApplicationPlugins(isConnected);
+  const cloudRuntimes = useCloudRuntimes(isConnected);
+  const showRuntimeNav = activeNav === 'runtime' || Boolean(cloudRuntimes?.runtimes.length);
   const applicationPlugins = applicationPluginState.plugins;
   const visibleApplicationPlugins = enabledApplicationPlugins(applicationPlugins);
   const settingsRequest = useMemo(() => resolveSettingsRequest(request), [request, resolveSettingsRequest]);
@@ -3269,6 +3273,19 @@ function AppContent({
     requestComposerFocus();
   }, [disposeInFlightHistoryHandles, mode, navigate, requestComposerFocus, setCurrentSession, setSelectedProject, setSingleAgentPanelExpanded, setTeamAreaExpanded]);
 
+  const useRuntimeInCode = useCallback((runtimeId: string) => {
+    const workspace = useWorkspaceStore.getState();
+    void workspace.setWorkMode('code');
+    if (cloudRuntimes?.remote) workspace.setCodeLocation('cloud');
+    enterNewConversation('agent', { forceMode: 'agent', preserveProject: true });
+    const sessions = useSessionStore.getState();
+    const previous = sessions.getRuntime(NEW_CONVERSATION_ID);
+    sessions.setExecutionProvider(NEW_CONVERSATION_ID, 'opencode-direct', runtimeId);
+    if (previous?.executionProvider !== 'opencode-direct') {
+      sessions.setSelectedModelSelection(NEW_CONVERSATION_ID, null);
+    }
+  }, [cloudRuntimes?.remote, enterNewConversation]);
+
   // 监听从 SkillPanel 发来的"新建会话并插入技能"事件
   useEffect(() => {
     const handler = (e: Event) => {
@@ -3378,6 +3395,7 @@ function AppContent({
       selectedModelName: sessionStore.getEffectiveModelName(NEW_CONVERSATION_ID),
       selectedModelSelection: pendingRuntime?.selectedModelSelection ?? null,
       executionProvider: pendingRuntime?.executionProvider ?? 'harness',
+      executionRuntimeId: pendingRuntime?.executionRuntimeId,
       projectDir: pendingRuntime?.projectDirectory ?? null,
       persistSession: false,
     };
@@ -3404,6 +3422,7 @@ function AppContent({
       }
       if (workContext.execution_target) createParams.execution_target = workContext.execution_target;
       Object.assign(createParams, useSessionStore.getState().getModelSelectionPayload(NEW_CONVERSATION_ID), { execution_provider: runtimeSettings.executionProvider });
+      if (runtimeSettings.executionRuntimeId) createParams.runtime_id = runtimeSettings.executionRuntimeId;
       if (workContext.project_id) createParams.project_id = workContext.project_id;
       if (workContext.project_dir) createParams.project_dir = workContext.project_dir;
 
@@ -3590,6 +3609,7 @@ function AppContent({
         selectedModelName: useSessionStore.getState().getEffectiveModelName(NEW_CONVERSATION_ID),
         selectedModelSelection: newRuntime?.selectedModelSelection ?? null,
         executionProvider: newRuntime?.executionProvider ?? 'harness',
+        executionRuntimeId: newRuntime?.executionRuntimeId,
         projectDir: newRuntime?.projectDirectory ?? null,
         persistSession: persistCommand.persistSession,
       };
@@ -3627,6 +3647,7 @@ function AppContent({
         }
         if (workContext.execution_target) createParams.execution_target = workContext.execution_target;
         Object.assign(createParams, useSessionStore.getState().getModelSelectionPayload(NEW_CONVERSATION_ID), { execution_provider: runtimeSettings.executionProvider });
+        if (runtimeSettings.executionRuntimeId) createParams.runtime_id = runtimeSettings.executionRuntimeId;
         if (workContext.project_id) {
           createParams.project_id = workContext.project_id;
         }
@@ -4229,6 +4250,7 @@ function AppContent({
       }
       if (nav === 'agents') setHasVisitedAgents(true);
       if (nav === 'skills') setHasVisitedSkills(true);
+      if (nav === 'runtime') refreshCloudRuntime();
       if (nav === 'personalContext') setHasVisitedPersonalContext(true);
       if (nav === 'design') {
         setTeamAreaExpanded(false);
@@ -4617,7 +4639,7 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
         onNavigate={handleNavItemClick}
         onNewSession={handleNewSession}
         showNewSession={false}
-        hiddenNavItems={hiddenNavItems}
+        hiddenNavItems={showRuntimeNav ? hiddenNavItems : [...hiddenNavItems, 'runtime']}
         applicationPlugins={visibleApplicationPlugins}
         onNavItemHover={(key) => {
           const target = (
@@ -5045,6 +5067,13 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
         {FEATURE_PERSONAL_CONTEXT_UI && hasVisitedPersonalContext && (
           <div className={`app-section ${activeNav === 'personalContext' ? '' : 'is-hidden'}`}>
             <PersonalContextPanel isConnected={isConnected} isActive={activeNav === 'personalContext'} />
+          </div>
+        )}
+
+        {activeNav === 'runtime' && (
+          <div className="app-page-body">
+            <CloudRuntimePanel runtimes={cloudRuntimes?.runtimes ?? null} templates={cloudRuntimes?.templates ?? []}
+              remote={cloudRuntimes?.remote ?? false} onUse={useRuntimeInCode} />
           </div>
         )}
 

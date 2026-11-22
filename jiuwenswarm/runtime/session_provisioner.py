@@ -136,6 +136,7 @@ class SessionCreateInput:
     title: str = ""
     user_id: str = ""
     execution_provider: str | None = None
+    runtime_id: str | None = None
     role_template_ref: str | None = None
     model_name: str = ""
     model_selection: dict[str, Any] | None = None
@@ -200,6 +201,7 @@ class SessionCreateResult:
     canonical_mode: str
     explicit_id_compatibility: bool = False
     moa_enabled: bool = False
+    runtime_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_bool("persist_session", self.persist_session)
@@ -768,6 +770,19 @@ class RuntimeSessionProvisioner:
                 default=getattr(self._agent_manager, "sdk_name", "harness"), mode=canonical_mode,
             )
             is_swarm = provision_input.is_swarm or resolved.is_team
+            runtime_id = provision_input.runtime_id
+            if runtime_id is not None:
+                from gateway.common.opencode_runtime import DEVICE_ID
+                from jiuwenswarm.server.runtime.agent_adapter.providers.opencode_managed import validate_device
+
+                if (not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id)
+                        or selected_provider != "opencode-direct" or canonical_mode != "agent.code.normal"
+                        or is_swarm or is_default_project_id(project_id) or explicit_tui_session or provision_input.cron_id):
+                    raise SessionProvisionError("Managed device requires an OpenCode ordinary Code session")
+                try:
+                    await validate_device(runtime_id, project_id, project_dir, provision_input.user_id)
+                except ValueError as exc:
+                    raise SessionProvisionError(str(exc), code="RUNTIME_DEVICE_UNAVAILABLE") from exc
             from jiuwenswarm.common.config import get_config
             from gateway.common.model_selection import ModelSelection
             from jiuwenswarm.server.runtime.moa_runtime import effective_moa_enabled, resolve_moa_settings
@@ -872,8 +887,10 @@ class RuntimeSessionProvisioner:
                 ):
                     raise SessionProvisionError("Main Agent role is fixed; create a new session", code="CONFLICT")
             if metadata_exists and not explicit_tui_session:
-                self._agent_manager.activate_session_prewarm(session_id)
                 stored = get_session_metadata(session_id)
+                if stored.get("runtime_id") != runtime_id:
+                    raise SessionProvisionError("Session already has a different runtime device", code="CONFLICT")
+                self._agent_manager.activate_session_prewarm(session_id)
                 result = SessionCreateResult(
                     channel_id=channel_id,
                     session_id=session_id,
@@ -886,6 +903,7 @@ class RuntimeSessionProvisioner:
                     created=False,
                     canonical_mode=canonical_mode,
                     moa_enabled=stored.get("moa_enabled") is True,
+                    runtime_id=runtime_id,
                 )
                 return self._stage_create_result(
                     result,
@@ -917,6 +935,7 @@ class RuntimeSessionProvisioner:
                     persist_session=persist_session,
                     work_mode=final_work_mode,
                     execution_provider=selected_provider,
+                    **({"runtime_id": runtime_id} if runtime_id else {}),
                     main_agent_role=role_binding,
                     model=str(provision_input.model_name or "").strip(),
                     moa_enabled=moa_enabled,
@@ -949,6 +968,7 @@ class RuntimeSessionProvisioner:
                 canonical_mode=canonical_mode,
                 explicit_id_compatibility=explicit_tui_session,
                 moa_enabled=moa_enabled,
+                runtime_id=runtime_id,
             )
             return self._stage_create_result(
                 result,

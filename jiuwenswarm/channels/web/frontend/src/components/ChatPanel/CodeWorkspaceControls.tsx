@@ -46,8 +46,9 @@ export function parseWorkspacePage(page: Page, path: string): Page {
 }
 
 /** Three controls; explicit cloud actions reuse the local account bridge without navigation. */
-export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlockedChange, sessionId }: {
+export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlockedChange, onCloudProjectChange, sessionId }: {
   sessionId?: string; localControl: ReactNode; enabled: boolean; disabled: boolean; onBlockedChange: (blocked: boolean) => void;
+  onCloudProjectChange?: (projectId: string | null) => void;
 }) {
   const { t } = useTranslation();
   const titleId = useId();
@@ -77,6 +78,12 @@ export function CodeWorkspaceControls({ localControl, enabled, disabled, onBlock
   const remote = catalog?.kind === 'local' && selectedLocation === 'cloud';
   const needsEntry = !catalog || selectedLocation !== catalog.kind;
   const cloudProject = remote ? remoteProject : selectedProject;
+  const cloudProjectId = enabled && catalog && selectedLocation === 'cloud'
+    && cloudProject?.work_mode === 'code' && !cloudProject.is_default ? cloudProject.project_id : null;
+  useEffect(() => {
+    onCloudProjectChange?.(cloudProjectId);
+    return () => onCloudProjectChange?.(null);
+  }, [cloudProjectId, onCloudProjectChange]);
   const blocked = enabled && !(sessionId && sessionId !== 'new') && ((!catalog || (needsEntry && (!remote || !remoteProject))) || busy || Boolean(dialog));
   useEffect(() => { onBlockedChange(blocked); }, [blocked, onBlockedChange]);
   useEffect(() => {

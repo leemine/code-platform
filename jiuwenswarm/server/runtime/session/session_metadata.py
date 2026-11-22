@@ -716,6 +716,10 @@ def _write_metadata_unfenced(
         if current is not None and current.get("execution_provider"):
             to_write = dict(to_write)
             to_write["execution_provider"] = current["execution_provider"]
+            if "runtime_id" in current:
+                to_write["runtime_id"] = current["runtime_id"]
+            else:
+                to_write.pop("runtime_id", None)
         if current is not None and current.get("session_id"):
             if "main_agent_role" in current:
                 to_write = {**to_write, "main_agent_role": current["main_agent_role"]}
@@ -1086,6 +1090,7 @@ def init_session_metadata(
     channel_metadata: dict[str, Any] | None = None,
     agent_group_name: str = "",
     execution_provider: str | None = None,
+    runtime_id: str | None = None,
     main_agent_role: dict[str, str] | None = None,
 ) -> None:
     """初始化会话元数据(同步写,确保创建后立即可读)
@@ -1127,6 +1132,8 @@ def init_session_metadata(
     }
     if execution_provider is not None:
         metadata["execution_provider"] = execution_provider
+    if runtime_id is not None:
+        metadata["runtime_id"] = runtime_id
     if main_agent_role is not None:
         metadata["main_agent_role"] = main_agent_role
     if agent_group_name:

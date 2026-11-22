@@ -14,6 +14,7 @@ export const NEW_CONVERSATION_ID = 'new';
 
 interface ConversationRuntimeSettings {
   executionProvider?: string;
+  executionRuntimeId?: string;
   mode: AgentMode;
   selectedModelName: string | null;
   selectedModelSelection?: ModelSelection | null;
@@ -47,11 +48,11 @@ export function createConversationTitle(content: string): string {
 
 function applyRuntimeSettings(
   sessionId: string,
-  { mode, selectedModelName, selectedModelSelection, executionProvider, projectDir, persistSession = false }: ConversationRuntimeSettings,
+  { mode, selectedModelName, selectedModelSelection, executionProvider, executionRuntimeId, projectDir, persistSession = false }: ConversationRuntimeSettings,
 ): void {
   ensureSessionRuntimes(sessionId);
   useSessionStore.getState().setMode(sessionId, mode);
-  if (executionProvider) useSessionStore.getState().setExecutionProvider(sessionId, executionProvider);
+  if (executionProvider) useSessionStore.getState().setExecutionProvider(sessionId, executionProvider, executionRuntimeId);
   // 新会话的模型由 sessionStore 按“上次稳定选择 -> 自定义 -> 免费 -> 空”初始化；
   // 这里的旧名称只用于恢复已创建会话，避免再次覆盖稳定 ID 选择。
   if (selectedModelName && sessionId !== NEW_CONVERSATION_ID) {
@@ -84,7 +85,11 @@ export function resetNewConversationRuntime(settings: ConversationRuntimeSetting
   useHarnessStore.getState().removeRuntime(NEW_CONVERSATION_ID);
   useGoalStore.getState().removeRuntime(NEW_CONVERSATION_ID);
   usePlanStore.getState().removeRuntime(NEW_CONVERSATION_ID);
-  applyRuntimeSettings(NEW_CONVERSATION_ID, { ...settings, executionProvider: settings.executionProvider ?? previousRuntime?.executionProvider });
+  applyRuntimeSettings(NEW_CONVERSATION_ID, {
+    ...settings,
+    executionProvider: settings.executionProvider ?? previousRuntime?.executionProvider,
+    executionRuntimeId: settings.executionProvider ? settings.executionRuntimeId : previousRuntime?.executionRuntimeId,
+  });
   if (previousRuntime?.executionTarget === 'cloud') {
     const state = useSessionStore.getState();
     useSessionStore.setState({ runtimes: { ...state.runtimes, [NEW_CONVERSATION_ID]: {
@@ -130,6 +135,7 @@ export function registerCreatedConversation(
     work_mode: workContext.work_mode,
     mode: settings.mode,
     execution_provider: settings.executionProvider ?? 'harness',
+    runtime_id: settings.executionRuntimeId,
     model_selection: useSessionStore.getState().getRuntime(sessionId)?.selectedModelSelection ?? null,
     status: 'active',
     message_count: 0,

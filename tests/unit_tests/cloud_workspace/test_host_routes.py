@@ -113,7 +113,8 @@ def test_host_mounts_managed_open_code_route_only_when_assembled():
     async def shared(request: Request):
         return {**request.path_params, "shared": True}
 
-    plugin.environments = SimpleNamespace(opencode_relay=SimpleNamespace(handle=relay, handle_shared=shared))
+    plugin.environments = SimpleNamespace(opencode_relay=SimpleNamespace(handle=relay, handle_shared=shared,
+                                                                        handle_device=shared))
     registry = ExtensionRegistry(None, {}, None)
     registry.register_application_plugin(plugin)
     app = FastAPI()
@@ -124,4 +125,7 @@ def test_host_mounts_managed_open_code_route_only_when_assembled():
         }
         assert client.get(config.api_prefix + "/provider/opencode-worker/project_2/global/health").json() == {
             "project_id": "project_2", "path": "global/health", "shared": True,
+        }
+        assert client.get(config.api_prefix + "/provider/managed/opencode-device/device/_/global/health").json() == {
+            "runtime_id": "device", "project_id": "_", "path": "global/health", "shared": True,
         }

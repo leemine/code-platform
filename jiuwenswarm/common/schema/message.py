@@ -60,6 +60,7 @@ for _operation in ("READ", "WRITE", "LIST", "MKDIR"):
     _ensure_req_method(f"FILE_WORKSPACE_{_operation}", f"file.workspace.{_operation.lower()}")
 
 _ensure_req_method("PROJECT_IMPORT", "project.import")
+_ensure_req_method("PROJECT_RUNTIME_PREPARE", "project.runtime.prepare")
 
 __all__ = [
     "PROMPT_SUGGESTION_READY_EVENT",

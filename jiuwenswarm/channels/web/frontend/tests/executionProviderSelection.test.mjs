@@ -118,3 +118,83 @@ test('catalog failure offers retry; keyboard Escape closes the existing menu', a
     assert.equal(document.querySelector('[data-testid="chat-panel-execution-menu"]'), null);
   } finally { await act(async () => { root.unmount(); }); globalThis.__providerRpc = respond(); }
 });
+
+test('Code project runtime decorates only its OpenCode option and preserves the Provider ID', async () => {
+  const requests = [];
+  globalThis.__providerRpc = async (method, params) => {
+    if (method !== 'project.runtime.status') return respond()();
+    requests.push(params);
+    if (params.project_id === 'old-host') throw new Error('Unknown method');
+    return {
+      provider_id: 'opencode-direct', runtime_profile_id: 'opencode-cloud',
+      display_name: 'Review sandbox', available: params.project_id !== 'paused',
+    };
+  };
+  resetNewConversationRuntime({ mode: 'agent', selectedModelName: null, executionProvider: 'harness' });
+  const root = createRoot(document.getElementById('root'));
+  const trigger = () => document.querySelector('[data-testid="chat-panel-execution-trigger"]');
+  const option = () => document.querySelector('[data-variant="opencode-direct"][role="menuitemradio"]');
+  async function selectProject(runtimeProjectId) {
+    await act(async () => root.render(createElement(Selector, { sessionId: 'new', runtimeProjectId })));
+    if (trigger().getAttribute('aria-expanded') !== 'true') await act(async () => trigger().click());
+  }
+  try {
+    await selectProject('paused');
+    assert.equal(option().disabled, true);
+    await selectProject('current-project');
+    assert.equal(option().disabled, false);
+    assert.equal(option().textContent, 'OpenCode · Review sandbox');
+    await act(async () => option().click());
+    assert.equal(useSessionStore.getState().getRuntime('new').executionProvider, 'opencode-direct');
+    assert.equal(document.querySelector('[data-testid="chat-panel-execution-label"]').textContent, 'OpenCode · Review sandbox');
+    await selectProject('old-host');
+    assert.equal(option().disabled, false);
+    assert.equal(option().textContent, 'OpenCode');
+    await selectProject(null);
+    assert.equal(option().textContent, 'OpenCode');
+    assert.deepEqual(requests, [{ project_id: 'paused' }, { project_id: 'current-project' }, { project_id: 'old-host' }]);
+  } finally {
+    await act(async () => { root.unmount(); });
+    globalThis.__providerRpc = respond();
+  }
+});
+
+test('the original Code Provider menu selects an independent device by name across projects', async () => {
+  const runtimeId = 'a'.repeat(32);
+  const defaultDevice = {
+    provider_id: 'opencode-direct', runtime_profile_id: 'opencode-cloud',
+    display_name: '云端开发环境', available: true, state: 'not_created',
+  };
+  const device = { ...defaultDevice, runtime_id: runtimeId, display_name: '日常开发', state: 'ready' };
+  globalThis.__providerRpc = async (method, params) => {
+    if (method === 'cloud.runtime.list') {
+      assert.deepEqual(params, {});
+      return { runtimes: [defaultDevice, device] };
+    }
+    if (method === 'project.runtime.status') return defaultDevice;
+    return respond()();
+  };
+  resetNewConversationRuntime({ mode: 'agent.code.normal', selectedModelName: null, executionProvider: 'harness' });
+  const root = createRoot(document.getElementById('root'));
+  const trigger = () => document.querySelector('[data-testid="chat-panel-execution-trigger"]');
+  const option = () => document.querySelector(`[data-variant="${runtimeId}"][role="menuitemradio"]`);
+  try {
+    for (const project of ['payments', 'orders']) {
+      await act(async () => root.render(createElement(Selector, { sessionId: 'new', runtimeProjectId: project })));
+      await act(async () => trigger().click());
+      assert.ok(option().textContent.includes('OpenCode · 日常开发'));
+      await act(async () => option().click());
+      assert.equal(useSessionStore.getState().getRuntime('new').executionRuntimeId, runtimeId);
+    }
+    await act(async () => {
+      useSessionStore.getState().setCurrentSession({
+        session_id: 'device-session', mode: 'agent.code.normal', execution_provider: 'opencode-direct', runtime_id: runtimeId,
+      });
+      root.render(createElement(Selector, { sessionId: 'device-session' }));
+    });
+    assert.equal(document.querySelector('[data-testid="chat-panel-execution-binding"]').textContent, 'OpenCode · 日常开发');
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.__providerRpc = respond();
+  }
+});

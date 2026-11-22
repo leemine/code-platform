@@ -7,22 +7,44 @@ import { NEW_CONVERSATION_ID } from '../../multi-session/state/newConversationLi
 import { parseExecutionProviderCatalog, type ExecutionProviderOption } from '../../services/executionProviderCatalog';
 import { isOpenCodeNativeModel, readManagedOpenCodeModels } from '../../features/cloudWorkspace/opencodeModels';
 import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
+import { useCloudRuntimes, useProjectRuntime } from '../../features/cloudWorkspace/useProjectRuntime';
 import './ExecutionPicker.css';
 
-export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: string; disabled?: boolean }) {
+type RuntimeOption = ExecutionProviderOption & { runtimeId?: string; runtimeState?: string };
+
+export function ExecutionPicker({ sessionId, disabled = false, runtimeProjectId = null }: {
+  sessionId: string; disabled?: boolean; runtimeProjectId?: string | null;
+}) {
   const { t } = useTranslation();
   const cloud = useCloudCatalog(sessionId);
   const draft = sessionId === NEW_CONVERSATION_ID;
+  const runtime = useProjectRuntime(draft ? runtimeProjectId : null);
   const selectedId = useSessionStore((s) => s.runtimes[sessionId]?.executionProvider ?? 'harness');
+  const selectedRuntimeId = useSessionStore((s) => s.runtimes[sessionId]?.executionRuntimeId);
   const mode = useSessionStore((s) => s.runtimes[sessionId]?.mode ?? 'agent');
-  const options = useMemo(() => {
+  const namedCatalog = useCloudRuntimes(Boolean(draft ? runtimeProjectId : selectedRuntimeId));
+  const options = useMemo<RuntimeOption[] | null>(() => {
     if (!cloud.catalog) return null;
     try {
-      return parseExecutionProviderCatalog(cloud.catalog.config.execution_provider_catalog);
+      return parseExecutionProviderCatalog(cloud.catalog.config.execution_provider_catalog).flatMap<RuntimeOption>(option => {
+        const defaultOption = runtime?.provider_id === option.id ? {
+          ...option,
+          label: `${option.label} · ${runtime.display_name ?? t('chat.executionProvider.cloudRuntimeName')}`,
+          available: option.available && runtime.available,
+          reason: option.available && !runtime.available ? 'managed_admission_closed' : option.reason,
+        } as RuntimeOption : option;
+        const namedOptions = (namedCatalog?.runtimes ?? [])
+          .filter(device => device.runtime_id && device.provider_id === option.id)
+          .map(device => ({
+            ...option, runtimeId: device.runtime_id, runtimeState: device.state, label: `${option.label} · ${device.display_name}`,
+            available: option.available && device.available && device.state !== 'starting',
+          }));
+        return [defaultOption, ...namedOptions];
+      });
     } catch {
       return null;
     }
-  }, [cloud.catalog]);
+  }, [cloud.catalog, namedCatalog, runtime, t]);
   const error = cloud.error || (cloud.catalog !== null && options === null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<CSSProperties>({ visibility: 'hidden' });
@@ -62,12 +84,12 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
     };
   }, [open]);
 
-  function choose(option: ExecutionProviderOption) {
+  function choose(option: RuntimeOption) {
     if (!draft || disabled || !option.available || !option.modes.includes(mode)) return;
     const state = useSessionStore.getState();
     const current = state.runtimes[sessionId];
     const policy = readManagedOpenCodeModels(cloud.catalog?.config);
-    state.setExecutionProvider(sessionId, option.id);
+    state.setExecutionProvider(sessionId, option.id, option.runtimeId);
     if (option.id === 'opencode-direct' && policy && current?.executionProvider !== option.id) {
       state.setSelectedModelSelection(sessionId, policy.default ? { type: 'model', id: policy.default.id } : null);
     } else if (option.id !== 'opencode-direct' && isOpenCodeNativeModel(current?.selectedModelSelection)) {
@@ -76,10 +98,11 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
     setOpen(false);
     anchor.current?.querySelector('button')?.focus();
   }
-  const label = options?.find((option) => option.id === selectedId)?.label
+  const isSelected = (option: RuntimeOption) => option.id === selectedId && option.runtimeId === selectedRuntimeId;
+  const label = options?.find(isSelected)?.label
     ?? (selectedId === 'harness' ? 'Deepagent' : selectedId);
   const unavailable = draft && options && !options.some(
-    (option) => option.id === selectedId && option.available && option.modes.includes(mode),
+    (option) => isSelected(option) && option.available && option.modes.includes(mode),
   );
   return (
     <div className="chat-mode-select chat-execution-picker" ref={anchor} data-testid="chat-panel-execution-picker">
@@ -172,18 +195,20 @@ export function ExecutionPicker({ sessionId, disabled = false }: { sessionId: st
                   type="button"
                   className="chat-mode-select__option"
                   role="menuitemradio"
-                  aria-checked={selectedId === option.id}
+                  aria-checked={isSelected(option)}
                   disabled={disabled || !option.available || !option.modes.includes(mode)}
                   data-testid="chat-panel-execution-option"
-                  data-variant={option.id ?? 'legacy-native'}
-                  key={option.id ?? 'legacy-native'}
+                  data-variant={option.runtimeId ?? option.id ?? 'legacy-native'}
+                  key={option.runtimeId ?? option.id ?? 'legacy-native'}
                   onClick={() => choose(option)}
                 >
                   <span className="chat-execution-option__copy">
                     <span>{option.label}</span>
-                    {(!option.available || !option.modes.includes(mode)) && <small>{t(`chat.executionProvider.reason.${option.reason ?? 'unsupported_mode'}`)}</small>}
+                    {option.runtimeState && <small>{t(`cloudRuntime.state.${option.runtimeState}`)}</small>}
+                    {(!option.available || !option.modes.includes(mode)) && option.runtimeState !== 'starting' &&
+                      <small>{t(`chat.executionProvider.reason.${option.reason ?? 'unsupported_mode'}`)}</small>}
                   </span>
-                  {selectedId === option.id && <Check size={14} aria-hidden="true" />}
+                  {isSelected(option) && <Check size={14} aria-hidden="true" />}
                 </button>
               ))
             )}

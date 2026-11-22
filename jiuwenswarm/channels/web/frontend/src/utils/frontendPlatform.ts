@@ -4,6 +4,7 @@ export type SidebarNavKey =
   | 'chat'
   | 'skills'
   | 'agents'
+  | 'runtime'
   | 'design'
   | 'connectorMarket'
   | 'sessions'

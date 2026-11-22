@@ -29,6 +29,7 @@ CONTROL_PROJECT_METHODS = frozenset(
         ReqMethod.PROJECT_CRON_RESOLVE_BINDING.value,
         ReqMethod.PROJECT_LIST.value,
         ReqMethod.PROJECT_IMPORT.value,
+        ReqMethod.PROJECT_RUNTIME_PREPARE.value,
     }
 )
 # Ordinary create/rename/pin and interactive Git operations use execution;
