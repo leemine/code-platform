@@ -105,7 +105,8 @@ def test_concurrent_agents_do_not_lose_session_token_updates(tmp_path):
     assert snapshot["others"]["calls_total"] == 16
 
 
-def test_record_retries_wal_initialization_after_a_concurrent_reader(tmp_path, monkeypatch):
+@pytest.mark.parametrize("busy_code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_BUSY_RECOVERY])
+def test_record_retries_wal_initialization_after_a_concurrent_reader(tmp_path, monkeypatch, busy_code):
     busy, released = Event(), Event()
 
     class ObservedConnection(sqlite3.Connection):
@@ -117,6 +118,7 @@ def test_record_retries_wal_initialization_after_a_concurrent_reader(tmp_path, m
                     busy.set()
                     if not released.wait(5):
                         raise TimeoutError("Fixture reader retained its lock") from exc
+                    exc.sqlite_errorcode = busy_code
                 raise
 
     ledger = SessionTokenUsageLedger(tmp_path, "sess_usage")

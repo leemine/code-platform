@@ -56,7 +56,10 @@ def _enable_wal(connection: sqlite3.Connection) -> None:
             connection.execute("PRAGMA journal_mode = WAL")
             return
         except sqlite3.OperationalError as exc:
-            if exc.sqlite_errorcode != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+            # The low byte is the primary code of an extended SQLite result.
+            primary_code = exc.sqlite_errorcode & 0xFF
+            if primary_code != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                exc.add_note(f"SQLite WAL initialization: {exc.sqlite_errorname} ({exc.sqlite_errorcode})")
                 raise
             time.sleep(0.02)
 
