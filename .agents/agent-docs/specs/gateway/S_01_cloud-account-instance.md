@@ -26,6 +26,8 @@ Gateway 可以统一设置 `provider_relay_origin` 和 `provider_relay_ca_file`�
 
 独立 Codex 按认证账号和 Worker 环境 ID 固定执行容器及状态卷。同一 Worker 的多个授权项目可共享容器。Gateway 将每个 Swarm 会话固定到原项目路径，容器为该会话单独持久化 CODEX_HOME。Worker 继续负责模型选择、原生线程映射、审批及取消。Worker 使用签名 WSS 连接 Gateway，Gateway 经带代次令牌的私有中继接到容器内的官方 App Server stdio。Gateway 保留连接令牌和模型 API Key，容器接收令牌摘要及限定模型的 Unix socket。同一绑定固定 Responses 模型连接配置，模型不一致时显式拒绝。已分配实例先核对元戎归属、Docker 物理证明，再完成带令牌的 App Server 初始化探测。
 
+Worker 的签名 WSS 握手、就绪应答和双向帧收发由同一个异步事件循环处理。该循环以异步管道连接官方 SDK 的 stdio，远端关闭时取消仍在等待 SDK 输入的任务。
+
 托管 Codex 完成或确认取消一轮后释放会话传输租约。容器内中继关闭本次 App Server 进程后进入空闲。回收检查 Worker 绑定无活动租约和中继无活动会话，元戎和 Docker 均确认删除后才推进代次。下一代重用状态卷和会话目录，原适配器按保存的原生线程恢复。镜像变更使用同一离线比较并交换流程，目标镜像需要同一 stdio 启动契约。
 
 Worker 从已选账号模型配置解析显式 `context_window`，通过签名 WSS 携带此值。Gateway 将它与同一 Worker 的模型连接一并固定，并为每一代容器生成原生单模型目录。文件随只读代次挂载进入容器，App Server 通过原生 `model_catalog_json` 加载。文件描述模型及上下文容量，端点和凭据继续由 Gateway 模型中继持有。未配置容量的绑定沿用 Codex 原生默认行为。绑定存续期间请求的容量必须一致。
