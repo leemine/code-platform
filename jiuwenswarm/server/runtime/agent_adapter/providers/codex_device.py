@@ -41,7 +41,11 @@ async def _request(runtime_id, directory, user_id, data, timeout):
 async def validate_device(runtime_id, directory, user_id):
     try:
         reply = await _request(runtime_id, directory, user_id, {"op": "check"}, 15)
-        if reply.get("runtime_id") != runtime_id or not isinstance(reply.get("model_id"), str):
+        if reply.get("runtime_id") != runtime_id:
+            raise ValueError("Codex device identifier differs")
+        if reply.get("session_models") is True and reply.get("model_id") is None:
+            return None
+        if not isinstance(reply.get("model_id"), str):
             raise ValueError("Codex device has no usable model")
         return reply["model_id"]
     except (ValueError, KeyError, AttributeError, OSError, TimeoutError, WebSocketException) as exc:
@@ -90,9 +94,12 @@ async def prepare_device(request):
 
     params = request.params
     if (request.is_stream or request.session_id or not isinstance(params, dict)
-            or set(params) != {"provider_id", "runtime_id", "model_id"}
+            or set(params) not in ({"provider_id", "runtime_id"}, {"provider_id", "runtime_id", "model_id"})
             or params["provider_id"] != "codex-direct"):
         raise ValueError("Invalid Codex device preparation request")
+    if "model_id" not in params:
+        reply = await _request(params["runtime_id"], str(WORKER_ROOT), request.user_id, {"op": "prepare"}, 140)
+        return reply == {"ready": True}
     model_id = params["model_id"]
     if model_id is not None:
         validate_device_model_id(model_id)

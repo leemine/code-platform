@@ -3,6 +3,7 @@ import argparse
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 import socket
 
 
@@ -25,7 +26,10 @@ class ResponsesHandler(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path != "/v1/responses":
+        model = self.server.model
+        valid_path = (self.path == "/v1/responses" if model is not None
+                      else re.fullmatch(r"/[a-f0-9]{32}/v1/responses", self.path) is not None)
+        if not valid_path:
             self.send_error(404)
             return
         self.connection.settimeout(15)
@@ -40,7 +44,7 @@ class ResponsesHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             self.send_error(400)
             return
-        if payload.get("model") != self.server.model:
+        if model is not None and payload.get("model") != model:
             self.send_error(403)
             return
         broker = UnixConnection(self.server.path)
@@ -69,7 +73,7 @@ class ResponsesHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", required=True)
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model")
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args()
     with ThreadingHTTPServer(("127.0.0.1", args.port), ResponsesHandler) as server:

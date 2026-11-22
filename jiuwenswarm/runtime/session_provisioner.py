@@ -826,6 +826,20 @@ class RuntimeSessionProvisioner:
                     if provision_input.moa_enabled or (selection is not None and selection.type == "model_group"):
                         raise ValueError("external_provider_model_group_unsupported")
                     moa_enabled = False
+                if runtime_id is not None and selected_provider == "codex-direct" and device_model_id is None:
+                    from gateway.common.managed_codex import MODEL_UNAVAILABLE
+                    from jiuwenswarm.common.codex_adapter_config import validate_model
+                    from jiuwenswarm.common.model_errors import ModelSelectionError
+                    from jiuwenswarm.common.model_routing_registry import ModelExecutionContext
+                    from jiuwenswarm.server.runtime.agent_adapter.execution_input import model_resolver
+
+                    try:
+                        model = validate_model(model_resolver().resolve(
+                            selection, ModelExecutionContext(legacy_model_name=provision_input.model_name),
+                        ))
+                    except (ModelSelectionError, ValueError) as exc:
+                        raise SessionProvisionError("Select a compatible Codex account model", code=MODEL_UNAVAILABLE) from exc
+                    selection = ModelSelection(type="model", id=model.model_id)
                 if selected_provider == "opencode-direct" and not existing_metadata:
                     from gateway.common.opencode_model_policy import worker_model_policy
 

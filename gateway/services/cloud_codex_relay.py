@@ -63,6 +63,8 @@ async def _native(lease, op, *, session_id=None, directory=None):
             handshake = {"op": op, "capability": lease.capability}
             if op == "stream":
                 handshake.update(session=session_id, directory=directory)
+                if lease.model_route is not None:
+                    handshake.update(model_route=lease.model_route, use_catalog=lease.use_catalog)
             await stream.send(json.dumps(handshake))
             try:
                 reply = json.loads(await anext(stream))
@@ -111,7 +113,7 @@ class CloudCodexRelay:
     @staticmethod
     async def ready(lease):
         try:
-            async with _native(lease, "probe") as server:
+            async with _native(lease, "probe-session-models" if lease.session_models else "probe") as server:
                 await _initialize(server)
             return True
         except (OSError, TimeoutError, RuntimeError, ValueError, WebSocketException):
@@ -149,12 +151,16 @@ class CloudCodexRelay:
 
     async def _prepare(self, websocket, account, opening):
         runtime_id = opening.pop("runtime_id")
-        model_id = opening.pop("model_id")
-        self.pool.device_runtime(account, runtime_id)
-        validate_device_model_id(model_id)
+        status = self.pool.device_runtime(account, runtime_id)
         try:
-            model = ManagedModel.parse(opening, self.allowed_endpoints)
-            await self.pool.prepare_device(account, runtime_id, model, model_id)
+            if status.get("session_models"):
+                if opening:
+                    raise ValueError("Codex Provider preparation only accepts a device ID")
+                await self.pool.prepare_device(account, runtime_id)
+            else:
+                model_id = validate_device_model_id(opening.pop("model_id", None))
+                model = ManagedModel.parse(opening, self.allowed_endpoints)
+                await self.pool.prepare_device(account, runtime_id, model, model_id)
         except (CodexRuntimeModelMismatch, ValueError):
             await websocket.send_json({"code": MODEL_UNAVAILABLE})
             return
@@ -189,7 +195,10 @@ class CloudCodexRelay:
                 raise PermissionError("Codex requires an authorized project")
             if operation == "check" and set(data) == {"runtime_id"}:
                 status = self.pool.device_runtime(account, data["runtime_id"])
-                await websocket.send_json({"runtime_id": status["runtime_id"], "model_id": status["model_id"]})
+                reply = {"runtime_id": status["runtime_id"], "model_id": status["model_id"]}
+                if status.get("session_models"):
+                    reply["session_models"] = True
+                await websocket.send_json(reply)
                 close_code = 1000
                 return
             if operation != "stream" or "session_id" not in data:

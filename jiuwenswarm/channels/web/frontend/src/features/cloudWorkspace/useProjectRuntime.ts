@@ -17,6 +17,7 @@ export interface CloudRuntime {
   runtime_id?: string;
   display_name: string | null;
   model_id?: string | null;
+  session_models?: boolean;
   available: boolean;
   state?: RuntimeState;
 }
@@ -26,6 +27,7 @@ export interface CloudRuntimeTemplate {
   cpu: number;
   memory: number;
   available: boolean;
+  default_session_models?: boolean;
   supports_model_selection?: boolean;
 }
 
@@ -64,9 +66,10 @@ function useRuntimeRevision(enabled: boolean) {
     const offLocalAccount = onLocalCloudAccountChange(refresh);
     const offCloudReady = webClient.on('connection.cloud_ready', refresh);
     const offConnection = webClient.onStateChange(refresh);
+    const offModels = webClient.on('models.updated', refresh);
     window.addEventListener(RUNTIME_CHANGED, refresh);
     return () => {
-      offAccount(); offLocalAccount(); offCloudReady(); offConnection();
+      offAccount(); offLocalAccount(); offCloudReady(); offConnection(); offModels();
       window.removeEventListener(RUNTIME_CHANGED, refresh);
     };
   }, [enabled]);
@@ -134,6 +137,25 @@ export async function requestRuntimeDevice(method: 'create' | 'start', params: R
   return result;
 }
 
+
+type CodexModelAdmission = { model_ids: string[]; default_model_id: string | null };
+
+export function useCodexModelAdmission(enabled: boolean, remote: boolean) {
+  const revision = useRuntimeRevision(enabled);
+  const [result, setResult] = useState<{ revision: number; remote: boolean; catalog: CodexModelAdmission | null } | null>(null);
+  useEffect(() => {
+    if (!enabled) { setResult(null); return; }
+    let current = true;
+    void webRequest<CodexModelAdmission>('cloud.runtime.models', remote ? { execution_target: 'cloud' } : {}).then(catalog => {
+      if (!Array.isArray(catalog?.model_ids)) throw new Error('Invalid Codex model catalog');
+      if (current) setResult({ revision, remote, catalog });
+    }).catch(() => {
+      if (current) setResult({ revision, remote, catalog: null });
+    });
+    return () => { current = false; };
+  }, [enabled, remote, revision]);
+  return enabled && result?.revision === revision && result.remote === remote ? result : null;
+}
 
 type DeviceModels = { models: ModelEntry[]; defaultModelId: string | null };
 

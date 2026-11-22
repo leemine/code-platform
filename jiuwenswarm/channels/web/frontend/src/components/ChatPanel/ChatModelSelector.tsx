@@ -29,6 +29,7 @@ import {
   reportManagedOpenCodeRejection,
 } from '../../features/cloudWorkspace/opencodeModels';
 import { useCloudCatalog } from '../../features/cloudWorkspace/useCloudCatalog';
+import { useCloudRuntimes, useCodexModelAdmission } from '../../features/cloudWorkspace/useProjectRuntime';
 
 function openModelSettings(): void {
   requestSettingsModule('models');
@@ -61,13 +62,24 @@ function ConversationModelSelector({
   const cloud = useCloudCatalog(boundSessionId || NEW_CONVERSATION_ID);
   const provider = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.executionProvider);
   const runtimeId = useSessionStore((state) => state.runtimes[boundSessionId ?? '']?.executionRuntimeId);
-  const codexDevice = provider === 'codex-direct' && Boolean(runtimeId);
+  const codex = provider === 'codex-direct';
+  const codexDevice = codex && Boolean(runtimeId);
+  const runtimeCatalog = useCloudRuntimes(codex);
+  const sessionScopedCodex = codex && (runtimeId
+    ? runtimeCatalog?.runtimes.some(runtime => runtime.runtime_id === runtimeId && runtime.session_models === true)
+    : (cloud.active || runtimeCatalog?.remote === false) && runtimeCatalog?.templates.some(template => template.runtime_profile_id === 'codex-cloud'
+      && template.default_session_models === true)) === true;
+  const codexAdmission = useCodexModelAdmission(sessionScopedCodex, runtimeCatalog?.remote === true);
+  const lockedCodex = (codexDevice || sessionScopedCodex) && (!sessionScopedCodex || boundSessionId !== NEW_CONVERSATION_ID);
   const managed = provider === 'opencode-direct' ? readManagedOpenCodeModels(cloud.catalog?.config) : null;
   const loadingOpenCode = provider === 'opencode-direct' && !cloud.catalog;
-  const preserveSelection = cloud.active || loadingOpenCode || managed !== null;
+  const preserveSelection = cloud.active || loadingOpenCode || managed !== null || codexDevice || sessionScopedCodex;
   const defaultOption = managed ? openCodeDefaultOption(managed) : null;
   const availableModels = cloud.active ? cloud.catalog?.models ?? [] : localModels;
-  const models = defaultOption ? [defaultOption, ...availableModels] : availableModels;
+  const models = sessionScopedCodex && !lockedCodex
+    ? availableModels.filter(model => model.model_id && model.is_free !== true
+      && codexAdmission?.catalog?.model_ids.includes(model.model_id))
+    : defaultOption ? [defaultOption, ...availableModels] : availableModels;
   const modelGroups = cloud.active ? cloud.catalog?.groups ?? [] : localModelGroups;
   const organizationEnabled = useTeamOrganizationUiEnabled();
   const selectedChildTeam = useTeamSelectorStore((state) => {
@@ -97,7 +109,7 @@ function ConversationModelSelector({
   );
   const collaborationEnabled = useMultiModelCollaborationEnabled();
   const singleAgent = supportsMultiModelCollaboration(mode, cronId);
-  const includeModelGroups = allowModelGroups && (!singleAgent || collaborationEnabled);
+  const includeModelGroups = !sessionScopedCodex && allowModelGroups && (!singleAgent || collaborationEnabled);
   const selectableGroups = allowModelGroups ? modelGroups : [];
   const groupBlocked = isConversationModelGroupBlocked({
     mode,
@@ -149,7 +161,7 @@ function ConversationModelSelector({
   ]);
 
   // Preserve the saved stable choice, even if the feature or its catalog entry is unavailable.
-  const selected = managed && !selectedModelSelection
+  const selected = (managed || sessionScopedCodex) && !selectedModelSelection
     ? null : resolveChatModelSelection(models, selectedModelName, cloud.active ? null : defaultModelName);
   const inferredSelection =
     selectedModelSelection
@@ -167,7 +179,7 @@ function ConversationModelSelector({
       : healedSelection;
   const hasSelectableGroup =
     includeModelGroups && selectableGroups.some((group) => group.enabled !== false && Boolean(group.model_group_id));
-  if (!selected && !pickerSelection && models.length === 0 && !hasSelectableGroup && !singleAgent) return null;
+  if (!selected && !pickerSelection && models.length === 0 && !hasSelectableGroup && !singleAgent && !sessionScopedCodex) return null;
 
   const rejectManagedSelection = (reason: string) => {
     setSelectionError(t(`chat.modelSelector.managedOpenCode.${reason}`));
@@ -177,6 +189,7 @@ function ConversationModelSelector({
   const persistSelection = async (next: ModelSelection) => {
     if (selectedChildTeam) return;
     if (!boundSessionId || disabled || useChatStore.getState().getRuntime(boundSessionId)?.isProcessing) return;
+    if (sessionScopedCodex && (lockedCodex || next.type !== 'model' || !models.some(model => model.model_id === next.id))) return;
     if (managed) {
       const reason = managedOpenCodeReason(managed, next);
       if (reason) {
@@ -218,17 +231,22 @@ function ConversationModelSelector({
     || (!isOpenCodeNativeModel(selectedModelSelection) && !models.some(model => model.model_id === selectedModelSelection.id)
       && !isModelCatalogPending(models, modelGroups) ? 'opencode_model_unavailable' : null)
   );
-  const admissionError = selectionError || (managed?.error ? t(`chat.modelSelector.managedOpenCode.${managed.error}`) : '')
+  const codexError = sessionScopedCodex && !lockedCodex && codexAdmission
+    ? !codexAdmission.catalog ? t('cloudRuntime.modelLoadFailed')
+      : models.length === 0 ? t('cloudRuntime.noCompatibleModels') : ''
+    : '';
+  const admissionError = selectionError || codexError || (managed?.error ? t(`chat.modelSelector.managedOpenCode.${managed.error}`) : '')
     || (savedReason ? t(`chat.modelSelector.managedOpenCode.${savedReason}`) : '') || (managed && !managed.default && !selectedModelSelection
     ? t('chat.modelSelector.managedOpenCode.opencode_default_model_unconfigured') : '');
   return (
     <div className="chat-model-selector" data-testid="chat-panel-model-selector-wrap">
       <ModelPicker
-        catalog={cloud.active || managed ? { models, groups: modelGroups } : undefined}
+        catalog={cloud.active || managed || sessionScopedCodex ? { models, groups: modelGroups } : undefined}
         testIdPrefix="chat-panel-model-selector"
         value={selectedChildTeam?.execution_model_name ?? selected?.model_name ?? selectedModelName}
         selection={selectedChildTeam?.execution_model_selection ?? pickerSelection}
         includeModelGroups={includeModelGroups}
+        excludeFreeModels={sessionScopedCodex && !lockedCodex}
         modelRejection={managed ? (model) => {
           const reason = model.model_id ? managedOpenCodeReason(managed, { type: 'model', id: model.model_id })
             : 'opencode_model_not_registered';
@@ -255,7 +273,8 @@ function ConversationModelSelector({
         onSelectionChange={(next) => {
           void persistSelection(next);
         }}
-        disabled={disabled || codexDevice || saving || Boolean(selectedChildTeam) || loadingOpenCode || (cloud.active && !cloud.catalog)}
+        disabled={disabled || lockedCodex || (sessionScopedCodex && models.length === 0)
+          || saving || Boolean(selectedChildTeam) || loadingOpenCode || (cloud.active && !cloud.catalog)}
         onAddModel={cloud.active ? undefined : openModelSettings}
       />
       {admissionError ? (

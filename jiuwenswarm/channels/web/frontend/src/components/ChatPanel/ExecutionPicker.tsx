@@ -38,7 +38,7 @@ export function ExecutionPicker({ sessionId, disabled = false, runtimeProjectId 
           .map(device => ({
             ...option, runtimeId: device.runtime_id, runtimeState: device.state, modelId: device.model_id, label: `${option.label} · ${device.display_name}`,
             available: option.available && device.available && device.state !== 'starting'
-              && (device.provider_id !== 'codex-direct' || Boolean(device.model_id)),
+              && (device.provider_id !== 'codex-direct' || device.session_models || Boolean(device.model_id)),
           }));
         return [defaultOption, ...namedOptions];
       });

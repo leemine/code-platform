@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import logging
@@ -35,11 +35,10 @@ from gateway.services.managed_codex_models import CATALOG_FILENAME, CodexModelBr
 
 logger = logging.getLogger(__name__)
 PROVIDER = "codex"
-_COMMAND = (
-    "python3.11 -B /opt/codex-candidate/model_bridge.py --socket /run/codex/model.sock "
-    '--model "$CODEX_SELECTED_MODEL" --port 17543 & '
-    "exec python3.11 -B /opt/codex-candidate/stdio_bridge.py"
-)
+_MODEL_BRIDGE = "python3.11 -B /opt/codex-candidate/model_bridge.py --socket /run/codex/model.sock"
+_STDIO_BRIDGE = " --port 17543 & exec python3.11 -B /opt/codex-candidate/stdio_bridge.py"
+_COMMAND = _MODEL_BRIDGE + ' --model "$CODEX_SELECTED_MODEL"' + _STDIO_BRIDGE
+_SESSION_MODEL_COMMAND = _MODEL_BRIDGE + _STDIO_BRIDGE
 
 
 class CodexRuntimeModelMismatch(PermissionError):
@@ -50,6 +49,9 @@ class CodexRuntimeModelMismatch(PermissionError):
 class CodexLease:
     address: str
     capability: str = field(repr=False)
+    session_models: bool = False
+    model_route: str | None = field(default=None, repr=False)
+    use_catalog: bool = False
 
 
 class CloudCodexPool:
@@ -76,6 +78,10 @@ class CloudCodexPool:
     def admits(self, account):
         return account["account_id"] in self.options["account_allowlist"]
 
+    def uses_session_models(self, account):
+        canary = self.options.get("session_model_canary")
+        return canary is None or account["account_id"] in canary["accounts"]
+
     def _current(self, account):
         row = self.store.by_user(account["account_id"])
         if (not self.admits(row) or row["state"] != "ALLOCATED"
@@ -88,18 +94,27 @@ class CloudCodexPool:
         return row["account_id"], row["project_id"], row["provider"]
 
     @staticmethod
+    def _default_key(account):
+        return account["account_id"], "@" + account["environment_id"], PROVIDER
+
+    @staticmethod
     def _device_key(account, runtime_id):
         if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
             raise ValueError("Invalid Codex device ID")
         return account["account_id"], device_prefix(account) + runtime_id, PROVIDER
 
     def _profile(self, account):
-        return {
+        profile = {
             "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
             "account_workspace": account["workspace"], "shared_runtime": self.options["shared_runtime"],
             "cpu": self.options.get("cpu", 1000), "memory": self.options.get("memory", 1024),
             "physical_verification": True,
         }
+        if self.uses_session_models(account):
+            profile["session_models"] = True
+            if canary := self.options.get("session_model_canary"):
+                profile["image"] = canary["image"]
+        return profile
 
     @staticmethod
     def _source(account):
@@ -128,9 +143,15 @@ class CloudCodexPool:
              secrets.token_hex(16), time.time(), name))
 
     def runtime_template(self, account):
-        return {"runtime_profile_id": PROFILE_ID, "cpu": self.options.get("cpu", 1000),
-                "memory": self.options.get("memory", 1024),
-                "available": account["state"] == "ALLOCATED" and self.admits(account), "supports_model_selection": True}
+        template = {"runtime_profile_id": PROFILE_ID, "cpu": self.options.get("cpu", 1000),
+                    "memory": self.options.get("memory", 1024),
+                    "available": account["state"] == "ALLOCATED" and self.admits(account)}
+        if not self.uses_session_models(account):
+            template["supports_model_selection"] = True
+        elif template["available"]:
+            row = read_binding(self.store, self._default_key(account))
+            template["default_session_models"] = row is None or json.loads(row["profile_json"]).get("session_models") is True
+        return template
 
     def _public_device(self, row):
         profile = json.loads(row["profile_json"])
@@ -148,6 +169,7 @@ class CloudCodexPool:
         return {
             "runtime_id": row["binding_id"], "display_name": row["display_name"], "state": state,
             "available": self.admits(row), "model_id": profile.get("model_id"),
+            "session_models": profile.get("session_models") is True,
         }
 
     def account_devices(self, account):
@@ -163,7 +185,10 @@ class CloudCodexPool:
     def register_device(self, account, name, create_token, model_id=None):
         current = self._current(account)
         validate_registration(name, create_token)
+        session_models = self.uses_session_models(current)
         if model_id is not None:
+            if session_models:
+                raise ValueError("Codex device initialization takes no model")
             validate_device_model_id(model_id)
         prefix = device_prefix(current)
         runtime_id = uuid.uuid5(uuid.NAMESPACE_URL, json.dumps((current["account_id"], prefix, PROVIDER, create_token))).hex
@@ -176,7 +201,7 @@ class CloudCodexPool:
             self._insert(db, key, runtime_id, self._source(current), profile, name)
 
         row = register_named_binding(self.store, current, key, runtime_id, name, insert)
-        if json.loads(row["profile_json"]).get("requested_model_id") != model_id:
+        if not session_models and json.loads(row["profile_json"]).get("requested_model_id") != model_id:
             raise RuntimeDeviceNameConflict("RUNTIME_DEVICE_NAME_CONFLICT")
         return self._public_device(row)
 
@@ -214,37 +239,48 @@ class CloudCodexPool:
         row = read_binding(self.store, key)
         if row is None:
             with self.store.connect() as db:
-                profile = self._profile(account) | self._model_profile(model)
+                profile = self._profile(account)
+                if not profile.get("session_models"):
+                    profile.update(self._model_profile(model))
                 self._insert(db, key, secrets.token_hex(16), source, profile)
             row = read_binding(self.store, key)
         if (row["directory"], row["project_source"]) != (str(PROJECT_ROOT), str(source)):
             raise PermissionError("Codex workspace or model differs from its persistent Worker binding")
-        self._require_model(row, model)
+        if not json.loads(row["profile_json"]).get("session_models"):
+            self._require_model(row, model)
         return row
 
-    async def prepare_device(self, account, runtime_id, model, model_id):
+    async def prepare_device(self, account, runtime_id, model=None, model_id=None):
         key = self._device_key(account, runtime_id)
         async with self._locks[key]:
             current = self._current(account)
             row = self._named_binding(current, runtime_id)
             profile = json.loads(row["profile_json"])
-            if profile.get("requested_model_id", model_id) != model_id:
-                raise CodexRuntimeModelMismatch("Codex device model selection differs")
-            if "model_id" not in profile:
-                profile |= self._model_profile(model) | {"model_id": model_id}
-                with self.store.guard_binding({"authority": current["authority"], "user_id": key[0]}, current) as db:
-                    updated = db.execute("""UPDATE provider_bindings SET profile_json=?
-                        WHERE binding_id=? AND state='NEW' AND operation_id=? AND profile_json=?""",
-                        (json.dumps(profile), runtime_id, row["operation_id"], row["profile_json"]))
-                    if updated.rowcount != 1:
-                        raise EnvironmentUnavailable("Codex device model configuration changed")
-                row = read_binding(self.store, key)
-            if profile["model_id"] != model_id:
-                raise CodexRuntimeModelMismatch("Codex device model selection differs")
-            self._require_model(row, model)
+            if profile.get("session_models"):
+                if model is not None or model_id is not None:
+                    raise CodexRuntimeModelMismatch("Codex device starts without a session model")
+            else:
+                row = self._prepare_legacy_device(current, row, profile, model, model_id)
             row, _ = await self._ensure_lease(row, model)
             self._current(account)
             self._touch(row)
+
+    def _prepare_legacy_device(self, account, row, profile, model, model_id):
+        if model is None or not model_id or profile.get("requested_model_id", model_id) != model_id:
+            raise CodexRuntimeModelMismatch("Codex device model selection differs")
+        if "model_id" not in profile:
+            profile |= self._model_profile(model) | {"model_id": model_id}
+            with self.store.guard_binding({"authority": account["authority"], "user_id": row["account_id"]}, account) as db:
+                updated = db.execute("""UPDATE provider_bindings SET profile_json=?
+                    WHERE binding_id=? AND state='NEW' AND operation_id=? AND profile_json=?""",
+                    (json.dumps(profile), row["binding_id"], row["operation_id"], row["profile_json"]))
+                if updated.rowcount != 1:
+                    raise EnvironmentUnavailable("Codex device model configuration changed")
+            row = read_binding(self.store, self._key(row))
+        if profile["model_id"] != model_id:
+            raise CodexRuntimeModelMismatch("Codex device model selection differs")
+        self._require_model(row, model)
+        return row
 
     def _bind_session(self, row, session_id, directory):
         key = row["binding_id"], session_id
@@ -309,7 +345,7 @@ class CloudCodexPool:
         spec = {
             "sandbox_type": "docker", "runtime": profile["runtime"], "cpu": profile["cpu"], "memory": profile["memory"],
             "rootfs": {"imageurl": profile["image"], "user": profile["user"], "ports": [str(NATIVE_PORT)]},
-            "cmds": [["/bin/sh", "-ec", _COMMAND]],
+            "cmds": [["/bin/sh", "-ec", _SESSION_MODEL_COMMAND if profile.get("session_models") else _COMMAND]],
         }
         return "codex-" + row["operation_id"], str(state), spec, mounts, capability
 
@@ -322,7 +358,8 @@ class CloudCodexPool:
         async def reachable():
             try:
                 host = await self.resources.confirm_codex_address(**self._claim(row, plan))
-                lease = CodexLease(host, plan[-1].decode("ascii"))
+                session_models = json.loads(row["profile_json"]).get("session_models") is True
+                lease = CodexLease(host, plan[-1].decode("ascii"), session_models=session_models)
                 return lease if await self.ready_check(lease) else None
             except RuntimeError:
                 return None
@@ -398,11 +435,15 @@ class CloudCodexPool:
             row = await self._finish_retirement(row, plan)
             plan = self._plan(row)
         generation = row["operation_id"]
+        session_models = json.loads(row["profile_json"]).get("session_models") is True
         if generation not in self._brokers:
-            self._brokers[generation] = CodexModelBroker(self._generation(row), model)
+            self._brokers[generation] = CodexModelBroker(self._generation(row), None if session_models else model)
         if row["state"] != "ALLOCATED":
-            env = {"HOME": "/state/home", "CODEX_SELECTED_MODEL": model.name,
-                   "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
+            env = {"HOME": "/state/home", "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
+            if session_models:
+                env["CODEX_SESSION_MODELS"] = "1"
+            else:
+                env["CODEX_SELECTED_MODEL"] = model.name
             row = await allocate_provider(self.yuanrong, self.namespace, row, plan, self._transition,
                                           env_vars=env, provider_name="Codex")
         self._ready_operations.discard(row["operation_id"])
@@ -422,8 +463,7 @@ class CloudCodexPool:
     async def hold(self, account, session_id, directory, model, *, runtime_id=None):
         if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session_id):
             raise ValueError("Invalid Codex session")
-        key = (self._device_key(account, runtime_id) if runtime_id is not None
-               else (account["account_id"], "@" + account["environment_id"], PROVIDER))
+        key = self._device_key(account, runtime_id) if runtime_id is not None else self._default_key(account)
         prior = self._holds.get(key, {}).get(session_id)
         if prior is not None:
             async with asyncio.timeout(5):
@@ -437,15 +477,31 @@ class CloudCodexPool:
             else:
                 self._project(current, directory)
                 row = self._named_binding(current, runtime_id)
-                self._require_model(row, model)
+                if not json.loads(row["profile_json"]).get("session_models"):
+                    self._require_model(row, model)
             self._bind_session(row, session_id, directory)
             row, lease = await self._ensure_lease(row, model)
             self._current(account)
+            if lease.session_models:
+                route = secrets.token_hex(16)
+                use_catalog = model.context_window is not None
+                if use_catalog:
+                    private_initial_file(self._generation(row) / f"catalog-{route}.json",
+                                         native_model_catalog(model.name, model.context_window))
+                self._brokers[row["operation_id"]].register_route(route, model)
+                lease = replace(lease, model_route=route, use_catalog=use_catalog)
             self._holds.setdefault(key, {})[session_id] = asyncio.Event()
         try:
             yield lease
         finally:
             async with self._locks[key]:
+                if lease.model_route:
+                    self._brokers[row["operation_id"]].unregister_route(lease.model_route)
+                    if lease.use_catalog:
+                        try:
+                            (self._generation(row) / f"catalog-{lease.model_route}.json").unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning("Codex session catalog cleanup deferred: %s", type(exc).__name__)
                 live = self._holds[key]
                 live.pop(session_id).set()
                 if not live:

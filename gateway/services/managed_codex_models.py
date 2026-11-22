@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import socket
 from socketserver import ThreadingMixIn
 from threading import Thread
@@ -57,7 +58,10 @@ class _Responses(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        if self.path != "/v1/responses":
+        model = self.server.model if self.path == "/v1/responses" else None
+        if route := re.fullmatch(r"/([a-f0-9]{32})/v1/responses", self.path):
+            model = self.server.routes.get(route[1])
+        if model is None:
             self.send_error(404)
             return
         try:
@@ -73,7 +77,6 @@ class _Responses(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             self.send_error(400)
             return
-        model = self.server.model
         if payload.get("model") != model.name:
             self.send_error(403)
             return
@@ -117,7 +120,7 @@ class _UnixHTTPServer(ThreadingMixIn, HTTPServer):
 class CodexModelBroker:
     """Only the serving Gateway process holds the upstream credential."""
 
-    def __init__(self, directory: Path, model: ManagedModel):
+    def __init__(self, directory: Path, model: ManagedModel | None):
         self.path = directory / "model.sock"
         with ExitStack() as scope:
             fd = os.open(directory, os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -137,9 +140,16 @@ class CodexModelBroker:
                     raise PermissionError("Managed Codex model broker still has a listener")
             self.server = _UnixHTTPServer(address, _Responses)
         self.server.model = model
+        self.server.routes = {}
         os.chmod(self.path, 0o600)
         self.thread = Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True)
         self.thread.start()
+
+    def register_route(self, route: str, model: ManagedModel):
+        self.server.routes[route] = model
+
+    def unregister_route(self, route: str):
+        self.server.routes.pop(route, None)
 
     def close(self):
         self.server.shutdown()

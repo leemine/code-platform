@@ -173,7 +173,7 @@ class CloudConfig:
         profile = self.codex_provider
         required = {"image", "shared_runtime", "account_allowlist", "model_endpoints"}
         if (not isinstance(profile, dict) or not required <= profile.keys()
-                or profile.keys() - (required | {"cpu", "memory", "idle_seconds"})):
+                or profile.keys() - (required | {"cpu", "memory", "idle_seconds", "session_model_canary"})):
             raise ValueError("Managed Codex requires image, shared runtime, model endpoints and account allowlist")
         if (not self.resource_reconciler_socket or not self.public_origin.startswith("https://")
                 or not isinstance(profile["image"], str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", profile["image"])):
@@ -188,6 +188,15 @@ class CloudConfig:
         if (not isinstance(accounts, list)
                 or any(not isinstance(account, str) or not account or account.strip() != account for account in accounts)):
             raise ValueError("Managed Codex account_allowlist must contain authenticated account IDs")
+        if "session_model_canary" in profile:
+            canary = profile["session_model_canary"]
+            if (not isinstance(canary, dict) or set(canary) != {"image", "accounts"}
+                    or not isinstance(canary["image"], str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", canary["image"])
+                    or canary["image"] == profile["image"]
+                    or self.opencode_provider and canary["image"] == self.opencode_provider["image"]
+                    or not isinstance(canary["accounts"], list)
+                    or any(not isinstance(account, str) or account not in accounts for account in canary["accounts"])):
+                raise ValueError("Codex session model canary requires a distinct immutable image and admitted accounts")
         endpoints = profile["model_endpoints"]
         if (not isinstance(endpoints, list) or not endpoints
                 or any(not isinstance(value, str) or not model_endpoint(value) for value in endpoints)):

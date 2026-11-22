@@ -21,6 +21,12 @@ designs: [D-20261122-0920-managed-runtime-devices]
 
 # 运行时创建并启动命名 Codex 设备
 
+## 账号默认与旧设备统一选模
+
+默认 Codex 复用命名设备的会话级模型中继，通过部署模板声明选模能力。账号灰度迁移在五条绑定的物理实例均回收后执行。一次事务切换镜像和选模策略，保留已有设备、状态卷与会话归属。每个 Code 普通会话沿用原聊天模型下拉框和账号目录，续聊按已存模型和原生线程恢复。
+
+旧模板通过 `supports_model_selection` 保留设备模型选择。桌面端连接远程账号后，仍按当前会话的执行位置识别默认 Codex。正式灰度验证了默认 Codex 和四个旧设备从原聊天下拉框选用账号 Qwen 模型。五个正式元戎/Docker 容器均完成回收，同一会话在新容器收到第二轮回复，沿用了原生线程与状态卷。Qwen 0.5B 的跨轮算术出现复述或错误，内容准确性未通过。
+
 基于 PR #61 合入树 `eb8ea50f1f368f704684d2a27602c2337326b69e` 在独立分支 `codex/named-codex-runtime-20261122` 实施。[当前契约](../specs/gateway/S_01_cloud-account-instance.md) 记录公共目录、绑定和回收规则。[原 OpenCode 实施记录](F_20261122_0955_managed-runtime-devices.md) 保留其发布证据。
 
 ## 实施决策
@@ -48,3 +54,11 @@ Codex 设备模板声明模型选择能力时，运行时弹窗复用 Code 的 `
 候选工作区上级目录保留本次日志。Python 3.13 在原锁定 Protocol 和 Codex SDK 下运行 Gateway、Worker、两种分配池及会话协议的 248 项回归，通过结果见 `model-picker-regression.log`。使用锁定 Core 的会话创建 30 项通过，见 `model-picker-native.log`。Web 通过 `npm run test:execution-provider`、`npm run test:web-client-runtime-ack`、`npm run test:agent-group-runtime-selection` 以及 `npm run build`，见 `model-picker-web.log`、`model-picker-build.log`。最终 Provider 套件单独复跑 8 项，见 `model-picker-provider-selection.log`。
 
 本地 Chrome 146 加载候选 UI，通过模拟账号目录验证原生弹窗内模型默认值、兼容项、改选和无项目创建请求，见 `model-picker-browser.log`。带下拉框的候选尚待正式元戎部署和真实模型验收。
+
+## Code 普通会话选择账号模型
+
+用户随后确认将选模移至 Code 的原模型下拉框。候选基于 PR #62 合入版本 `7bd53b34ec51e8b8ec06e64d3732b60886a544f8`，分支 `codex/codex-chat-model-20261122`。会话选模模板下，新建设备只接收模板和名称。Code 普通会话保存设备与当前账号的兼容模型，续聊沿用此选择。Gateway 按会话流为模型路由分配使用范围，并在流结束撤销。旧固定模型绑定在物理回收后可离线迁移。新版需配套发布 Codex Provider 镜像。
+
+候选工作区定向 pytest 共通过 281 项，包括 Gateway 与 Worker、中继和两种 Provider 分配回归 249 项，以及锁定 Core 环境下会话创建 32 项。Web 原 Provider 与模型选择、运行时应答和群组回归通过，Vite 生产构建通过。见本候选工作区上级目录的 `regression-final.log`、`session-provision-final.log`、`composer-regression.log` 和 `web-build.log`。
+
+本地 Docker 使用官方 Codex CLI 0.163.0 与新桥接，验证无模型预热、同一容器两个会话使用不同模型及凭据、容器删除后在新容器恢复原生线程。容器关闭外部网络，Responses 使用测试数据。证据见 `local-docker-resume.log`。正式元戎分配、正式浏览器及真实上游模型待发布验收。

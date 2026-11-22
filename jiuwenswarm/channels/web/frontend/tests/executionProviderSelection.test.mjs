@@ -25,12 +25,14 @@ const respond = (rows = catalog) => async () => ({ execution_provider_catalog: J
 globalThis.__providerRpc = respond();
 await build({
   stdin: { contents: `export { ExecutionPicker as Selector } from './src/components/ChatPanel/ExecutionPicker';
+    export { default as ChatModelSelector } from './src/components/ChatPanel/ChatModelSelector';
     export { CloudRuntimePanel } from './src/features/cloudWorkspace/CloudRuntimePanel';
     export { useSessionStore } from './src/stores/sessionStore';
     export { useAuthStore } from './src/stores/authStore';
     export { resetNewConversationRuntime, registerCreatedConversation } from './src/multi-session/state/newConversationLifecycle';
     export { buildConversationModelPayload } from './src/multi-session/state/conversationModelSelection';
     export { webClient } from './src/services/webClient';
+    export { refreshCloudRuntime } from './src/features/cloudWorkspace/useProjectRuntime';
     export { SETTINGS_CONFIG_CHANGED_EVENT } from './src/features/settings/services/settingsContract';
     `, loader: 'tsx', resolveDir: process.cwd() },
   bundle: true, packages: 'external', platform: 'node', format: 'esm',
@@ -44,7 +46,7 @@ await build({
 });
 const { createElement, act } = await import('react');
 const { createRoot } = await import('react-dom/client');
-const { Selector, CloudRuntimePanel, useSessionStore, useAuthStore, resetNewConversationRuntime, registerCreatedConversation, buildConversationModelPayload, webClient, SETTINGS_CONFIG_CHANGED_EVENT } = await import('../node_modules/.cache/execution-provider/test.mjs');
+const { Selector, ChatModelSelector, CloudRuntimePanel, useSessionStore, useAuthStore, resetNewConversationRuntime, registerCreatedConversation, buildConversationModelPayload, webClient, refreshCloudRuntime, SETTINGS_CONFIG_CHANGED_EVENT } = await import('../node_modules/.cache/execution-provider/test.mjs');
 
 webClient.request = (...args) => globalThis.__providerRpc(...args);
 useAuthStore.setState({ initialized: true });
@@ -170,6 +172,7 @@ test('Code project runtime decorates only its OpenCode option and preserves the 
 for (const [provider, profile, label, modelId] of [
   ['opencode-direct', 'opencode-cloud', 'OpenCode', undefined],
   ['codex-direct', 'codex-cloud', 'Codex', 'account-model'],
+  ['codex-direct', 'codex-cloud', 'Codex', null],
 ]) test(`the original Code Provider menu selects a named ${label} device across projects`, async () => {
   const runtimeId = 'a'.repeat(32);
   const defaultDevice = {
@@ -177,7 +180,7 @@ for (const [provider, profile, label, modelId] of [
     display_name: '云端开发环境', available: true, state: 'not_created',
   };
   const device = { ...defaultDevice, provider_id: provider, runtime_profile_id: profile, runtime_id: runtimeId,
-    display_name: '日常开发', state: 'ready', model_id: modelId };
+    display_name: '日常开发', state: 'ready', model_id: modelId, session_models: provider === 'codex-direct' && modelId === null };
   globalThis.__providerRpc = async (method, params) => {
     if (method === 'cloud.runtime.list') {
       assert.deepEqual(params, {});
@@ -214,7 +217,123 @@ for (const [provider, profile, label, modelId] of [
   }
 });
 
-test('the existing runtime dialog creates and starts a Codex template without a project', async () => {
+test('Codex starts without a model and selects an account model in the Code composer', async () => {
+  const runtimeId = 'c'.repeat(32);
+  const device = { provider_id: 'codex-direct', runtime_profile_id: 'codex-cloud', runtime_id: runtimeId,
+    display_name: 'Backend review', available: true, state: 'ready', session_models: true, model_id: null };
+  const templates = [
+    { runtime_profile_id: 'opencode-cloud', cpu: 1000, memory: 4096, available: true },
+    { runtime_profile_id: 'codex-cloud', cpu: 1000, memory: 1024, available: true, default_session_models: true },
+  ];
+  const requests = [];
+  const used = [];
+  const accountModels = [
+    { model_id: 'account-model', model_name: 'Account default', model_provider: 'openai' },
+    { model_id: 'alternate-model', model_name: 'Account alternate', model_provider: 'openai' },
+    { model_id: 'unsupported-model', model_name: 'Unsupported', model_provider: 'anthropic' },
+  ];
+  globalThis.__providerRpc = async (method, params) => {
+    requests.push({ method, params });
+    if (method === 'cloud.runtime.list') return { runtimes: [device], templates };
+    if (method === 'models.list') return { models: accountModels };
+    if (method === 'cloud.runtime.models') {
+      return { model_ids: ['account-model', 'alternate-model'], default_model_id: 'account-model' };
+    }
+    return { ...device, start_failed: false };
+  };
+  const root = createRoot(document.getElementById('root'));
+  const element = (testId) => document.querySelector(`[data-testid="${testId}"]`);
+  try {
+    await act(async () => root.render(createElement(CloudRuntimePanel, {
+      templates, runtimes: [], remote: false, onUse: (runtime) => used.push(runtime),
+    })));
+    await act(async () => element('cloud-workspace-runtime-create').click());
+    await act(async () => element('cloud-workspace-runtime-profile').click());
+    const codex = document.querySelector('[data-testid="ui-select-option"][data-variant="codex-cloud"]');
+    assert.ok(codex);
+    await act(async () => codex.click());
+    assert.equal(element('cloud-workspace-runtime-model-trigger'), null);
+    assert.equal(requests.some(req => req.method === 'cloud.runtime.models' || req.method === 'models.list'), false);
+    const input = element('cloud-workspace-runtime-device-name');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, 'Backend review');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => element('cloud-workspace-runtime-create-submit').click());
+    const [choice] = requests.filter(req => req.method === 'cloud.runtime.create');
+    const { params } = choice;
+    assert.deepEqual(Object.keys(params).sort(), ['create_token', 'display_name', 'runtime_profile_id']);
+    assert.equal(params.runtime_profile_id, 'codex-cloud');
+    assert.equal(params.display_name, 'Backend review');
+    assert.match(params.create_token, /^[a-f0-9]{32}$/);
+    await act(async () => root.render(createElement(CloudRuntimePanel, {
+      templates, runtimes: [device], remote: false, onUse: (runtime) => used.push(runtime),
+    })));
+    assert.equal(element('cloud-workspace-runtime-provider').textContent, 'Codex');
+    await act(async () => element('cloud-workspace-runtime-use').click());
+    assert.deepEqual(used, [device]);
+    await act(async () => {
+      resetNewConversationRuntime({ mode: 'agent.code.normal', selectedModelName: null, executionProvider: 'harness' });
+      useSessionStore.setState({ availableModels: accountModels, chatAvailableModels: accountModels });
+      useSessionStore.getState().setExecutionProvider('new', 'codex-direct', runtimeId);
+      root.render(createElement(ChatModelSelector, { sessionId: 'new' }));
+    });
+    const trigger = element('chat-panel-model-selector-trigger');
+    assert.equal(trigger.disabled, false);
+    await act(async () => trigger.click());
+    const menu = element('chat-panel-model-selector-menu');
+    assert.equal(menu.querySelector('[data-variant="unsupported-model"]'), null);
+    const alternate = menu.querySelector('[data-variant="alternate-model"]');
+    assert.ok(alternate);
+    await act(async () => alternate.click());
+    assert.equal(element('chat-panel-model-selector-label').textContent, 'Account alternate');
+    assert.equal(useSessionStore.getState().getRuntime('new').executionRuntimeId, runtimeId);
+    assert.deepEqual(useSessionStore.getState().getModelSelectionPayload('new'), {
+      execution_provider: 'codex-direct', model_selection: { type: 'model', id: 'alternate-model' },
+    });
+
+    await act(async () => useSessionStore.getState().setExecutionProvider('new', 'codex-direct'));
+    await act(async () => element('chat-panel-model-selector-trigger').click());
+    const defaultRuntimeMenu = element('chat-panel-model-selector-menu');
+    assert.equal(defaultRuntimeMenu.querySelector('[data-variant="unsupported-model"]'), null);
+    await act(async () => defaultRuntimeMenu.querySelector('[data-variant="alternate-model"]').click());
+    assert.equal(element('chat-panel-model-selector-label').textContent, 'Account alternate');
+    assert.ok(!useSessionStore.getState().getRuntime('new').executionRuntimeId);
+    assert.deepEqual(useSessionStore.getState().getModelSelectionPayload('new'), {
+      execution_provider: 'codex-direct', model_selection: { type: 'model', id: 'alternate-model' },
+    });
+
+    const localFetch = globalThis.fetch;
+    const directRpc = globalThis.__providerRpc;
+    const desktop = window.jiuwenDesktop;
+    try {
+      window.jiuwenDesktop = { apiBase: 'http://localhost' };
+      globalThis.fetch = async () => ({
+        ok: true, json: async () => ({ enabled: true, authenticated: true, kind: 'local' }),
+      });
+      globalThis.__providerRpc = async (method, params) => {
+        if (method === 'cloud.runtime.list' && !params.execution_target) throw new Error('Local runtime catalog unavailable');
+        return directRpc(method, params);
+      };
+      const priorRequests = requests.length;
+      await act(async () => refreshCloudRuntime());
+      assert.ok(requests.slice(priorRequests).some(req =>
+        req.method === 'cloud.runtime.list' && req.params.execution_target === 'cloud'));
+      assert.equal(requests.slice(priorRequests).some(req => req.method === 'cloud.runtime.models'), false);
+      await act(async () => element('chat-panel-model-selector-trigger').click());
+      assert.ok(element('chat-panel-model-selector-menu').querySelector('[data-variant="unsupported-model"]'));
+    } finally {
+      globalThis.fetch = localFetch;
+      globalThis.__providerRpc = directRpc;
+      window.jiuwenDesktop = desktop;
+    }
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.__providerRpc = respond();
+  }
+});
+
+test('legacy Codex templates keep the account model picker in the runtime dialog', async () => {
   const runtimeId = 'c'.repeat(32);
   const device = { provider_id: 'codex-direct', runtime_profile_id: 'codex-cloud', runtime_id: runtimeId,
     display_name: 'Backend review', available: true, state: 'ready', model_id: 'alternate-model' };

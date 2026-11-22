@@ -6,12 +6,75 @@ import re
 from pathlib import Path
 
 from gateway.common.opencode_runtime import runtime_source
+from gateway.common.runtime_device import DEVICE_ID, device_prefix
 from gateway.extensions.cloud_workspace.config import CloudConfig
 from gateway.services.cloud_environments import EnvironmentStore, EnvironmentUnavailable
 
 
+def _migrate_row(db, storage, row, expected_image, image, runtime, session_models):
+    label = "Codex" if row["provider"] == "codex" else "OpenCode"
+    binding_id = row["binding_id"]
+    profile = json.loads(row["profile_json"])
+    if profile["image"] != expected_image:
+        raise EnvironmentUnavailable(f"{label} binding image changed")
+    if not profile.get("physical_verification"):
+        raise EnvironmentUnavailable(f"{label} migration requires existing physical confirmation")
+    # Reclaim commits NEW with a fresh operation only after confirming physical deletion.
+    operation = storage / binding_id / row["operation_id"]
+    if row["state"] != "NEW" or row["instance_id"] is not None or operation.exists() or operation.is_symlink():
+        raise EnvironmentUnavailable(f"{label} binding must be reclaimed with an unused generation")
+    changed = {**profile, "initial_image": profile.get("initial_image", expected_image), "image": image}
+    changed.pop("shared_runtime", None)
+    if runtime is not None:
+        changed["shared_runtime"] = runtime
+    if session_models:
+        changed["session_models"] = True
+        for field in ("requested_model_id", "model_id", "model_revision", "model_name", "context_window"):
+            changed.pop(field, None)
+    if db.execute("""UPDATE provider_bindings SET profile_json=?
+            WHERE binding_id=? AND generation=? AND operation_id=? AND state='NEW' AND profile_json=?""",
+            (json.dumps(changed, sort_keys=True), binding_id, row["generation"], row["operation_id"],
+             row["profile_json"])).rowcount != 1:
+        raise EnvironmentUnavailable(f"{label} binding changed during migration")
+    return {"binding_id": binding_id, "generation": row["generation"], "image": image}
+
+
+def migrate_codex_account(store, config, account_id, expected_images):
+    """Move all fixed Codex bindings of one admitted canary account in one offline transaction."""
+    options = config.codex_provider
+    canary = options.get("session_model_canary") if options else None
+    if not canary or account_id not in canary["accounts"] or account_id not in options["account_allowlist"]:
+        raise PermissionError("Codex account is not in the session model canary")
+    image = canary["image"]
+    if (not expected_images or any(not DEVICE_ID.fullmatch(binding_id)
+            for binding_id in expected_images) or any(not re.fullmatch(r"sha256:[a-f0-9]{64}", value)
+            for value in (image, *expected_images.values()))):
+        raise ValueError("Codex migration requires explicit binding IDs and pinned image digests")
+    runtime = runtime_source(options["shared_runtime"])
+    storage = config.state_root / "codex-providers"
+    if store._writer is not None:
+        raise EnvironmentUnavailable("migration requires an offline environment store")
+    store.acquire_writer()
+    try:
+        account = store.by_user(account_id)
+        default_key = "@" + account["environment_id"]
+        prefix = device_prefix(account)
+        with store.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute("""SELECT * FROM provider_bindings WHERE account_id=? AND provider='codex'
+                AND (project_id=? OR substr(project_id, 1, ?)=?)""",
+                (account_id, default_key, len(prefix), prefix)).fetchall()
+            fixed = [row for row in rows if json.loads(row["profile_json"]).get("session_models") is not True]
+            if {row["binding_id"] for row in fixed} != set(expected_images):
+                raise EnvironmentUnavailable("Codex fixed bindings differ from the migration plan")
+            return [_migrate_row(db, storage, row, expected_images[row["binding_id"]], image, runtime, True)
+                    for row in fixed]
+    finally:
+        store.close()
+
+
 def migrate(store, storage: Path, binding_id: str, expected_image: str, image: str, shared_runtime: str | None,
-            *, provider="opencode"):
+            *, provider="opencode", session_models=False):
     if provider not in ("opencode", "codex"):
         raise ValueError("unsupported Provider migration")
     label = "Codex" if provider == "codex" else "OpenCode"
@@ -24,6 +87,8 @@ def migrate(store, storage: Path, binding_id: str, expected_image: str, image: s
     runtime = runtime_source(shared_runtime) if shared_runtime is not None else None
     if provider == "codex" and runtime is None:
         raise ValueError("Codex migration requires a sealed shared runtime")
+    if session_models and provider != "codex":
+        raise ValueError("Session model migration requires a named Codex device")
 
     if store._writer is not None:
         raise EnvironmentUnavailable("migration requires an offline environment store")
@@ -35,26 +100,9 @@ def migrate(store, storage: Path, binding_id: str, expected_image: str, image: s
                              (binding_id, provider)).fetchone()
             if row is None:
                 raise ValueError(f"unknown {label} binding")
-            profile = json.loads(row["profile_json"])
-            if profile["image"] != expected_image:
-                raise EnvironmentUnavailable(f"{label} binding image changed")
-            if not profile.get("physical_verification"):
-                raise EnvironmentUnavailable(f"{label} migration requires existing physical confirmation")
-            # NEW after reclaim is the existing commit point for confirmed deletion.
-            # A planned NEW generation may already have private files or a dispatch receipt.
-            operation = storage / binding_id / row["operation_id"]
-            if row["state"] != "NEW" or row["instance_id"] is not None or operation.exists() or operation.is_symlink():
-                raise EnvironmentUnavailable(f"{label} binding must be reclaimed with an unused generation")
-            changed = {**profile, "initial_image": profile.get("initial_image", expected_image), "image": image}
-            changed.pop("shared_runtime", None)
-            if runtime is not None:
-                changed["shared_runtime"] = runtime
-            if db.execute("""UPDATE provider_bindings SET profile_json=?
-                    WHERE binding_id=? AND generation=? AND operation_id=? AND state='NEW' AND profile_json=?""",
-                    (json.dumps(changed, sort_keys=True), binding_id, row["generation"], row["operation_id"],
-                     row["profile_json"])).rowcount != 1:
-                raise EnvironmentUnavailable(f"{label} binding changed during migration")
-            return {"binding_id": binding_id, "generation": row["generation"], "image": image}
+            if session_models and row["display_name"] is None:
+                raise ValueError("Session model migration requires a named Codex device")
+            return _migrate_row(db, storage, row, expected_image, image, runtime, session_models)
     finally:
         store.close()
 
@@ -65,6 +113,7 @@ def main():
     parser.add_argument("--binding-id", required=True)
     parser.add_argument("--expected-image", required=True)
     parser.add_argument("--provider", choices=("opencode", "codex"), default="opencode")
+    parser.add_argument("--session-models", action="store_true", help="Use the new named Codex image's session model routing")
     args = parser.parse_args()
     config = CloudConfig.load(args.config)
     target = config.codex_provider if args.provider == "codex" else config.opencode_provider
@@ -76,7 +125,8 @@ def main():
     store = EnvironmentStore(database, config.authority, config.workspace_root,
                              config.state_root / "instance-auth", config.runtime_profile())
     result = migrate(store, config.state_root / f"{args.provider}-providers", args.binding_id,
-                     args.expected_image, target["image"], target.get("shared_runtime"), provider=args.provider)
+                     args.expected_image, target["image"], target.get("shared_runtime"), provider=args.provider,
+                     session_models=args.session_models)
     print(json.dumps(result, sort_keys=True))
 
 

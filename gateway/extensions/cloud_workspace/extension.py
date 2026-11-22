@@ -137,7 +137,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                 return payload
 
             async def codex_device_models(account, model_id=None):
-                if not codex or not codex.pool.runtime_template(account)["available"]:
+                if not codex or not (await asyncio.to_thread(codex.pool.runtime_template, account))["available"]:
                     raise PermissionError("Codex device template unavailable")
                 ok, catalog = await fetch_agent_unary(
                     agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
@@ -172,7 +172,7 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                         for profile_id, (_, pool) in providers.items():
                             devices = await asyncio.to_thread(pool.account_devices, account)
                             runtimes.extend(public_runtime(profile_id, device) for device in devices)
-                            templates.append(pool.runtime_template(account))
+                            templates.append(await asyncio.to_thread(pool.runtime_template, account))
                         payload = {"runtimes": runtimes, "templates": templates}
                     elif method == "cloud.runtime.models":
                         if params:
@@ -193,9 +193,10 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                             if not isinstance(profile_id, str) or profile_id not in providers:
                                 raise ValueError("unknown managed device template")
                             _, pool = providers[profile_id]
+                            registration = (account, params["display_name"], params["create_token"])
                             if explicit_model:
-                                if profile_id != CODEX_PROFILE_ID:
-                                    raise ValueError("only the Codex template accepts a device model")
+                                if profile_id != CODEX_PROFILE_ID or pool.uses_session_models(account):
+                                    raise ValueError("this Provider template takes no device model")
                                 model_id = validate_device_model_id(params["model_id"])
                                 models = await codex_device_models(account, model_id)
                                 if model_id not in models["model_ids"]:
@@ -203,13 +204,8 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                                     await channel.send_response(ws, req_id, ok=False, code=MODEL_UNAVAILABLE)
                                     return
                                 await principal.check()
-                                status = await asyncio.to_thread(
-                                    pool.register_device, account, params["display_name"], params["create_token"], model_id,
-                                )
-                            else:
-                                status = await asyncio.to_thread(
-                                    pool.register_device, account, params["display_name"], params["create_token"],
-                                )
+                                registration += (model_id,)
+                            status = await asyncio.to_thread(pool.register_device, *registration)
                         else:
                             runtime_id = params["runtime_id"]
                             if not isinstance(runtime_id, str) or not DEVICE_ID.fullmatch(runtime_id):
@@ -228,8 +224,9 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
                         await principal.check()
                         prepare = {"runtime_id": runtime_id}
                         if profile_id == CODEX_PROFILE_ID:
-                            model_id = await asyncio.to_thread(pool.device_model_id, account, runtime_id)
-                            prepare.update(provider_id="codex-direct", model_id=model_id)
+                            prepare["provider_id"] = "codex-direct"
+                            if not status.get("session_models"):
+                                prepare["model_id"] = await asyncio.to_thread(pool.device_model_id, account, runtime_id)
                         ok, result = await fetch_agent_unary(
                             agent_client=self.projects.client, req_method=ReqMethod.PROJECT_RUNTIME_PREPARE,
                             params=prepare, session_id=None, user_id=identity["user_id"],
