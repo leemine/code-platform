@@ -46,7 +46,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [S-02-code-workspace-entry](gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
-| [S_01_cloud-account-instance](gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py | — |
+| [S_01_cloud-account-instance](gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py, gateway/common/security/provider_relay_tls.py | — |
 
 <a id="module-3"></a>
 
@@ -143,7 +143,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
-| [S_01_cloud-account-instance](gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py | — |
+| [S_01_cloud-account-instance](gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py, gateway/common/security/provider_relay_tls.py | — |
 
 <a id="module-15"></a>
 

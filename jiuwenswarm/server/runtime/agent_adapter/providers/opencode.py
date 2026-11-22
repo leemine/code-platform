@@ -271,11 +271,14 @@ class OpenCodeAdapter:
     def _create_relay_client(self, project_id, *, shared_provider=False):
         import httpx
         from gateway.common.security.opencode_relay_auth import OpenCodeRelayAuth
+        from gateway.common.security.provider_relay_tls import relay_ssl_context
 
         url = self._relay_url + "-worker" if shared_provider else self._relay_url
+        context = relay_ssl_context()
         return httpx.AsyncClient(
             base_url=f"{url}/{project_id}",
             auth=OpenCodeRelayAuth(self._relay_auth_file),
+            verify=context if context is not None else True,
             trust_env=False,
         )
 

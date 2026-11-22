@@ -2,23 +2,27 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from gateway.common.managed_codex import RELAY_ENV as CODEX_RELAY_ENV
 from gateway.common.opencode_model_policy import MODEL_POLICY_ENV
 from gateway.auth.account_authenticator import current_account
 from gateway.extensions.cloud_workspace.config import OPENCODE_RELAY_ENV
 from gateway.common.security.service_auth import ServiceAuthenticator, SERVICE_AUTH_HEADER
+from gateway.common.security.provider_relay_tls import CA_ENV, CA_TARGET
 from gateway.extensions.agentos.agentos_router.lifecycle import LaunchPlan
 from gateway.services.cloud_environments import EnvironmentUnavailable
 
 
 class CloudInstancePolicy:
     def __init__(self, store, *, ready_timeout=120, resources=None, opencode_relay_url=None, opencode_model_policy=None,
-                 codex_relay_url=None, codex_admits=None):
+                 codex_relay_url=None, codex_admits=None, provider_relay_tls=False, provider_relay_ca_file=None):
         self.opencode_relay_url = opencode_relay_url
         self.opencode_model_policy = opencode_model_policy
         self.codex_relay_url = codex_relay_url
         self.codex_admits = codex_admits
+        self.provider_relay_tls = provider_relay_tls
+        self.provider_relay_ca_file = provider_relay_ca_file
         self.resources = resources
         self.store = store
         self.ready_timeout = ready_timeout
@@ -51,10 +55,10 @@ class CloudInstancePolicy:
             raise PermissionError("account control plane only supports its bound builtin instances")
         row = self.store.prepare(info.user_id)
         profile = row["profile"]
-        from pathlib import Path
         mounts = [{"source": str(Path(row["auth_file"]).parent), "target": "/run/jiuwenswarm", "readonly": True},
                   {"source": row["workspace"], "target": "/data", "readonly": False}, *profile["extra_mounts"]]
         env = dict(profile["runtime_env"])
+        env.pop(CA_ENV, None)
         env.update(CODE_PLATFORM_ROLE="account-instance", JIUWENSWARM_DATA_DIR="/data", JIUWENSWARM_CONFIG_DIR="/data/config", AGENT_SERVER_HOST="0.0.0.0",
                    JIUWENSWARM_INSTANCE_AUTH_FILE="/run/jiuwenswarm/instance-auth.json",
                    JIUWENSWARM_CONTAINER_FILE_ROOT="/home/agentos")
@@ -66,6 +70,14 @@ class CloudInstancePolicy:
                 env[MODEL_POLICY_ENV] = json.dumps(model_policy)
         if self.codex_relay_url and self.codex_admits(row):
             env[CODEX_RELAY_ENV] = self.codex_relay_url
+        if self.provider_relay_tls and (OPENCODE_RELAY_ENV in env or CODEX_RELAY_ENV in env):
+            env[CA_ENV] = ""
+            if self.provider_relay_ca_file:
+                target = Path(CA_TARGET)
+                if any(target.is_relative_to(m["target"]) or Path(m["target"]).is_relative_to(target) for m in mounts):
+                    raise EnvironmentUnavailable("Worker mount conflicts with the managed Provider relay CA")
+                mounts.append({"source": self.provider_relay_ca_file, "target": CA_TARGET, "readonly": True})
+                env[CA_ENV] = CA_TARGET
         spec = {"sandbox_type": "docker", "runtime": profile["runtime"],
                 "rootfs": {"imageurl": profile["image_digest"], "user": profile["runtime_user"], "ports": ["18092"]},
                 "cpu": profile["cpu"], "memory": profile["memory"], "cmds": [profile["command"]]}

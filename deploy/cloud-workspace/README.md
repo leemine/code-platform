@@ -79,6 +79,18 @@ resource_pool_id仅固化部署侧池标识及原endpoint/namespace/URN，防止
 
 托管 Codex 执行容器和配置仅在所选账号启用。镜像、共享启动栈摘要、物理确认及回滚见[独立 Codex 发布](CODEX_RELEASE.md)。
 
+## 统一 Provider 中继和 CA
+
+Gateway 可用 `provider_relay_origin` 指定一个 HTTPS origin。OpenCode 从该地址生成 HTTPS 中继，Codex 从同一地址生成 WSS 中继，包括相同的主机、端口和 API 前缀。省略该项时沿用 `public_origin`。准入和签名继续由各 Provider 的中继处理。
+
+使用内部 CA 时，在 Gateway 配置 `provider_relay_ca_file` 为各 Worker 调度节点上相同的绝对路径，文件中只放 PEM 格式的公开 CA 证书。将文件放在账号工作卷及 Gateway 状态目录外，由运维管理。Worker 启动时只读挂载这份文件。两个中继都保留系统信任、证书链和主机名校验。仅指定统一地址时使用系统信任。两项均省略时保留原客户端默认信任设置。其他出站请求继续使用各自的 TLS 配置。
+
+配置由 Gateway 在 Worker 启动时下发。为已部署环境补齐 CA 时，保留现有中继 origin 和 API 前缀，再按原环境 ID 和工作卷重新创建目标 Worker。已有 OpenCode 会话仍以现有 origin 核验中继身份。若同时要更换 origin，需单独规划已有绑定的恢复。
+
+Set `provider_relay_origin` to an HTTPS origin to use its host and port for both the OpenCode HTTPS and Codex WSS relays. Both relay URLs use the configured API prefix. The default origin is `public_origin`. For a private CA, set `provider_relay_ca_file` to the same absolute path on each Worker node. Place the public PEM CA bundle under deployment control outside account volumes and Gateway state. Worker startup mounts it read-only. Both relay clients retain system trust and verify the server certificate chain and hostname.
+
+When adding a CA to existing sessions, keep the relay origin and API prefix and recreate the target Worker with its existing environment ID and work volume. Changing an OpenCode relay origin requires separate recovery planning for existing bindings.
+
 ## 独立 OpenCode 执行实例
 
 在云工作区配置加入可选的 `opencode_provider`。启用后，Gateway 通过原元戎

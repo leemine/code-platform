@@ -32,7 +32,7 @@ def assemble(config, client):
         model_policy = pool.worker_model_policy
         relay = CloudOpencodeRelay(store, pool, auth_transport=config.opencode_provider.get("auth_transport", "basic"))
         path = OPENCODE_MANAGED_RELAY_PATH if "admit_new_bindings" in config.opencode_provider else OPENCODE_RELAY_PATH
-        relay_url = config.public_origin.rstrip("/") + config.api_prefix + path
+        relay_url = config.provider_relay_base + path
     if config.codex_provider is not None:
         from gateway.services.cloud_codex_pool import CloudCodexPool
         from gateway.services.cloud_codex_relay import CloudCodexRelay
@@ -40,10 +40,11 @@ def assemble(config, client):
         pool = CloudCodexPool(store, client._yuanrong, config, resources)
         codex_relay = CloudCodexRelay(pool)
         codex_admits = pool.admits
-        codex_url = "wss://" + config.public_origin.removeprefix("https://").rstrip("/") + config.api_prefix + CODEX_RELAY_PATH
+        codex_url = "wss://" + config.provider_relay_base.removeprefix("https://") + CODEX_RELAY_PATH
     policy = CloudInstancePolicy(
         store, ready_timeout=config.ready_timeout, resources=resources, opencode_relay_url=relay_url, opencode_model_policy=model_policy,
         codex_relay_url=codex_url, codex_admits=codex_admits,
+        provider_relay_tls=config.uses_provider_relay_tls, provider_relay_ca_file=config.provider_relay_ca_file,
     )
     client.configure_instance_lifecycle(policy, authenticator)
     return accounts, authenticator, EnvironmentService(store, accounts, client, opencode_relay=relay, codex_relay=codex_relay)

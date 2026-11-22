@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 22 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 23 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -18,10 +18,10 @@ generated: true
 | [.github/workflows](#module-1) | 1 |
 | [agent_adapter](#module-2) | 4 |
 | [channels/web](#module-3) | 1 |
-| [deploy/cloud-workspace](#module-4) | 5 |
+| [deploy/cloud-workspace](#module-4) | 6 |
 | [deploy/tls](#module-5) | 1 |
 | [desktop](#module-6) | 1 |
-| [gateway](#module-7) | 6 |
+| [gateway](#module-7) | 7 |
 | [gateway/channel_manager/web](#module-8) | 1 |
 | [gateway/common](#module-9) | 2 |
 | [gateway/extensions/cloud_workspace](#module-10) | 5 |
@@ -35,7 +35,7 @@ generated: true
 | [jiuwenswarm/data_sync](#module-18) | 2 |
 | [jiuwenswarm/server](#module-19) | 2 |
 | [jiuwenswarm/server/control](#module-20) | 1 |
-| [jiuwenswarm/server/runtime/agent_adapter](#module-21) | 5 |
+| [jiuwenswarm/server/runtime/agent_adapter](#module-21) | 6 |
 | [jiuwenswarm/server/runtime/agent_adapter/providers](#module-22) | 3 |
 | [jiuwenswarm/server/runtime/session](#module-23) | 3 |
 | [scripts](#module-24) | 1 |
@@ -79,6 +79,7 @@ generated: true
 | [F_20261121_2219_opencode-shared-runtime](F_20261121_2219_opencode-shared-runtime.md) | F | 独立 OpenCode 复用宿主启动栈 | leemine | deploy/cloud-workspace, gateway/services, gateway/extensions/cloud_workspace | deploy/cloud-workspace/docker_log_boundary.py, deploy/cloud-workspace/opencode_runtime_asset.py, deploy/cloud-workspace/physical_resources.py, gateway/common/opencode_runtime.py, gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_opencode_pool.py, gateway/services/migrate_opencode_binding.py | 无独立 D：沿现有元戎调度、Docker 物理围栏和绑定回收流程扩展。 |
 | [F_20261121_2313_opencode-release-assets](F_20261121_2313_opencode-release-assets.md) | F | OpenCode 发布与共享启动栈预置 | leemine | deploy/cloud-workspace | deploy/cloud-workspace/release_opencode.py, deploy/cloud-workspace/OPENCODE_RELEASE.md, tests/unit_tests/cloud_workspace/test_opencode_release.py | 无独立 D：沿独立 OpenCode 的固定镜像、节点 Docker 边界与原回收迁移流程扩展发布步骤。 |
 | [F_20261122_0132_managed-codex](F_20261122_0132_managed-codex.md) | F | 元戎托管的独立 Codex 执行容器 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/services/managed_codex_models.py, deploy/cloud-workspace/physical_resources.py, deploy/cloud-workspace/Dockerfile.codex, deploy/cloud-workspace/codex_stdio_bridge.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：用户确认独立 Codex 接入、逐节点发布及灰度任务。宿主契约续写 S_01_cloud-account-instance。 |
+| [F_20261122_1125_provider-relay-tls](F_20261122_1125_provider-relay-tls.md) | F | 统一 Worker 的 Provider 中继与 CA 信任 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_workspace_assembly.py, gateway/services/cloud_instance_policy.py, gateway/common/security/provider_relay_tls.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_managed_stdio.py | 无独立 D：用户在 OpenCode 与 Codex 独立部署验证后确认统一中继和 CA，先在隔离元戎验收。 |
 
 <a id="module-5"></a>
 
@@ -108,6 +109,7 @@ generated: true
 | [F_20261121_1554_managed-opencode-account-admission](F_20261121_1554_managed-opencode-account-admission.md) | F | 共池部署的托管 OpenCode 账号准入 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py | 无独立 D：依据已确认的原生产元戎池共池方案及边界只读预检，无独立 D 文档。 |
 | [F_20261121_1751_opencode-global-admission](F_20261121_1751_opencode-global-admission.md) | F | 托管 OpenCode 固定中继与新绑定开关 | leemine | gateway, gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/server/runtime/agent_adapter/providers | gateway/common/security/opencode_relay_auth.py, gateway/extensions/cloud_workspace/config.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_workspace_assembly.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py | 无独立 D：延续共池方案与原账号准入契约，用户已确认改用全局开关和固定入口。 |
 | [F_20261122_0132_managed-codex](F_20261122_0132_managed-codex.md) | F | 元戎托管的独立 Codex 执行容器 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/services/managed_codex_models.py, deploy/cloud-workspace/physical_resources.py, deploy/cloud-workspace/Dockerfile.codex, deploy/cloud-workspace/codex_stdio_bridge.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：用户确认独立 Codex 接入、逐节点发布及灰度任务。宿主契约续写 S_01_cloud-account-instance。 |
+| [F_20261122_1125_provider-relay-tls](F_20261122_1125_provider-relay-tls.md) | F | 统一 Worker 的 Provider 中继与 CA 信任 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_workspace_assembly.py, gateway/services/cloud_instance_policy.py, gateway/common/security/provider_relay_tls.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_managed_stdio.py | 无独立 D：用户在 OpenCode 与 Codex 独立部署验证后确认统一中继和 CA，先在隔离元戎验收。 |
 
 <a id="module-8"></a>
 
@@ -245,6 +247,7 @@ generated: true
 | [F_20261104_1430_provider-beta5-release](F_20261104_1430_provider-beta5-release.md) | F | Provider beta5 发布收尾与验证边界 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/channels/web/frontend, scripts, .github/workflows | .github/workflows/stable.yml, .github/workflows/windows-external.yml, scripts/build_config.py, pyproject.toml, uv.lock, tests/unit_tests/agentserver/test_opencode_equipment_encoding.py | 无独立 D：用户在输出保护、P1 和 OBS-01 之后明确授权执行提交合并、三平台打包与发布任务 2～6；任务 1 的 Claude 真实验收独立保留。 |
 | [F_20261104_2128_codex-session-mcp](F_20261104_2128_codex-session-mcp.md) | F | Codex 会话显式选择 Streamable HTTP MCP | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common | jiuwenswarm/common/external_adapter_factories.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_mcp.py | 无独立 D：用户批准管理仓 PROVIDER_PLUGIN_DEPENDENCY_AUDIT_20261031 中 Codex 会话 MCP 方案，宿主只声明能力。 |
 | [F_20261122_0132_managed-codex](F_20261122_0132_managed-codex.md) | F | 元戎托管的独立 Codex 执行容器 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/services/managed_codex_models.py, deploy/cloud-workspace/physical_resources.py, deploy/cloud-workspace/Dockerfile.codex, deploy/cloud-workspace/codex_stdio_bridge.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py | 无独立 D：用户确认独立 Codex 接入、逐节点发布及灰度任务。宿主契约续写 S_01_cloud-account-instance。 |
+| [F_20261122_1125_provider-relay-tls](F_20261122_1125_provider-relay-tls.md) | F | 统一 Worker 的 Provider 中继与 CA 信任 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/server/runtime/agent_adapter | gateway/extensions/cloud_workspace/config.py, gateway/services/cloud_workspace_assembly.py, gateway/services/cloud_instance_policy.py, gateway/common/security/provider_relay_tls.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_managed_stdio.py | 无独立 D：用户在 OpenCode 与 Codex 独立部署验证后确认统一中继和 CA，先在隔离元戎验收。 |
 
 <a id="module-22"></a>
 
