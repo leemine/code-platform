@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libcurl4 ca-cer
 
 COPY codex_cli_bin/ /opt/codex/
 COPY codex_model_bridge.py /opt/codex-candidate/model_bridge.py
+COPY codex_stdio_bridge.py /opt/codex-candidate/stdio_bridge.py
 RUN groupadd --gid 1000 agentos && \
     useradd --uid 1000 --gid 1000 --home-dir /state/home --no-create-home agentos && \
     mkdir -p /state /usr/local/bin /opt/yuanrong-python && chown 1000:1000 /state && \

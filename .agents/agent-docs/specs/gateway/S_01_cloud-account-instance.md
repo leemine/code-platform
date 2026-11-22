@@ -22,9 +22,9 @@ files: [gateway/services/cloud_environments.py, gateway/services/cloud_instance_
 
 共享版 OpenCode 发布清单同时固定新镜像 ID、启动栈树摘要和原完整镜像 ID。发布工具在所有指定元戎节点完成预置与核验后才输出 Gateway 配置及 Docker 边界参数。新节点先核验同一清单再接入调度。原完整镜像在节点保留，可按现有离线迁移流程回滚。
 
-独立 Codex 按认证账号、项目工作区和 Swarm 会话固定执行卷。账号 Worker 继续拥有模型选择、原生线程映射、审批及取消，通过单一签名 WSS 连接使用独立容器的官方 App Server。Gateway 保留每代连接令牌和选中模型的 API Key。容器只接收令牌摘要及限定模型的 Unix socket。已分配的实例必须通过元戎归属、Docker 物理证明和带令牌的应用握手才能接受 Worker 连接。
+独立 Codex 按认证账号和 Worker 环境 ID 固定执行容器及状态卷。同一 Worker 的多个授权项目可共享容器。Gateway 将每个 Swarm 会话固定到原项目路径，容器为该会话单独持久化 CODEX_HOME。Worker 继续负责模型选择、原生线程映射、审批及取消。Worker 使用签名 WSS 连接 Gateway，Gateway 经带代次令牌的私有中继接到容器内的官方 App Server stdio。Gateway 保留连接令牌和模型 API Key，容器接收令牌摘要及限定模型的 Unix socket。同一绑定固定 Responses 模型连接配置，模型不一致时显式拒绝。已分配实例先核对元戎归属、Docker 物理证明，再完成带令牌的 App Server 初始化探测。
 
-托管 Codex 完成或确认取消一轮后释放传输租约。物理回收前检查已载入的原生线程空闲，元戎和 Docker 均确认删除后才推进代次。下一代重用状态卷，原适配器按保存的原生线程恢复。镜像变更使用同一离线比较并交换流程，保留项目、会话和原卷。
+托管 Codex 完成或确认取消一轮后释放会话传输租约。容器内中继关闭本次 App Server 进程后进入空闲。回收检查 Worker 绑定无活动租约和中继无活动会话，元戎和 Docker 均确认删除后才推进代次。下一代重用状态卷和会话目录，原适配器按保存的原生线程恢复。镜像变更使用同一离线比较并交换流程，目标镜像需要同一 stdio 启动契约。
 
 就绪观测记录首次等待与失败复核，区分元戎 RUNNING 和认证健康检查，按账号、绑定及代次归因。观测不增加等待或更改生命周期。正式 Web 的选模拦截通过原账号认证上报固定原因码，记录 Gateway 生成的事件 ID、认证账号 ID 和原因。两个日志事件都可按事件 ID 去重。上报不写会话，不分配 Provider，Worker 准入保持独立。
 

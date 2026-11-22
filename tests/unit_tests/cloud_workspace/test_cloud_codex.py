@@ -8,12 +8,13 @@ import pytest
 from gateway.common.managed_codex import AUDIENCE
 from gateway.common.security.provider_relay_auth import parse_assertion, sign_assertion, verify_assertion
 from gateway.common.security.service_auth import ServiceAuthenticator
-from gateway.services.cloud_codex_pool import CloudCodexPool
+from gateway.services.cloud_codex_pool import CloudCodexPool, PROJECT_ROOT
 from gateway.services.cloud_environments import EnvironmentStore
 from gateway.services.managed_codex_models import ManagedModel
 
 
 DIRECTORY = "/data/agent/workspace/code/demo"
+OTHER_DIRECTORY = "/data/agent/workspace/code/another"
 MODEL_URL = "https://models.example.test/v1"
 
 
@@ -29,7 +30,8 @@ def account_and_store(tmp_path):
         row = store.prepare(row["account_id"])
         store.transition(row, "ALLOCATED", instance_id="worker-canary", expected="NEW")
         row = store.by_user("canary")
-        Path(row["workspace"], "agent", "workspace", "code", "demo").mkdir(parents=True)
+        for directory in ("demo", "another"):
+            Path(row["workspace"], "agent", "workspace", "code", directory).mkdir(parents=True)
         yield row, store, state
     finally:
         store.close()
@@ -91,10 +93,19 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             assert hashlib.sha256(first.capability.encode()).hexdigest() == description["env_vars"]["CODEX_CAPABILITY_DIGEST"]
             assert all(value not in repr(description) for value in (first.capability, model.key, account["auth_file"]))
             assert {mount["target"] for mount in description["mounts"]} == {
-                DIRECTORY, "/state", "/run/codex", "/opt/yuanrong-python",
+                str(PROJECT_ROOT), "/state", "/run/codex", "/opt/yuanrong-python",
             }
-            await pool.reclaim_idle()
-            assert instances
+            async with pool.hold(account, "another_session", OTHER_DIRECTORY, model) as another:
+                assert another == first
+                assert len(requests) == 1
+                await pool.reclaim_idle()
+                assert len(instances) == 1
+        with pytest.raises(PermissionError, match="another project"):
+            async with pool.hold(account, "web_session", OTHER_DIRECTORY, model):
+                pytest.fail("changed project acquired a Codex transport")
+        with store.connect() as db:
+            keys = db.execute("SELECT account_id,project_id,provider FROM provider_bindings").fetchall()
+        assert [tuple(item) for item in keys] == [("canary", "@" + account["environment_id"], "codex")]
         await pool.reclaim_idle()
         resources.confirm_deleted.assert_awaited_once()
         assert not instances
@@ -104,3 +115,66 @@ async def test_codex_allocation_releases_then_reuses_original_volume(account_and
             assert first.capability != second.capability
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_stdio_reconnect_waits_until_same_session_has_released_state(tmp_path, monkeypatch):
+    import asyncio
+    import importlib.util
+    import json
+    from unittest.mock import Mock
+
+    path = Path(__file__).resolve().parents[3] / "deploy/cloud-workspace/codex_stdio_bridge.py"
+    spec = importlib.util.spec_from_file_location("codex_stdio_bridge", path)
+    app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app)
+    project_root, state = tmp_path / "work", tmp_path / "state"
+    cwd = project_root / "repo"
+    cwd.mkdir(parents=True)
+    state.mkdir()
+    monkeypatch.setattr(app, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(app, "STATE_ROOT", state)
+    capability = "fixture"
+    bridge = app.StdioBridge(hashlib.sha256(capability.encode()).hexdigest())
+    entered, release, second_authorized = (asyncio.Event() for _ in range(3))
+
+    async def first_transport(*args, **kwargs):
+        entered.set()
+        await release.wait()
+
+    relay_probe = AsyncMock(side_effect=[first_transport, None])
+
+    async def relay(*args, **kwargs):
+        if await relay_probe(*args, **kwargs) is first_transport:
+            await first_transport()
+
+    def fresh():
+        request = {"capability": capability, "op": "stream", "session": "sid", "directory": str(cwd)}
+        reader = SimpleNamespace(readline=AsyncMock(return_value=json.dumps(request).encode() + b"\n"))
+        writer = SimpleNamespace(close=Mock(), wait_closed=AsyncMock())
+        return reader, writer
+
+    authorize = bridge.authorize
+    handshakes = []
+
+    def observe_handshake(raw):
+        result = authorize(raw)
+        handshakes.append(result)
+        if len(handshakes) == 2:
+            second_authorized.set()
+        return result
+
+    monkeypatch.setattr(bridge, "authorize", observe_handshake)
+    monkeypatch.setattr(bridge, "relay", relay)
+    first = asyncio.create_task(bridge.handle(*fresh()))
+    await asyncio.wait_for(entered.wait(), 1)
+    second = asyncio.create_task(bridge.handle(*fresh()))
+    try:
+        await asyncio.wait_for(second_authorized.wait(), 1)
+        assert relay_probe.await_count == 1
+        assert not second.done()
+    finally:
+        release.set()
+        await asyncio.gather(first, second)
+    assert relay_probe.await_count == 2
+    assert not bridge.active

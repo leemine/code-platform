@@ -1,14 +1,14 @@
 # Managed Codex deployment
 
-Managed Codex uses the existing Code/Work channel, Worker model catalog, Codex adapter and Runtime. A Worker selected by the Gateway account allowlist opens a signed WSS stream for its existing project. The Gateway uses the original YuanRong instance client to allocate a separate container for that Codex session. The session retains its native thread and volume across verified physical reclamation.
+Managed Codex uses the existing Code/Work channel, Worker model catalog, Codex adapter and Runtime. A Worker selected by the Gateway account allowlist opens a signed WSS stream for its existing project. The Gateway uses the original YuanRong instance client to allocate one container per authenticated account and Worker environment. The private execution relay starts the official App Server over native stdio with a separate persistent CODEX_HOME for each Swarm session. Each session retains its project path, native thread and state after verified physical reclamation.
 
 The Gateway keeps the capability token and upstream model API key in the control plane. The container receives the capability digest and a read-only mount containing the scoped model broker socket. The broker serves Responses for the selected model and a configured HTTPS endpoint. The Docker boundary checks the immutable image and runtime, exact account project and state mounts, and a pinned AppArmor and seccomp policy.
 
-The initial managed path supports the account's Responses-compatible model entries. An explicit Worker-local native model catalog or MCP configuration carrying local credentials requires the existing local Codex path. TLS and the upstream model endpoint allowlist are set by deployment.
+The initial managed path supports a fixed Responses-compatible model connection per Worker binding. Requests with another model connection are rejected by the binding. An explicit Worker-local native model catalog or MCP configuration carrying local credentials requires the existing local Codex path. TLS and the upstream model endpoint allowlist are set by deployment.
 
 ## Build and stage
 
-Build `Dockerfile.codex` with an explicit context containing `codex_model_bridge.py` and the complete `codex_cli_bin/` directory from the lock's Linux amd64 Codex CLI wheel. Verify the original wheel and package file digests. Keep the versioned Python 3.11, YuanRong Runtime and Executor tree on the host. Use the same Linux user ID in the account, Gateway and managed containers. The Gateway creates the native state and home directories before requesting allocation so the YuanRong bootstrap can initialize.
+Build `Dockerfile.codex` with an explicit context containing `codex_model_bridge.py`, `codex_stdio_bridge.py`, and the complete `codex_cli_bin/` directory from the lock's Linux amd64 Codex CLI wheel. Verify the original wheel and package file digests. Keep the versioned Python 3.11, YuanRong Runtime and Executor tree on the host. Use the same Linux user ID in the account, Gateway and managed containers. The Gateway creates the native state and home directories before requesting allocation so the YuanRong bootstrap can initialize.
 
 Use the existing release tool with the Codex manifest format. The rollback image uses the same native startup command and mount layout.
 

@@ -33,17 +33,9 @@ logger = logging.getLogger(__name__)
 PROVIDER = "codex"
 PROJECT_ROOT = PurePosixPath("/data/agent/workspace")
 _COMMAND = (
-    "mkdir -m 700 -p /state/codex /state/home; "
     "python3.11 -B /opt/codex-candidate/model_bridge.py --socket /run/codex/model.sock "
     '--model "$CODEX_SELECTED_MODEL" --port 17543 & '
-    "exec /opt/codex/bin/codex "
-    "-c 'model_provider=\"swarm\"' "
-    "-c 'model_providers.swarm.name=\"Swarm model service\"' "
-    "-c 'model_providers.swarm.base_url=\"http://127.0.0.1:17543/v1\"' "
-    "-c 'model_providers.swarm.wire_api=\"responses\"' "
-    "-c 'model_providers.swarm.requires_openai_auth=false' "
-    "app-server --listen ws://0.0.0.0:18768 --ws-auth capability-token "
-    '--ws-token-sha256 "$CODEX_CAPABILITY_DIGEST"'
+    "exec python3.11 -B /opt/codex-candidate/stdio_bridge.py"
 )
 
 
@@ -62,12 +54,16 @@ class CloudCodexPool:
         self.ready_timeout = config.ready_timeout
         self.idle_seconds = float(self.options.get("idle_seconds", 300))
         self._locks = defaultdict(asyncio.Lock)
-        self._holds: dict[tuple[str, str, str], asyncio.Event] = {}
+        self._holds: dict[tuple[str, str, str], dict[str, asyncio.Event]] = {}
         self._brokers = {}
         self.ready_check = None
         self.idle_check = None
         _private_directory(self.storage)
         ensure_bindings_table(store)
+        with store.connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS codex_session_owners (
+                       binding_id TEXT NOT NULL, session_id TEXT NOT NULL, directory TEXT NOT NULL,
+                       PRIMARY KEY (binding_id, session_id))""")
 
     def admits(self, account):
         return account["account_id"] in self.options["account_allowlist"]
@@ -87,8 +83,9 @@ class CloudCodexPool:
         path = PurePosixPath(directory)
         if str(path) != directory or path == PROJECT_ROOT or not path.is_relative_to(PROJECT_ROOT) or ".." in path.parts:
             raise PermissionError("Codex needs an authorized project workspace")
-        source = Path(account["workspace"]).joinpath(*path.relative_to("/data").parts)
-        if not source.is_dir() or source.resolve(strict=True) != source:
+        source = Path(account["workspace"]) / "agent/workspace"
+        project = source.joinpath(*path.relative_to(PROJECT_ROOT).parts)
+        if not project.is_dir() or project.resolve(strict=True) != project:
             raise PermissionError("Codex project workspace is unavailable")
         row = read_binding(self.store, key)
         if row is None:
@@ -101,13 +98,22 @@ class CloudCodexPool:
             with self.store.connect() as db:
                 db.execute("""INSERT INTO provider_bindings VALUES
                     (?, ?, ?, ?, ?, ?, ?, 1, ?, 'NEW', NULL, ?)""",
-                    (*key, secrets.token_hex(16), directory, str(source), json.dumps(profile),
+                    (*key, secrets.token_hex(16), str(PROJECT_ROOT), str(source), json.dumps(profile),
                      secrets.token_hex(16), time.time()))
             row = read_binding(self.store, key)
-        if ((row["directory"], row["project_source"]) != (directory, str(source))
+        if ((row["directory"], row["project_source"]) != (str(PROJECT_ROOT), str(source))
                 or json.loads(row["profile_json"])["model_revision"] != model.revision):
-            raise PermissionError("Codex workspace or model differs from its persistent binding")
+            raise PermissionError("Codex workspace or model differs from its persistent Worker binding")
         return row
+
+    def _bind_session(self, row, session_id, directory):
+        key = row["binding_id"], session_id
+        with self.store.connect() as db:
+            db.execute("INSERT OR IGNORE INTO codex_session_owners VALUES (?, ?, ?)", (*key, directory))
+            saved = db.execute("SELECT directory FROM codex_session_owners WHERE binding_id=? AND session_id=?",
+                               key).fetchone()
+            if saved[0] != directory:
+                raise PermissionError("Codex session belongs to another project")
 
     def _transition(self, row, state, *, instance_id=None, recycled=False):
         with self.store.connect() as db:
@@ -128,13 +134,13 @@ class CloudCodexPool:
         generation = self._generation(row)
         state, private = generation.parent / "state", generation.parent / "private"
         # YuanRong's native Python initializes before executing our command.
-        for path in (generation.parent, state, state / "home", state / "codex", private, generation):
+        for path in (generation.parent, state, state / "home", private, generation):
             _private_directory(path)
         capability_file = private / row["operation_id"]
         capability = (private_initial_file(capability_file, secrets.token_urlsafe(32).encode())
                       if row["state"] == "NEW" else read_private_file(capability_file))
         definition = {
-            "version": 1, "binding_id": row["binding_id"], "image": profile["image"], "user": profile["user"],
+            "version": 2, "binding_id": row["binding_id"], "image": profile["image"], "user": profile["user"],
             "account_workspace": profile["account_workspace"], "project_source": row["project_source"],
             "project_target": row["directory"],
         }
@@ -202,15 +208,16 @@ class CloudCodexPool:
     async def hold(self, account, session_id, directory, model):
         if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session_id):
             raise ValueError("Invalid Codex session")
-        key = account["account_id"], session_id, PROVIDER
-        prior = self._holds.get(key)
+        key = account["account_id"], "@" + account["environment_id"], PROVIDER
+        prior = self._holds.get(key, {}).get(session_id)
         if prior is not None:
             async with asyncio.timeout(5):
                 await prior.wait()
         async with self._locks[key]:
-            if key in self._holds:
+            if session_id in self._holds.get(key, {}):
                 raise EnvironmentUnavailable("Codex session already has a transport")
             row = self._binding(key, self._current(account), directory, model)
+            self._bind_session(row, session_id, directory)
             plan = self._plan(row)
             if row["state"] == "DELETING":
                 if not await self.yuanrong.instance_absent(row["instance_id"]):
@@ -221,18 +228,21 @@ class CloudCodexPool:
             if generation not in self._brokers:
                 self._brokers[generation] = CodexModelBroker(self._generation(row), model)
             if row["state"] != "ALLOCATED":
-                env = {"HOME": "/state/home", "CODEX_HOME": "/state/codex", "CODEX_SELECTED_MODEL": model.name,
+                env = {"HOME": "/state/home", "CODEX_SELECTED_MODEL": model.name,
                        "CODEX_CAPABILITY_DIGEST": hashlib.sha256(plan[-1]).hexdigest()}
                 row = await allocate_provider(self.yuanrong, self.namespace, row, plan, self._transition,
                                               env_vars=env, provider_name="Codex")
             lease = await self._ready(row, plan)
             self._current(account)
-            self._holds[key] = asyncio.Event()
+            self._holds.setdefault(key, {})[session_id] = asyncio.Event()
         try:
             yield lease
         finally:
             async with self._locks[key]:
-                self._holds.pop(key).set()
+                live = self._holds[key]
+                live.pop(session_id).set()
+                if not live:
+                    del self._holds[key]
                 with self.store.connect() as db:
                     db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
                                (time.time(), row["binding_id"], row["generation"]))

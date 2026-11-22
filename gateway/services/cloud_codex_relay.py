@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager, suppress
 from ipaddress import IPv4Address
 import json
 import logging
@@ -9,7 +10,6 @@ import time
 from urllib.parse import unquote
 
 from starlette.websockets import WebSocketDisconnect
-from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from gateway.common.managed_codex import ASSERTION_HEADER, AUDIENCE, DIRECTORY_HEADER, MAX_FRAME_BYTES, NATIVE_PORT
@@ -23,13 +23,57 @@ from gateway.services.managed_codex_models import ManagedModel, model_endpoint
 logger = logging.getLogger(__name__)
 
 
-def _native(lease):
+class _StdioStream:
+    def __init__(self, reader, writer):
+        self.reader, self.writer = reader, writer
+
+    async def send(self, packet):
+        payload = packet.encode("utf-8")
+        if len(payload) > MAX_FRAME_BYTES or b"\n" in payload or b"\r" in payload:
+            raise ValueError("Codex expected one JSONL message")
+        self.writer.write(payload + b"\n")
+        await self.writer.drain()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        packet = await self.reader.readline()
+        if not packet:
+            raise StopAsyncIteration
+        if len(packet) > MAX_FRAME_BYTES + 1 or not packet.endswith(b"\n"):
+            raise ValueError("Incomplete Codex stdio message")
+        return packet[:-1].decode("utf-8")
+
+
+@asynccontextmanager
+async def _native(lease, op, *, session_id=None, directory=None):
     address = IPv4Address(lease.address)
     if not address.is_private or address.is_loopback or address.is_link_local or address.is_unspecified:
         raise ValueError("Codex address must be a verified private container address")
-    return connect(f"ws://{address}:{NATIVE_PORT}/", proxy=None, open_timeout=4, close_timeout=2,
-                   additional_headers={"Authorization": "Bearer " + lease.capability},
-                   max_size=MAX_FRAME_BYTES, max_queue=8)
+    async with asyncio.timeout(4):
+        reader, writer = await asyncio.open_connection(str(address), NATIVE_PORT, limit=MAX_FRAME_BYTES + 1)
+    stream = _StdioStream(reader, writer)
+    try:
+        async with asyncio.timeout(4):
+            handshake = {"op": op, "capability": lease.capability}
+            if op == "stream":
+                handshake.update(session=session_id, directory=directory)
+            await stream.send(json.dumps(handshake))
+            try:
+                reply = json.loads(await anext(stream))
+            except StopAsyncIteration:
+                raise RuntimeError("Codex stdio bridge closed during handshake") from None
+        if op == "idle":
+            yield reply == {"idle": True}
+        elif reply != {"ready": True}:
+            raise RuntimeError("Codex stdio bridge rejected the handshake")
+        else:
+            yield stream
+    finally:
+        writer.close()
+        with suppress(OSError):
+            await writer.wait_closed()
 
 
 async def _rpc(connection, identifier, method, params):
@@ -63,7 +107,7 @@ class CloudCodexRelay:
     @staticmethod
     async def ready(lease):
         try:
-            async with _native(lease) as server:
+            async with _native(lease, "probe") as server:
                 await _initialize(server)
             return True
         except (OSError, TimeoutError, RuntimeError, ValueError, WebSocketException):
@@ -72,17 +116,8 @@ class CloudCodexRelay:
     @staticmethod
     async def idle(lease):
         try:
-            async with _native(lease) as server, asyncio.timeout(10):
-                await _initialize(server)
-                active = await _rpc(server, 1, "thread/loaded/list", {"limit": 100})
-                identifiers = active.get("data")
-                if not isinstance(identifiers, list) or active.get("nextCursor"):
-                    return False
-                for index, identifier in enumerate(identifiers, 2):
-                    result = await _rpc(server, index, "thread/read", {"threadId": identifier})
-                    if result["thread"]["status"]["type"] not in ("idle", "notLoaded"):
-                        return False
-            return True
+            async with _native(lease, "idle") as idle:
+                return idle
         except (KeyError, TypeError, OSError, TimeoutError, RuntimeError, ValueError, WebSocketException):
             return False
 
@@ -123,7 +158,8 @@ class CloudCodexRelay:
                     raise ValueError("Codex handshake fields differ")
                 session_id = data.pop("session_id")
                 model = ManagedModel.parse(data, self.allowed_endpoints)
-            async with self.pool.hold(account, session_id, directory, model) as lease, _native(lease) as server:
+            async with self.pool.hold(account, session_id, directory, model) as lease, _native(
+                    lease, "stream", session_id=session_id, directory=directory) as server:
                 await websocket.send_json({"ready": True})
 
                 async def send_to_native():
