@@ -22,6 +22,8 @@ Gateway 启用独立 OpenCode 中继后，通过现有已认证请求通道处�
 
 账号级 `cloud.runtime.list` 返回默认运行时、当前账号的命名设备和部署模板。OpenCode 和 Codex 复用 `cloud.runtime.create`、`cloud.runtime.start`。创建提交模板、名称及创建标识，启动提交已有设备 ID。登记按账号、环境、Provider 和创建标识幂等，模板可用性由对应 Provider 准入决定。设备记录与项目无关，每个设备使用自己的 Provider 状态卷。OpenCode 无项目启动沿设备签名路径同步模型并确认健康，项目级的默认设备接口保留。
 
+Codex 可在 `session_model_canary.memory` 按灰度账号指定 MiB 内存。模板和新分配使用相同的有效规格。已有会话选模绑定只在下一代尚未计划时应用新值，运行中的容器和已经计划的重试沿用原分配快照。变更内存保留绑定 ID、会话归属和状态卷。
+
 支持会话选模的命名 Codex 设备公开 `session_models`。账号默认 Codex 通过模板的 `default_session_models` 公开相同能力，并在首次对话时按需申请。Code 普通会话的原模型下拉框从当前账号的 `models.list` 读取模型，按 `cloud.runtime.models` 返回的兼容 ID 筛选。Worker 按原账号目录解析选择，Gateway 在打开签名会话流时校验模型端点。会话保存模型 ID，续聊与恢复沿用。
 
 Codex 设备通过原 Worker 签名 WSS 准备。新设备只用设备标识申请元戎资源、确认 Docker 实例并探测 App Server，不登记原生会话或解析模型。准备操作仅限账号工作区根及该账号已登记的命名设备。固定模型设备在物理回收后可按灰度账号原子迁移，覆盖账号默认绑定与命名设备并保留绑定 ID、状态卷及会话归属。模型密钥由 Gateway 中继使用，不进入设备目录或绑定表。

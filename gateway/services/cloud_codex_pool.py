@@ -82,6 +82,13 @@ class CloudCodexPool:
         canary = self.options.get("session_model_canary")
         return canary is None or account["account_id"] in canary["accounts"]
 
+    def _canary_memory(self, account):
+        canary = self.options.get("session_model_canary")
+        return canary.get("memory") if canary and account["account_id"] in canary["accounts"] else None
+
+    def _memory(self, account):
+        return self._canary_memory(account) or self.options.get("memory", 1024)
+
     def _current(self, account):
         row = self.store.by_user(account["account_id"])
         if (not self.admits(row) or row["state"] != "ALLOCATED"
@@ -107,7 +114,7 @@ class CloudCodexPool:
         profile = {
             "image": self.options["image"], "runtime": self.runtime, "user": account["profile"]["runtime_user"],
             "account_workspace": account["workspace"], "shared_runtime": self.options["shared_runtime"],
-            "cpu": self.options.get("cpu", 1000), "memory": self.options.get("memory", 1024),
+            "cpu": self.options.get("cpu", 1000), "memory": self._memory(account),
             "physical_verification": True,
         }
         if self.uses_session_models(account):
@@ -144,7 +151,7 @@ class CloudCodexPool:
 
     def runtime_template(self, account):
         template = {"runtime_profile_id": PROFILE_ID, "cpu": self.options.get("cpu", 1000),
-                    "memory": self.options.get("memory", 1024),
+                    "memory": self._memory(account),
                     "available": account["state"] == "ALLOCATED" and self.admits(account)}
         if not self.uses_session_models(account):
             template["supports_model_selection"] = True
@@ -423,17 +430,37 @@ class CloudCodexPool:
             db.execute("UPDATE provider_bindings SET used_at=? WHERE binding_id=? AND generation=?",
                        (time.time(), row["binding_id"], row["generation"]))
 
+    def _refresh_memory(self, row):
+        memory = self._canary_memory(row)
+        if memory is None or row["state"] != "NEW" or row["instance_id"] is not None:
+            return row
+        profile = json.loads(row["profile_json"])
+        if profile.get("session_models") is not True or profile["memory"] == memory:
+            return row
+        # A generation with an existing plan may already have been dispatched.
+        generation = self._generation(row)
+        if generation.exists() or generation.is_symlink():
+            return row
+        profile["memory"] = memory
+        with self.store.connect() as db:
+            updated = db.execute("""UPDATE provider_bindings SET profile_json=?
+                WHERE binding_id=? AND state='NEW' AND instance_id IS NULL
+                    AND operation_id=? AND profile_json=?""",
+                (json.dumps(profile), row["binding_id"], row["operation_id"], row["profile_json"]))
+            if updated.rowcount != 1:
+                raise EnvironmentUnavailable("Codex allocation memory changed")
+        return read_binding(self.store, self._key(row))
+
     async def _ensure_lease(self, row, model):
         key = self._key(row)
-        plan = self._plan(row)
         if row["state"] == "RETIRING_UNDISPATCHED":
-            row = await self._retire_undispatched(row, plan)
-            plan = self._plan(row)
+            row = await self._retire_undispatched(row, self._plan(row))
         if row["state"] == "DELETING":
             if not await self.yuanrong.instance_absent(row["instance_id"]):
                 raise EnvironmentUnavailable("Codex deletion is pending")
-            row = await self._finish_retirement(row, plan)
-            plan = self._plan(row)
+            row = await self._finish_retirement(row, self._plan(row))
+        row = self._refresh_memory(row)
+        plan = self._plan(row)
         generation = row["operation_id"]
         session_models = json.loads(row["profile_json"]).get("session_models") is True
         if generation not in self._brokers:

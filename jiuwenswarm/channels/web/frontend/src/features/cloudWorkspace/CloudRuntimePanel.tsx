@@ -1,11 +1,10 @@
-import { Plus, Server } from 'lucide-react';
+import { ArrowRight, Plus, Server, X } from 'lucide-react';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import ModelPicker from '../../components/ModelPicker';
 import { Button } from '../../components/ui/Button/Button';
 import { Dialog } from '../../components/ui/Dialog/Dialog';
 import { Input } from '../../components/ui/Input/Input';
-import { Select } from '../../components/ui/Select/Select';
 import { PageToolbar } from '../../components/ui/PageToolbar/PageToolbar';
 import { generateUuidV4 } from '../../utils/uuid';
 import { refreshCloudRuntime, requestRuntimeDevice, useRuntimeDeviceModels, type CloudRuntime, type CloudRuntimeTemplate } from './useProjectRuntime';
@@ -94,7 +93,7 @@ export function CloudRuntimePanel({ runtimes, templates, remote, onUse }: {
         : <ul className="cloud-runtime-panel__list" data-testid="cloud-workspace-runtime-list">
           {runtimes.map(runtime => (
             <li key={runtime.runtime_id ?? runtime.runtime_profile_id} className="cloud-runtime-panel__row" data-testid="cloud-workspace-runtime-item" data-variant={runtime.runtime_id ?? runtime.runtime_profile_id}>
-              <Server size={20} aria-hidden />
+              <span className="cloud-runtime-panel__icon"><Server size={20} aria-hidden /></span>
               <div className="cloud-runtime-panel__identity">
                 <strong data-testid="cloud-workspace-runtime-name">{runtime.display_name ?? t('chat.executionProvider.cloudRuntimeName')}</strong>
                 <span data-testid="cloud-workspace-runtime-provider">{runtime.provider_id === 'codex-direct' ? 'Codex' : 'OpenCode'}</span>
@@ -119,17 +118,43 @@ export function CloudRuntimePanel({ runtimes, templates, remote, onUse }: {
       <Dialog open={open} titleId="cloud-runtime-create-title" className="cloud-runtime-panel__dialog"
         closeDisabled={busy !== null} onCancel={() => setOpen(false)} onBackdropClick={() => setOpen(false)}>
         <form onSubmit={provision} data-testid="cloud-workspace-runtime-create-form">
-          <h2 id="cloud-runtime-create-title" data-testid="cloud-workspace-runtime-create-title">{t('cloudRuntime.createDevice')}</h2>
-          <div className="cloud-runtime-panel__template" data-testid="cloud-workspace-runtime-template">
-            <label htmlFor="cloud-runtime-profile">{t('cloudRuntime.template')}</label>
-            <Select id="cloud-runtime-profile" type="button" value={template?.runtime_profile_id ?? ''}
-              onChange={setProfile} disabled={busy !== null}
-              options={templates.map(item => ({
-                value: item.runtime_profile_id, label: templateLabel(item.runtime_profile_id),
-                disabled: !item.available, disabledReason: t('cloudRuntime.admissionClosed'),
-              }))} data-testid="cloud-workspace-runtime-profile" />
-            {template && <span>{t('cloudRuntime.resources', { cpu: template.cpu / 1000, memory: template.memory })}</span>}
-          </div>
+          <header className="cloud-runtime-panel__dialog-header">
+            <span className="cloud-runtime-panel__icon"><Server size={22} aria-hidden /></span>
+            <h2 id="cloud-runtime-create-title" data-testid="cloud-workspace-runtime-create-title">
+              {t('cloudRuntime.createCloudDevice')}
+            </h2>
+            <Button variant="quiet" icon={<X size={20} aria-hidden />} aria-label={t('common.close')}
+              disabled={busy !== null} onClick={() => setOpen(false)} data-testid="cloud-workspace-runtime-create-close" />
+          </header>
+          <p className="cloud-runtime-panel__hint" data-testid="cloud-workspace-runtime-create-hint">
+            {t('cloudRuntime.createHint')}
+          </p>
+          <fieldset className="cloud-runtime-panel__profiles" disabled={busy !== null}
+            data-testid="cloud-workspace-runtime-template">
+            <legend>{t('cloudRuntime.template')}</legend>
+            <div className="cloud-runtime-panel__profile-grid">
+              {templates.map(item => (
+                <label className="cloud-runtime-panel__profile" key={item.runtime_profile_id}>
+                  <input type="radio" name="cloud-runtime-profile" checked={template?.runtime_profile_id === item.runtime_profile_id}
+                    value={item.runtime_profile_id} onChange={() => setProfile(item.runtime_profile_id)}
+                    disabled={!item.available} aria-label={templateLabel(item.runtime_profile_id)}
+                    data-testid="cloud-workspace-runtime-profile" data-variant={item.runtime_profile_id} />
+                  <span className="cloud-runtime-panel__profile-card">
+                    <span className="cloud-runtime-panel__icon"><Server size={18} aria-hidden /></span>
+                    <strong>{templateLabel(item.runtime_profile_id)}</strong>
+                    <span className="cloud-runtime-panel__radio" aria-hidden />
+                    <span className="cloud-runtime-panel__resources" data-testid="cloud-workspace-runtime-profile-resources"
+                      data-variant={item.runtime_profile_id}>
+                      {item.memory % 1024 === 0
+                        ? t('cloudRuntime.resourcesGiB', { cpu: item.cpu / 1000, memory: item.memory / 1024 })
+                        : t('cloudRuntime.resources', { cpu: item.cpu / 1000, memory: item.memory })}
+                    </span>
+                    {!item.available && <span className="cloud-runtime-panel__resources">{t('cloudRuntime.admissionClosed')}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           {needsModel && <div className="cloud-runtime-panel__template" role="group"
             aria-labelledby="cloud-runtime-model-label" data-testid="cloud-workspace-runtime-model">
             <span id="cloud-runtime-model-label">{t('cloudRuntime.model')}</span>
@@ -152,12 +177,17 @@ export function CloudRuntimePanel({ runtimes, templates, remote, onUse }: {
           </div>}
           <label htmlFor="cloud-runtime-device-name">{t('cloudRuntime.name')}</label>
           <Input id="cloud-runtime-device-name" value={name} onChange={setName} changeOnBlur={false}
-            required autoFocus maxLength={30} disabled={busy !== null} data-testid="cloud-workspace-runtime-device-name" />
+            required autoFocus maxLength={30} disabled={busy !== null} aria-describedby="cloud-runtime-device-name-hint"
+            placeholder={t('cloudRuntime.namePlaceholder')} data-testid="cloud-workspace-runtime-device-name" />
+          <p id="cloud-runtime-device-name-hint" className="cloud-runtime-panel__hint" data-testid="cloud-workspace-runtime-name-hint">
+            {t('cloudRuntime.nameHint')}
+          </p>
           {open && error && <p role="alert" data-testid="cloud-workspace-runtime-create-error">{error}</p>}
-          <div className="cloud-runtime-panel__actions">
-            <Button type="button" variant="quiet" onClick={() => setOpen(false)} disabled={busy !== null} data-testid="cloud-workspace-runtime-create-cancel">{t('common.cancel')}</Button>
-            <Button type="submit" disabled={!template?.available || !name.trim() || (needsModel && !selectedModel) || busy !== null} data-testid="cloud-workspace-runtime-create-submit">
+          <div className="cloud-runtime-panel__actions cloud-runtime-panel__dialog-actions">
+            <Button type="button" onClick={() => setOpen(false)} disabled={busy !== null} data-testid="cloud-workspace-runtime-create-cancel">{t('common.cancel')}</Button>
+            <Button type="submit" variant="primary" disabled={!template?.available || !name.trim() || (needsModel && !selectedModel) || busy !== null} data-testid="cloud-workspace-runtime-create-submit">
               {t(busy === 'create' ? 'cloudRuntime.state.starting' : 'cloudRuntime.createAndStart')}
+              <ArrowRight size={16} aria-hidden />
             </Button>
           </div>
         </form>

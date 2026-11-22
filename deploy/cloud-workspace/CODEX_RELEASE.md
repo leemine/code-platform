@@ -25,6 +25,8 @@ python3 deploy/cloud-workspace/release_opencode.py provision --bundle "$RELEASE_
 
 Configure `codex_provider` with the verified `image` and `shared_runtime`, the authenticated `account_allowlist`, and the approved `model_endpoints`. Optional `cpu`, `memory` and `idle_seconds` apply to the separate instance. Configure the original `resource_reconciler_socket`. The account Worker reads the endpoint through its original environment allocation. Reallocate only the admitted Worker after changing admission.
 
+Set `codex_provider.session_model_canary.memory` to `4096` to apply a 4 GiB limit to the canary accounts. Existing session-model bindings adopt it when an unused generation is first allocated. Verify the limit in Docker and use the same session to verify recovery after normal reclamation.
+
 Pass the generated image and runtime arguments to the Docker boundary along with `--codex-provider-root <state_root>/codex-providers`, `--codex-security-manifest` and `--codex-security-sha256`. Precreate the Provider root with mode 0700. Load the dedicated enforced AppArmor profile and pin both image IDs in the policy. Gateway connects to the verified private bridge address returned by the physical boundary. Keep that bridge reachable from the Gateway process. The Codex port stays within the private Docker network.
 
 The deployment places the Gateway model broker and its admitted execution pool on the same host. A provider needs a local physical receipt and the mounted Unix socket before it can serve model requests.

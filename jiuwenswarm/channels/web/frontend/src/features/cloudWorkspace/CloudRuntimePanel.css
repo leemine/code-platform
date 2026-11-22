@@ -34,6 +34,18 @@
   padding: 14px 16px;
   border: 1px solid var(--color-border-default);
   border-radius: 12px;
+  background: var(--color-surface-elevated);
+}
+
+.cloud-runtime-panel__icon {
+  display: grid;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--color-action-primary-subtle);
+  color: var(--color-text-link);
 }
 
 .cloud-runtime-panel__identity,
@@ -55,6 +67,20 @@
   font-size: 13px;
 }
 
+.cloud-runtime-panel__status span:first-child {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.cloud-runtime-panel__status span[data-variant='ready'] {
+  background: var(--color-feedback-success-subtle);
+  color: var(--color-feedback-success-text);
+}
+
 .cloud-runtime-panel__actions {
   display: flex;
   flex-wrap: wrap;
@@ -63,15 +89,140 @@
 }
 
 .cloud-runtime-panel__dialog {
-  width: min(420px, calc(100% - 32px));
+  width: min(680px, calc(100% - 32px));
 }
 
 .cloud-runtime-panel__dialog form,
 .cloud-runtime-panel__template {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .cloud-runtime-panel__dialog form {
-  padding: 20px;
+  padding: clamp(18px, 4vw, 32px);
+}
+
+.cloud-runtime-panel__dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.cloud-runtime-panel__dialog-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: clamp(20px, 4vw, 27px);
+}
+
+.cloud-runtime-panel__dialog-header .cloud-runtime-panel__icon {
+  width: 44px;
+  height: 44px;
+}
+
+.cloud-runtime-panel__hint {
+  margin: 4px 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.cloud-runtime-panel__profiles {
+  min-width: 0;
+  margin: 6px 0 10px;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.cloud-runtime-panel__profiles legend {
+  padding: 0 8px 0 0;
+}
+
+.cloud-runtime-panel__profiles legend,
+.cloud-runtime-panel__dialog label[for='cloud-runtime-device-name'] {
+  font-weight: 600;
+}
+
+.cloud-runtime-panel__profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cloud-runtime-panel__profile {
+  position: relative;
+  display: grid;
+}
+
+.cloud-runtime-panel__profile input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.cloud-runtime-panel__profile-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 94px;
+  padding: 14px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 12px;
+  background: var(--color-surface-card);
+  cursor: pointer;
+}
+
+.cloud-runtime-panel__profile input:checked + .cloud-runtime-panel__profile-card {
+  border-color: var(--color-action-primary);
+  box-shadow: inset 0 0 0 1px var(--color-action-primary);
+  background: var(--color-action-primary-subtle);
+}
+
+.cloud-runtime-panel__profile input:focus-visible + .cloud-runtime-panel__profile-card {
+  outline: 2px solid var(--color-action-primary);
+  outline-offset: 3px;
+}
+
+.cloud-runtime-panel__profile input:disabled + .cloud-runtime-panel__profile-card {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cloud-runtime-panel__radio {
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+}
+
+.cloud-runtime-panel__profile input:checked + .cloud-runtime-panel__profile-card .cloud-runtime-panel__radio {
+  border-color: var(--color-action-primary);
+  box-shadow: inset 0 0 0 3px var(--color-surface-card);
+  background: var(--color-action-primary);
+}
+
+.cloud-runtime-panel__resources {
+  grid-column: 2 / -1;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.cloud-runtime-panel__dialog-actions {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.cloud-runtime-panel__dialog-actions .ui-button__label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .cloud-runtime-panel__profile-grid {
+    grid-template-columns: 1fr;
+  }
 }

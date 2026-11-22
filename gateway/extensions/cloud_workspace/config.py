@@ -190,13 +190,16 @@ class CloudConfig:
             raise ValueError("Managed Codex account_allowlist must contain authenticated account IDs")
         if "session_model_canary" in profile:
             canary = profile["session_model_canary"]
-            if (not isinstance(canary, dict) or set(canary) != {"image", "accounts"}
+            if (not isinstance(canary, dict) or not {"image", "accounts"} <= canary.keys()
+                    or canary.keys() - {"image", "accounts", "memory"}
                     or not isinstance(canary["image"], str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", canary["image"])
                     or canary["image"] == profile["image"]
                     or self.opencode_provider and canary["image"] == self.opencode_provider["image"]
                     or not isinstance(canary["accounts"], list)
                     or any(not isinstance(account, str) or account not in accounts for account in canary["accounts"])):
                 raise ValueError("Codex session model canary requires a distinct immutable image and admitted accounts")
+            if "memory" in canary and (type(canary["memory"]) is not int or canary["memory"] <= 0):
+                raise ValueError("Codex session model canary requires a positive memory budget")
         endpoints = profile["model_endpoints"]
         if (not isinstance(endpoints, list) or not endpoints
                 or any(not isinstance(value, str) or not model_endpoint(value) for value in endpoints)):
