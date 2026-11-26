@@ -147,6 +147,42 @@ test('persisted allocation is rechecked through original ensure; failed readines
   await click('cloud-workspace-retry'); assert.ok(query('original-app'));
   assert.equal(calls.filter(c => c.url.endsWith('/ensure')).length, 2);
 });
+test('pending reclaim retries automatically and joins rapid manual retries', async () => {
+  let settle;
+  const isEnsure = ({ url }) => url.endsWith('/ensure');
+  route = async path => path.endsWith('/status') ? response(identity)
+    : path.endsWith('/ensure') ? new Promise(resolve => { settle = resolve; }) : response({ state: 'DELETING' });
+  await mount();
+  assert.equal(phase(), 'reclaiming');
+  assert.match(query('cloud-workspace-status').textContent, /等待旧 Worker 回收/);
+  await waitFor(() => calls.filter(isEnsure).length === 1, 3500);
+  await click('cloud-workspace-retry');
+  await click('cloud-workspace-retry');
+  assert.equal(calls.filter(isEnsure).length, 1);
+  assert.equal(phase(), 'reclaiming');
+  await act(async () => settle(response({}, 502)));
+  assert.equal(phase(), 'reclaiming');
+  const previous = settle;
+  await waitFor(() => settle !== previous, 6000);
+  await act(async () => settle(response({ state: 'READY' })));
+  await waitFor(() => query('original-app'));
+});
+for (const [reason, expected, message] of [
+  ['allocation_failed', 'allocationFailed', /分配失败/],
+  ['worker_not_ready', 'workerNotReady', /Worker 已分配/],
+]) {
+  test(`ensure explains ${reason} without mounting App`, async () => {
+    route = async path => path.endsWith('/status') ? response(identity)
+      : path.endsWith('/ensure') ? response({ code: 'ENVIRONMENT_UNAVAILABLE', reason }, 503)
+        : response({ state: 'NEW' });
+    await mount();
+    await click('cloud-workspace-enter');
+    await waitFor(() => phase() === expected);
+    assert.match(query('cloud-workspace-status').textContent, message);
+    assert.equal(query('original-app'), null);
+    assert.ok(query('cloud-workspace-retry'));
+  });
+}
 test('lost logout response closes old connection and exposes retry without claiming success', async () => {
   await mount(); route = async () => response({}, 503);
   await click('auth-logout-button'); assert.equal(phase(), 'logoutFailed'); assert.equal(disconnects, 1); assert.equal(query('original-app'), null);

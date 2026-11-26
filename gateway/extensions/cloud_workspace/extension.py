@@ -18,7 +18,7 @@ from gateway.extensions.cloud_workspace.config import (
     CloudConfig, CONFIG_ENV, OPENCODE_RELAY_PATH, OPENCODE_WORKER_RELAY_PATH,
     OPENCODE_MANAGED_RELAY_PATH, OPENCODE_MANAGED_WORKER_RELAY_PATH,
 )
-from gateway.services.cloud_environments import EnvironmentUnavailable
+from gateway.services.cloud_environments import EnvironmentPreparationFailed, EnvironmentUnavailable
 from gateway.common.managed_codex import (
     MODEL_UNAVAILABLE, PROFILE_ID as CODEX_PROFILE_ID, RELAY_PATH as CODEX_RELAY_PATH, validate_device_model_id,
 )
@@ -401,6 +401,8 @@ class CloudWorkspacePlugin(ApplicationPluginExtension):
             return JSONResponse({"code": "INVALID_REQUEST"}, status_code=400)
         except AccountAuthorityUnavailable:
             return JSONResponse({"code": "AUTHORITY_UNAVAILABLE"}, status_code=503)
+        except EnvironmentPreparationFailed as exc:
+            return JSONResponse({"code": "ENVIRONMENT_UNAVAILABLE", "reason": exc.reason}, status_code=503)
         except (EnvironmentUnavailable, TimeoutError, ConnectionError):
             return JSONResponse({"code": "ENVIRONMENT_UNAVAILABLE"}, status_code=503)
 

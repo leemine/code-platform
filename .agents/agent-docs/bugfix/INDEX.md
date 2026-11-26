@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 36 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 37 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -19,19 +19,19 @@ generated: true
 | [agent_adapter](#module-2) | 2 |
 | [channels/web/frontend](#module-3) | 1 |
 | [config_panel](#module-4) | 1 |
-| [deploy/cloud-workspace](#module-5) | 2 |
+| [deploy/cloud-workspace](#module-5) | 3 |
 | [deploy/local](#module-6) | 1 |
 | [deploy/web](#module-7) | 1 |
 | [desktop](#module-8) | 3 |
 | [docs](#module-9) | 1 |
-| [gateway](#module-10) | 1 |
+| [gateway](#module-10) | 2 |
 | [gateway/channel_manager/im_platforms/xiaoyi](#module-11) | 1 |
 | [gateway/common](#module-12) | 2 |
 | [gateway/extensions/data_sync](#module-13) | 1 |
 | [gateway/message_handler](#module-14) | 1 |
 | [gateway/routing](#module-15) | 1 |
 | [gateway/services](#module-16) | 2 |
-| [jiuwenswarm/channels/web](#module-17) | 5 |
+| [jiuwenswarm/channels/web](#module-17) | 6 |
 | [jiuwenswarm/channels/web/frontend](#module-18) | 1 |
 | [jiuwenswarm/channels/web/frontend/src/features/settings/modules/models](#module-19) | 1 |
 | [jiuwenswarm/common](#module-20) | 3 |
@@ -86,6 +86,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
+| [B-20261126-1540-cloud-workspace-recovery](gateway/B_20261126_1540_cloud-workspace-recovery.md) | B | 云工作区旧 Worker 回收对账和重试 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/channels/web | deploy/cloud-workspace/physical_resources.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_environments.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, tests/unit_tests/cloud_workspace/test_physical_resources.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py | 无独立 D：复用 Gateway ensure、已有物理确认接口及持久工作区。 |
 | [B_20261111_2010_codex-container-sandbox](deploy/B_20261111_2010_codex-container-sandbox.md) | B | Codex嵌套沙箱的部署前提与控制文件读取边界 | leemine | deploy/cloud-workspace | deploy/cloud-workspace/runtime_security.py, deploy/cloud-workspace/codex_sandbox_probe.py, deploy/cloud-workspace/docker_log_boundary.py, tests/unit_tests/cloud_workspace/test_runtime_security.py, tests/unit_tests/cloud_workspace/test_codex_sandbox_probe.py, deploy/cloud-workspace/runtime-permissions.yaml.example, tests/unit_tests/cloud_workspace/test_runtime_permissions.py | 无独立 D：依据管理仓PLATFORM_CODEX_SANDBOX_DEPLOYMENT_20261111及用户确认；没有另造D编号。 |
 | [B_20261121_0219_opencode-provider-fault-reclaim](gateway/services/B_20261121_0219_opencode-provider-fault-reclaim.md) | B | OpenCode 服务退出后的独立实例回收 | leemine | gateway/services, deploy/cloud-workspace | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/resource_reconciler.py, deploy/cloud-workspace/physical_resources.py | 无独立 D：用户确认补齐当前 S_02 托管 OpenCode 回收契约，无独立设计。 |
 
@@ -129,6 +130,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
+| [B-20261126-1540-cloud-workspace-recovery](gateway/B_20261126_1540_cloud-workspace-recovery.md) | B | 云工作区旧 Worker 回收对账和重试 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/channels/web | deploy/cloud-workspace/physical_resources.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_environments.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, tests/unit_tests/cloud_workspace/test_physical_resources.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py | 无独立 D：复用 Gateway ensure、已有物理确认接口及持久工作区。 |
 | [B_20261126_1123_cloud-cron-account-model](gateway/B_20261126_1123_cloud-cron-account-model.md) | B | 云端定时任务解析账号模型 | leemine | gateway | gateway/cron/controller.py, gateway/runtime/cron/cron_job_mutations.py | 无独立 D：复用既有 E2A 模型目录、定时任务模型选择和账户授权契约。 |
 
 <a id="module-11"></a>
@@ -190,6 +192,7 @@ generated: true
 | [B-20261117-1640-local-service-recovery](gateway/B_20261117_1640_local-service-recovery.md) | B | 本地预览退出恢复与账号错误分层 | leemine | deploy/local, jiuwenswarm/channels/web | deploy/local/systemd/code-platform-local.target, jiuwenswarm/channels/web/app_web.py, jiuwenswarm/channels/web/frontend/src/services/accountAvailability.ts, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx | 无独立 D：用户明确要求修复现有本地服务退出与登录提示，不新增执行架构。 |
 | [B-20261119-0957-cloud-conversation-previous-scope](gateway/B_20261119_0957_cloud-conversation-previous-scope.md) | B | 本机 App 云目录新会话的旧会话引用校验 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/resourceAddress.ts | 无独立 D：沿用既有 Code 工作区入口与目录操作契约。 |
 | [B-20261119-1940-cloud-workspace-ensure-proxy-timeout](gateway/B_20261119_1940_cloud-workspace-ensure-proxy-timeout.md) | B | 云端首次进入的 Web 代理超时 | leemine | jiuwenswarm/channels/web | jiuwenswarm/channels/web/app_web.py, tests/unit_tests/channels/web/test_cloud_proxy_deadline.py | 无独立 D：沿用既有云实例就绪接口与 Web 长超时规则。 |
+| [B-20261126-1540-cloud-workspace-recovery](gateway/B_20261126_1540_cloud-workspace-recovery.md) | B | 云工作区旧 Worker 回收对账和重试 | leemine | gateway, deploy/cloud-workspace, jiuwenswarm/channels/web | deploy/cloud-workspace/physical_resources.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_environments.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, tests/unit_tests/cloud_workspace/test_physical_resources.py, tests/unit_tests/cloud_workspace/test_cloud_workspace.py | 无独立 D：复用 Gateway ensure、已有物理确认接口及持久工作区。 |
 | [B_20261031_1418_session-recovery-lifecycle](jiuwenswarm/server/runtime/agent_adapter/B_20261031_1418_session-recovery-lifecycle.md) | B | 外部主Agent取消续聊与历史恢复活动状态收敛 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/server, jiuwenswarm/channels/web | jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, jiuwenswarm/server/agent_ws_server.py, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_command_workflows_handler.py, jiuwenswarm/channels/web/frontend/tests/webClientRuntimeAck.test.mjs, jiuwenswarm/channels/web/frontend/tests/sessionInput.test.mjs | 无独立 D：用户要求修复现有流程遗留，不新增旁路；沿既有Runtime、SDK resume、Native可选边界和Web订阅修复。 |
 | [B_20261111_0300_account-probe-recovery](web/B_20261111_0300_account-probe-recovery.md) | B | 账号探测短暂故障容错与串行自动恢复 | leemine | jiuwenswarm/channels/web, deploy/web | jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudWorkspaceGate.tsx, jiuwenswarm/channels/web/frontend/src/services/organizationCredentialEvents.ts, jiuwenswarm/channels/web/frontend/tests/cloudWorkspace.test.mjs, jiuwenswarm/channels/web/frontend/src/services/runtimeResume.ts, jiuwenswarm/channels/web/frontend/src/services/webClient.ts, deploy/web/proxy_switch.py | 无独立 D：补回 codeswarm 既有恢复行为，不新增账号或执行链。 |
 

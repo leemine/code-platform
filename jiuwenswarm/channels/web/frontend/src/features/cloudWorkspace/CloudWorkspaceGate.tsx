@@ -7,13 +7,14 @@ import {
   clearAccountCaches, notifyOrganizationCredentialChange, onOrganizationCredentialChange,
   organizationCredentialReloadUrl, readOrganizationStatus, type OrganizationStatus,
 } from '../../services/organizationCredentialEvents';
-import { accountFailureKind, type AccountFailureKind } from '../../services/accountAvailability';
+import { AccountAvailabilityError, accountFailureKind, type AccountFailureKind } from '../../services/accountAvailability';
 import { LoginPage } from '../auth/LoginPage';
-import { cloudRequest, environmentState } from './client';
+import { CloudRequestError, cloudRequest, environmentState } from './client';
 import { LocalCloudAccount } from './LocalCloudAccount';
 import './cloudWorkspace.css';
 
-type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 'unavailable' | 'environmentError' | 'logoutFailed';
+type Phase = 'checking' | 'local' | 'login' | 'entry' | 'preparing' | 'ready' | 'unavailable'
+  | 'reclaiming' | 'allocationFailed' | 'workerNotReady' | 'environmentError' | 'logoutFailed';
 
 /** UI composition only: the original environment service and Runtime retain ownership. */
 export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode, options?: { shareExportDisabledReason: string }) => ReactNode }) {
@@ -37,16 +38,19 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       : window.location.origin + '/');
   }, []);
 
-  const enter = useCallback(async () => {
+  const enter = useCallback(async (keepStatus = false) => {
     if (entering.current) return;
     entering.current = true;
     const generation = epoch.current;
-    setPhase('preparing');
+    if (!keepStatus) setPhase('preparing');
     try {
       // A persisted ALLOCATED row is not application readiness. Always use the
       // existing ensure path and its readiness probe before mounting App/WS.
       const result = await cloudRequest('environment/ensure', {}, 150000);
-      if (environmentState(result) !== 'READY') throw new Error('Environment not ready');
+      if (environmentState(result) !== 'READY') {
+        if (generation === epoch.current) setPhase('workerNotReady');
+        return;
+      }
       let current: OrganizationStatus;
       try {
         current = await readOrganizationStatus();
@@ -64,7 +68,14 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
       if (!sameIdentity(identityRef.current, current)) { discard(current); return; }
       setPhase('ready');
     } catch (error) {
-      if (generation === epoch.current) setPhase('environmentError');
+      if (generation === epoch.current) {
+        const reason = error instanceof CloudRequestError && error.environmentReason;
+        if (reason === 'reclaiming') setPhase('reclaiming');
+        else if (reason === 'allocation_failed') setPhase('allocationFailed');
+        else if (reason === 'worker_not_ready') setPhase('workerNotReady');
+        else if (!keepStatus || !(error instanceof AccountAvailabilityError) ||
+          (error instanceof CloudRequestError && error.status < 500)) setPhase('environmentError');
+      }
     } finally {
       entering.current = false;
     }
@@ -86,7 +97,9 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
         if (disposed || generation !== epoch.current) return;
         // Reconnect an existing binding through the original chain. First-time
         // allocation stays behind the explicit cloud entry button.
-        if (environmentState(row) === 'ALLOCATED') void enter();
+        const state = environmentState(row);
+        if (state === 'ALLOCATED') void enter();
+        else if (state === 'DELETING') setPhase('reclaiming');
         else setPhase('entry');
       } catch (error) {
         if (!disposed && generation === epoch.current) {
@@ -104,7 +117,7 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
     let checking = false;
     const check = async () => {
       // ensure already performs a fresh identity check before exposing the App.
-      if (disposed || checking || phase === 'preparing' || document.visibilityState === 'hidden') return;
+      if (disposed || checking || entering.current || phase === 'preparing' || document.visibilityState === 'hidden') return;
       checking = true;
       try {
         const current = await readOrganizationStatus();
@@ -163,21 +176,21 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   }, [discard]);
 
   useEffect(() => {
-    if (phase !== 'unavailable') return;
-    // Keep the error view stable while recovering; never resubmit credentials.
-    // Schedule after settlement, with bounded backoff and one probe in flight.
+    if (phase !== 'unavailable' && phase !== 'reclaiming' && phase !== 'workerNotReady') return;
+    // Keep the status visible and retry only after the previous probe settles.
     let disposed = false;
     let delay = 2000;
     let timer: number;
     const recover = async () => {
-      await retryIdentity(true);
+      if (phase === 'unavailable') await retryIdentity(true);
+      else await enter(true);
       if (disposed) return;
       delay = Math.min(delay * 2, 30000);
       timer = window.setTimeout(() => void recover(), delay);
     };
     timer = window.setTimeout(() => void recover(), delay);
     return () => { disposed = true; window.clearTimeout(timer); };
-  }, [phase, retryIdentity]);
+  }, [phase, enter, retryIdentity]);
 
   async function logout() {
     epoch.current += 1;
@@ -199,14 +212,16 @@ export function CloudWorkspaceGate({ children }: { children: (footer?: ReactNode
   if (phase === 'local') return children(<LocalCloudAccount />);
   if (phase === 'login') return <LoginPage registrationEnabled={identity?.registration_enabled === true} />;
   if (phase === 'ready') return children(footer, { shareExportDisabledReason: t('cloudWorkspace.shareExportUnavailable') });
-  const retry = ['unavailable', 'environmentError', 'logoutFailed'].includes(phase);
+  const waiting = phase === 'reclaiming' || phase === 'workerNotReady';
+  const retryEnvironment = waiting || phase === 'allocationFailed' || phase === 'environmentError';
+  const retry = retryEnvironment || phase === 'unavailable' || phase === 'logoutFailed';
   return <main className="cloud-workspace-page" data-testid="cloud-workspace-gate" data-phase={phase}>
     <section className="cloud-workspace-card">
       <h1>{t('cloudWorkspace.title')}</h1>
-      <p role={retry ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase === 'unavailable' ? failure : phase}`)}</p>
+      <p role={retry && !waiting ? 'alert' : 'status'} data-testid="cloud-workspace-status">{t(`cloudWorkspace.${phase === 'unavailable' ? failure : phase}`)}</p>
       {identity?.authenticated && <p data-testid="cloud-workspace-identity">{identity.username}</p>}
       {phase === 'entry' && <Button variant="primary" onClick={() => void enter()} data-testid="cloud-workspace-enter">{t('cloudWorkspace.enter')}</Button>}
-      {retry && <Button onClick={() => phase === 'environmentError' ? void enter() : phase === 'logoutFailed' ? void logout() : void retryIdentity()}
+      {retry && <Button onClick={() => retryEnvironment ? void enter(waiting) : phase === 'logoutFailed' ? void logout() : void retryIdentity()}
         data-testid="cloud-workspace-retry">{t('cloudWorkspace.retry')}</Button>}
       {identity?.authenticated && !['checking', 'logoutFailed'].includes(phase) && logoutButton}
     </section>

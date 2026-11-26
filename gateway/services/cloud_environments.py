@@ -22,6 +22,15 @@ class EnvironmentUnavailable(RuntimeError):
     pass
 
 
+class EnvironmentPreparationFailed(EnvironmentUnavailable):
+    def __init__(self, state: str):
+        super().__init__("instance preparation requires recovery")
+        self.reason = {
+            "DELETING": "reclaiming",
+            "ALLOCATED": "worker_not_ready",
+        }.get(state, "allocation_failed")
+
+
 def _private_directory(path: Path):
     if any(parent.is_symlink() for parent in (path, *path.parents)):
         raise PermissionError("environment path cannot contain symlinks")
@@ -294,10 +303,10 @@ class EnvironmentService:
         return principal, row
 
     async def ensure(self, principal):
-        row = self.store.get(principal)
+        self.store.get(principal)
         try:
             runtime = await self.instances.ensure_instance(principal["user_id"])
         except (RuntimeError, TimeoutError, ConnectionError, WebSocketException) as exc:
-            raise EnvironmentUnavailable("instance preparation requires recovery") from exc
+            raise EnvironmentPreparationFailed(self.store.get(principal)["state"]) from exc
         row = self.store.get(principal)
         return {**row, "state": "READY", "instance_id": runtime.info.sandbox_id}
