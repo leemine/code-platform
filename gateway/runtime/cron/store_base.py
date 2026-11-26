@@ -50,7 +50,9 @@ class CronJobStoreBackend(Protocol):
     ) -> CronJob:
         ...
 
-    async def update_job(self, job_id: str, patch: dict[str, Any]) -> CronJob:
+    async def update_job(
+        self, job_id: str, patch: dict[str, Any], *, model_selection_validated: bool = False,
+    ) -> CronJob:
         ...
 
     async def delete_job(self, job_id: str, *, force: bool = False) -> bool:
