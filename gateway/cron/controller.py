@@ -7,6 +7,8 @@ from functools import wraps
 from typing import Any, ClassVar
 from zoneinfo import ZoneInfo
 
+from gateway.auth.account_authenticator import current_account
+from gateway.common.model_selection import ModelSelection
 from gateway.common.scheduled_task_policy import is_scheduled_task_supported
 from gateway.common.work_mode import (
     DEFAULT_PROJECT_ID_CODE,
@@ -112,6 +114,60 @@ class CronController:
         from gateway.zen_query import fetch_zen_free_model_rows
 
         return await fetch_zen_free_model_rows(client)
+
+    async def _resolve_job_model(
+        self, values: dict[str, Any], user_id: str, auth_session: str,
+    ) -> tuple[str | None, dict[str, Any] | None, str]:
+        selection_data = values.get("model_selection")
+        selection = ModelSelection.model_validate(selection_data) if selection_data is not None else None
+        name = str(values.get("model_name") or "").strip()
+        if not name and selection is None:
+            return None, None, ""
+
+        principal = current_account()
+        if principal is not None:
+            from openjiuwen_protocol.message import ReqMethod
+            from gateway.routing.e2a_proxy import fetch_agent_unary
+
+            identity = await principal.check()
+            if identity["user_id"] != user_id:
+                raise PermissionError("Cron model catalog must belong to the task owner")
+            ok, catalog = await fetch_agent_unary(
+                agent_client=self._agent_client, req_method=ReqMethod.MODELS_LIST,
+                params={}, session_id=None, user_id=user_id, channel_id="web",
+                label="cron account model catalog", timeout_seconds=20,
+            )
+            if not ok:
+                raise ValueError("Account model catalog is unavailable")
+            if selection is not None and selection.type == "model_group":
+                groups = catalog.get("model_groups") or []
+                group = next((item for item in groups if item.get("model_group_id") == selection.id), None)
+                if group is None or not group.get("enabled", True):
+                    raise ValueError("Model group is unavailable in this account")
+                if selection.route_id and not any(
+                    route.get("route_id") == selection.route_id and route.get("enabled", True)
+                    for route in group.get("routes") or []
+                ):
+                    raise ValueError("Model group route is unavailable in this account")
+                return None, selection.model_dump(), ""
+            eligible = [row for row in catalog.get("models") or []
+                        if row.get("model_id") and row.get("model_name") and not row.get("is_free")]
+            if selection is None:
+                matches = [row for row in eligible if name in (row["model_name"], row.get("alias"))]
+            else:
+                matches = [row for row in eligible if row["model_id"] == selection.id]
+            if len(matches) != 1:
+                raise ValueError("Model selection must identify one configured model in this account")
+            row = matches[0]
+            return row["model_name"], ModelSelection(type="model", id=row["model_id"]).model_dump(), ""
+
+        canonical, source = resolve_cron_model(name, zen_entries=await self._zen_entries())
+        if selection is not None:
+            from gateway.common.model_routing_registry import ModelSelectionResolver
+
+            ModelSelectionResolver().resolve(selection)
+        credential = _login_credential_ref_from_session(auth_session) if source == CRON_MODEL_SOURCE_LOGIN else ""
+        return canonical, selection.model_dump() if selection is not None else None, credential
 
     @classmethod
     def get_instance(
@@ -355,26 +411,8 @@ class CronController:
                 raise ValueError(
                     f"{PROACTIVE_JOB_ID} 是系统内置主动推荐任务的保留 id，不能手动创建"
                 )
-        model_name, model_source = resolve_cron_model(
-            params.get("model_name"),
-            zen_entries=await self._zen_entries(),
-        )
-        model_selection = params.get("model_selection")
-        if model_selection is not None:
-            from gateway.common.model_routing_registry import ModelSelectionResolver
-            from gateway.common.model_selection import ModelSelection
-            selection = ModelSelection.model_validate(model_selection)
-            ModelSelectionResolver().resolve(selection)
-            model_selection = selection.model_dump()
-        # 登录免费模型：把创建连接上的华为账号绑定到任务（凭据句柄）。路由
-        # user_id 与登录账号是两套独立体系，不能互相推导；没有可用登录会话就
-        # 明确拒绝（400），不留一个到点必失败的任务。自配模型（即使与登录模型
-        # 同名）不绑定，执行侧凭据注入只认绑定，不会误切到登录模型计费。
-        credential_ref = (
-            _login_credential_ref_from_session(auth_session)
-            if model_source == CRON_MODEL_SOURCE_LOGIN
-            else ""
-        )
+        user_id = str(params.get("user_id") or "").strip()
+        model_name, model_selection, credential_ref = await self._resolve_job_model(params, user_id, auth_session)
         # mcp：会话级 MCP 选择，随 job 落库；调度执行时注入 chat.send 的
         # ``mcp`` 字段走 AgentServer 的 reconcile_session_mcp。只做类型
         # 规范化（strip/去空/去重），不校验存在性（断连后 job 应降级运行）。
@@ -433,7 +471,6 @@ class CronController:
         app_id = str(params.get("app_id") or "").strip()
         # user_id：web 端创建定时任务时由 handler 注入 params（见 _cron_job_create），
         # 执行时透传给 faas 的 X-Session-Context。agent 内部创建的 cron 无 user_id 即存空串。
-        user_id = str(params.get("user_id") or "").strip()
         if not await self._scheduler.project_execution_allowed(
             resolved_project_id, user_id
         ):
@@ -482,29 +519,17 @@ class CronController:
                 raise ValueError(
                     "proactive.tick 是系统内部模式，由设置→主动推荐开关自动维护，不能手动修改"
                 )
-        if "model_name" in patch:
-            canonical, model_source = resolve_cron_model(
-                patch.get("model_name"),
-                zen_entries=await self._zen_entries(),
-            )
-            patch["model_name"] = canonical
-            # 模型来源变化时同步重算绑定：改选登录模型 → 绑定当前连接的华为
-            # 账号；换回自配模型/清除模型 → 解绑，否则执行侧仍会注入登录凭据，
-            # 同名自配模型会被切到登录模型计费。
-            if model_source == CRON_MODEL_SOURCE_LOGIN:
-                patch["credential_ref"] = _login_credential_ref_from_session(
-                    auth_session
-                )
-            else:
-                patch["credential_ref"] = ""
+        existing = await self._store.get_job(job_id)
+        if existing is None:
+            raise KeyError("job not found")
+        if "model_name" in patch or "model_selection" in patch:
+            name, selection, credential = await self._resolve_job_model(patch, existing.user_id, auth_session)
+            patch.update(model_name=name, model_selection=selection, credential_ref=credential)
         if "mcp" in patch:
             # 显式传 null/[] 归 None（清除选择，执行时回到全局默认集）。
             patch["mcp"] = normalize_cron_job_mcp(patch.get("mcp"))
         if "targets" in patch:
             patch["targets"] = self._normalize_targets(patch["targets"])
-        existing = await self._store.get_job(job_id)
-        if existing is None:
-            raise KeyError("job not found")
         if "cron_expr" in patch:
             patch["cron_expr"] = normalize_cron_expr(str(patch["cron_expr"]).strip())
         if "cron_expr" in patch or "timezone" in patch:
@@ -559,7 +584,10 @@ class CronController:
                 patch.get("project_id", existing.project_id), existing.user_id
             ):
                 raise ValueError("OPERATION_IN_PROGRESS: project execution is blocked")
-        job = await self._store.update_job(job_id, patch)
+        if patch.get("model_selection") is not None and current_account() is not None:
+            job = await self._store.update_job(job_id, patch, model_selection_validated=True)
+        else:
+            job = await self._store.update_job(job_id, patch)
         await self._scheduler.reload()
         return job.to_dict()
 

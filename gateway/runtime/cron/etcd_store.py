@@ -213,7 +213,9 @@ class EtcdCronJobStore:
                 raise self._unavailable("put") from exc
         return job
 
-    async def update_job(self, job_id: str, patch: dict[str, Any]) -> CronJob:
+    async def update_job(
+        self, job_id: str, patch: dict[str, Any], *, model_selection_validated: bool = False,
+    ) -> CronJob:
         job_id = str(job_id or "").strip()
         if not job_id:
             raise ValueError("id is required")
@@ -224,7 +226,8 @@ class EtcdCronJobStore:
                 raise self._unavailable("get") from exc
             if existing is None:
                 raise KeyError("job not found")
-            updated = apply_cron_job_patch(existing, dict(patch or {}))
+            updated = apply_cron_job_patch(existing, dict(patch or {}),
+                                           model_selection_validated=model_selection_validated)
             payload = json.dumps(updated.to_dict(), ensure_ascii=False).encode("utf-8")
             try:
                 self._revision = await self._client.put_if_mod_revision(
@@ -239,7 +242,8 @@ class EtcdCronJobStore:
                     raise self._unavailable("get") from exc
                 if existing is None:
                     raise KeyError("job not found") from None
-                updated = apply_cron_job_patch(existing, dict(patch or {}))
+                updated = apply_cron_job_patch(existing, dict(patch or {}),
+                                               model_selection_validated=model_selection_validated)
                 payload = json.dumps(updated.to_dict(), ensure_ascii=False).encode("utf-8")
                 try:
                     self._revision = await self._client.put_if_mod_revision(

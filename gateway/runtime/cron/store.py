@@ -223,7 +223,9 @@ class FileCronJobStore:
         await self._upsert_job(job)
         return job
 
-    async def update_job(self, job_id: str, patch: dict[str, Any]) -> CronJob:
+    async def update_job(
+        self, job_id: str, patch: dict[str, Any], *, model_selection_validated: bool = False,
+    ) -> CronJob:
         job_id = str(job_id or "").strip()
         if not job_id:
             raise ValueError("id is required")
@@ -248,7 +250,8 @@ class FileCronJobStore:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Ignoring invalid cron job id=%s: %s", job_id, exc)
                     raise KeyError("job not found") from None
-                updated = apply_cron_job_patch(existing, dict(patch or {}))
+                updated = apply_cron_job_patch(existing, dict(patch or {}),
+                                               model_selection_validated=model_selection_validated)
                 jobs_raw[index] = updated.to_dict()
                 data["version"] = int(data.get("version") or 1)
                 data["jobs"] = jobs_raw

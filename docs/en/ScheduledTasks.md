@@ -70,6 +70,8 @@ minute hour day month weekday
 
 ### Create via Web Interface
 
+Cloud Code scheduled tasks use the model configuration of the signed-in account. Creating a task or changing its model saves the model ID, and the account Worker resolves it at execution time. If multiple models share a name, select the model through an entry point that supports its ID.
+
 **Steps:**
 
 1. Open JiuwenSwarm Web interface, click **Work** in the left navigation

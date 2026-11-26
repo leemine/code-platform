@@ -122,6 +122,36 @@ def _job_params(**overrides) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_cloud_cron_persists_authenticated_account_model(tmp_path, monkeypatch):
+    controller, _ = _make_controller(tmp_path)
+    actor = "qa-account"
+    principal = SimpleNamespace(check=AsyncMock(return_value={"user_id": actor}))
+    monkeypatch.setattr("gateway.cron.controller.current_account", lambda: principal)
+    catalog = AsyncMock(return_value=(True, {"models": [
+        {"model_id": "mdl_qa", "model_name": "glm-5.2", "alias": "QA model", "api_key": "private-test-value"},
+    ]}))
+    monkeypatch.setattr("gateway.routing.e2a_proxy.fetch_agent_unary", catalog)
+    controller.bind_agent_client(SimpleNamespace(server_ready=True))
+
+    job = await controller.create_job(_job_params(user_id=actor, model_name="QA model"))
+    assert catalog.await_args.kwargs["user_id"] == actor
+    assert job["model_name"] == "glm-5.2"
+    assert job["model_selection"] == {"type": "model", "id": "mdl_qa", "route_id": None}
+    assert "private-test-value" not in (tmp_path / "cron_jobs.json").read_text()
+    job = await controller.update_job(job["id"], {"model_selection": {"type": "model", "id": "mdl_qa"}})
+    assert job["model_selection"]["id"] == "mdl_qa"
+    job = await controller.update_job(job["id"], {"model_name": None})
+    assert "model_selection" not in job
+
+    with pytest.raises(ValueError, match="configured model in this account"):
+        await controller.create_job(_job_params(user_id=actor, model_selection={"type": "model", "id": "other"}))
+    calls = catalog.await_count
+    with pytest.raises(PermissionError, match="task owner"):
+        await controller.create_job(_job_params(user_id="other", model_name="QA model"))
+    assert catalog.await_count == calls
+
+
+@pytest.mark.asyncio
 async def test_create_job_with_login_model_binds_credential_ref(
     tmp_path, monkeypatch
 ):
