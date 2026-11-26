@@ -5617,6 +5617,9 @@
     "authorityUnavailable": "The cloud account service is unavailable. Reconnecting when it recovers.",
     "unavailable": "Unable to verify account status. Please retry.",
     "environmentError": "The environment is not ready. Retry to check the existing binding.",
+    "reclaiming": "Waiting for the previous Worker to be reclaimed. The workspace will reopen automatically.",
+    "allocationFailed": "Workspace allocation failed. Please retry.",
+    "workerNotReady": "The Worker has been allocated and is not ready yet.",
     "logoutFailed": "Logout was not confirmed. The current connection has been closed. Please retry.",
     "retry": "Retry",
     "logout": "Sign out"

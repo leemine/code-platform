@@ -5614,6 +5614,9 @@
     "authorityUnavailable": "云账号服务暂时不可用，恢复后将自动重连。",
     "unavailable": "暂时无法确认账号状态，请重试。",
     "environmentError": "云环境暂未就绪，请重试。重试会继续核对原绑定。",
+    "reclaiming": "正在等待旧 Worker 回收确认，完成后将自动恢复云工作区。",
+    "allocationFailed": "云工作区分配失败，请重试。",
+    "workerNotReady": "Worker 已分配，正在等待就绪。",
     "logoutFailed": "退出未确认成功，已关闭当前连接。请重试。",
     "retry": "重试",
     "logout": "退出登录"

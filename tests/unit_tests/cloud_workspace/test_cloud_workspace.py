@@ -192,6 +192,7 @@ async def test_unknown_create_never_reposts(config, empty):
     with pytest.raises(EnvironmentUnavailable) as failed:
         await app.ensure(actor)
     assert isinstance(failed.value.__cause__, TimeoutError)
+    assert failed.value.reason == "allocation_failed"
     assert app.store.get(actor)["state"] == "UNKNOWN"
     if empty:
         for _ in range(2):
@@ -532,6 +533,7 @@ async def test_handshake_denial_is_unavailable_without_recreating(config, status
             with pytest.raises(EnvironmentUnavailable) as error:
                 await app.ensure(actor)
             assert isinstance(error.value.__cause__, InvalidStatusCode)
+            assert error.value.reason == "worker_not_ready"
             assert app.store.get(actor)["state"] == "ALLOCATED"
         assert infra.create_calls == 1
         app.instances._connect_ws_until_ready = original
@@ -649,12 +651,36 @@ async def test_physical_confirmation_failure_blocks_retry_across_gateway_restart
     recovered.instances._instance_lifecycle.resources = resources
     await recovered.instances.connect("")
     try:
-        with pytest.raises(EnvironmentUnavailable, match="requires recovery"): await recovered.ensure(actor)
+        with pytest.raises(EnvironmentUnavailable, match="requires recovery") as pending:
+            await recovered.ensure(actor)
+        assert pending.value.reason == "reclaiming"
         assert infra.create_calls == 1 and recovered.store.get(actor)["epoch"] == old["epoch"]
-        resources.confirm_deleted.side_effect = None
-        new = await recovered.ensure(actor)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def confirm(**_):
+            entered.set()
+            await release.wait()
+
+        resources.confirm_deleted.reset_mock()
+        resources.confirm_deleted.side_effect = confirm
+        history = Path(old["workspace"]) / "agent/workspace/history.txt"
+        history.write_text("original fixture history")
+        waiters = [asyncio.create_task(recovered.ensure(actor)) for _ in range(6)]
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            await asyncio.sleep(0)
+            assert resources.confirm_deleted.await_count == 1
+            waiters[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiters[0]
+        finally:
+            release.set()
+        new, *others = await asyncio.gather(*waiters[1:])
+        assert others == [new] * 4
+        assert resources.confirm_deleted.await_count == 1
         assert new["epoch"] == old["epoch"] + 1 and infra.create_calls == 2
         assert new["workspace"] == old["workspace"]
+        assert history.read_text() == "original fixture history"
         with pytest.raises(EnvironmentUnavailable, match="epoch"):
             await recovered.instances._instance_lifecycle.confirm_deleted(AgentInfo(user_id=actor["user_id"],
                 agent_type="jiuwenswarm", sandbox_id=old["instance_id"], metadata={"instance_epoch": old["epoch"]}))

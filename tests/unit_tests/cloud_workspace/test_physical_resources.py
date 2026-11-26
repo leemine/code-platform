@@ -70,7 +70,9 @@ def stack(boundary, tmp_path, monkeypatch):
                 state["containers"] = {n: c for n, c in state["containers"].items() if c["Id"] != identifier}
                 status, value = 204, None
             else:
-                value = state["containers"].get(target.path.split("/")[2])
+                name = target.path.split("/")[2]
+                value = state["containers"].get(name) or next(
+                    (container for container in state["containers"].values() if container["Id"] == name), None)
                 status = 200 if value else 404
             raw = json.dumps(value).encode() if value else b""
             self.send_response(status); self.send_header("Content-Length", str(len(raw)))
@@ -428,13 +430,42 @@ def test_unknown_dispatch_with_no_observation_never_assumes_absence(stack):
     assert create(stack) == 502 and state["creates"] == 0
 
 
-@pytest.mark.parametrize("change", ["running", "exited", "image", "identity", "label", "frontend"])
-def test_no_compensation_without_exact_ownership_and_never_started_state(stack, monkeypatch, change):
+def test_exited_worker_deletion_uses_exact_observed_receipt_and_is_idempotent(stack):
+    _, _, state, _, restricted, payload = stack
+    assert create(stack) == 201
+    container = next(iter(state["containers"].values()))
+    container["State"].update(Status="exited", StartedAt="2026-11-10T00:00:00Z")
+    assert call(restricted, "POST", "/v1/confirm-deleted", payload)[0] == 200
+    assert call(restricted, "POST", "/v1/confirm-deleted", payload)[0] == 200
+    assert not state["containers"] and state["deletes"] == [container["Id"]]
+    assert create(stack) == 502 and state["creates"] == 1
+
+
+def test_worker_renamed_after_create_does_not_count_as_absent(stack):
+    _, _, state, _, restricted, payload = stack
+    assert create(stack) == 201
+    original, = state["containers"]
+    state["containers"]["renamed"] = state["containers"].pop(original)
+    assert call(restricted, "POST", "/v1/confirm-deleted", payload)[0] == 503
+    assert state["deletes"] == []
+
+
+@pytest.mark.parametrize("change", [
+    "running", "exited_unobserved", "exited_other_id", "restarting", "image", "identity", "label", "frontend",
+])
+def test_no_compensation_without_exact_ownership_and_safe_state(stack, monkeypatch, change):
     resources, request, state, proxy, restricted, payload = stack
     assert create(stack) == 201
     container = next(iter(state["containers"].values()))
     if change == "running": container["State"].update(Status="running", Running=True)
-    elif change == "exited": container["State"].update(Status="exited", StartedAt="2026-11-10T00:00:00Z")
+    elif change.startswith("exited_"):
+        container["State"].update(Status="exited", StartedAt="2026-11-10T00:00:00Z")
+        if change == "exited_other_id":
+            container["Id"] = "3" * 64
+        else:
+            receipt_path, = resources.root.glob("*/*.json")
+            resources.write(receipt_path, {**resources.read(receipt_path), "state": "SENT", "observed": False})
+    elif change == "restarting": container["State"].update(Status="exited", Restarting=True)
     elif change == "image": container["Image"] = "foreign"
     elif change == "identity": container["Mounts"][-1]["Source"] += "-foreign"
     elif change == "label": container["Config"]["Labels"][physical.LABEL] = "foreign"

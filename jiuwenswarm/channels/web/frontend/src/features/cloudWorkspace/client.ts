@@ -1,8 +1,11 @@
 import { getApiBase } from '../../utils/env';
 import { AccountAvailabilityError, accountResponseFailure, accountTransportFailure, type AccountFailureKind } from '../../services/accountAvailability';
 
+type EnvironmentFailureReason = 'reclaiming' | 'allocation_failed' | 'worker_not_ready';
+
 export class CloudRequestError extends AccountAvailabilityError {
-  constructor(readonly status: number, kind: AccountFailureKind = 'unavailable') {
+  constructor(readonly status: number, kind: AccountFailureKind = 'unavailable',
+    readonly environmentReason?: EnvironmentFailureReason) {
     super(kind);
   }
 }
@@ -22,7 +25,17 @@ export async function cloudRequest(path: string, body?: Record<string, unknown>,
       signal: controller.signal,
     });
     received = true;
-    if (!response.ok) throw new CloudRequestError(response.status, await accountResponseFailure(response));
+    if (!response.ok) {
+      let reason: EnvironmentFailureReason | undefined;
+      if (path === 'environment/ensure' && response.status === 503) {
+        const value = await response.clone().json().catch(() => null);
+        if (value?.code === 'ENVIRONMENT_UNAVAILABLE' &&
+          ['reclaiming', 'allocation_failed', 'worker_not_ready'].includes(value.reason)) {
+          reason = value.reason;
+        }
+      }
+      throw new CloudRequestError(response.status, await accountResponseFailure(response), reason);
+    }
     return await response.json();
   } catch (error) {
     if (error instanceof AccountAvailabilityError || received) throw error;

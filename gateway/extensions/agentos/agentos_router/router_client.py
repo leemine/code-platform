@@ -580,6 +580,7 @@ class AgentOSRouterClient(AgentServerClient):
         self._stale_cleanup_task: asyncio.Task[None] | None = None
         self._server_ready = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._ensuring_instances: dict[str, asyncio.Task[AgentRuntime]] = {}
         self._closed = False
         # 用户当前 agent_type（3rdagent.switch 成功后更新）；SSH 接入跟随此值。
         self._current_agent_types: dict[str, str] = {}
@@ -611,6 +612,23 @@ class AgentOSRouterClient(AgentServerClient):
         self._auth_client = authenticator
 
     async def ensure_instance(self, user_id: str) -> AgentRuntime:
+        task = self._ensuring_instances.get(user_id)
+        if task is None or task.done():
+            task = asyncio.create_task(self._ensure_instance_held(user_id))
+            self._ensuring_instances[user_id] = task
+            self._background_tasks.add(task)
+
+            def finished(done):
+                if self._ensuring_instances.get(user_id) is done:
+                    del self._ensuring_instances[user_id]
+                self._background_tasks.discard(done)
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _ensure_instance_held(self, user_id: str) -> AgentRuntime:
         if self._instance_lifecycle is not None:
             pending = self._instance_lifecycle.pending_delete(user_id)
             if pending is not None:
@@ -618,16 +636,6 @@ class AgentOSRouterClient(AgentServerClient):
             # Validate durable policy before evicting a failed memory entry.
             self._instance_lifecycle.plan(AgentInfo(user_id=user_id, agent_type=BUILTIN_AGENT_TYPE))
             await self._agent_manager.discard_failed(user_id, BUILTIN_AGENT_TYPE)
-        task = asyncio.create_task(self._ensure_instance_held(user_id))
-        self._background_tasks.add(task)
-        def finished(done):
-            self._background_tasks.discard(done)
-            if not done.cancelled():
-                done.exception()
-        task.add_done_callback(finished)
-        return await asyncio.shield(task)
-
-    async def _ensure_instance_held(self, user_id: str) -> AgentRuntime:
         runtime = await self._agent_manager.get_or_create_agent(
             user_id, BUILTIN_AGENT_TYPE, creator=self._create_agent, acquire=True,
         )

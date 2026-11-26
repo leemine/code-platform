@@ -514,8 +514,13 @@ class PhysicalResources:
                         or (receipt.get("observed") and receipt.get("container_id") != identifier)):
                     raise ValueError("physical container identity differs from the receipt")
                 state = value.get("State", {})
-                if (state.get("Status") != "created" or state.get("Running") is not False
-                        or state.get("StartedAt") != "0001-01-01T00:00:00Z"):
+                never_started = (state.get("Status") == "created"
+                                 and state.get("StartedAt") == "0001-01-01T00:00:00Z")
+                # Only compensate a Worker whose exact Docker create was recorded.
+                stopped_worker = (scope.get("role") is None and receipt["state"] == "CREATED"
+                                  and receipt.get("observed") is True and state.get("Status") == "exited")
+                if (state.get("Running") is not False or state.get("Paused") or state.get("Restarting")
+                        or not (never_started or stopped_worker)):
                     raise ValueError("physical resource requires original lifecycle recovery")
                 receipt.update(observed=True, container_id=identifier)
                 self.write(path, receipt)
@@ -526,13 +531,14 @@ class PhysicalResources:
                     raise ValueError("physical container still exists")
             elif not receipt.get("observed") and receipt["state"] not in ("NOT_SENT", "DELETED"):
                 raise ValueError("dispatch outcome is unknown; absence alone is insufficient")
-            if scope.get("role") in {"opencode", "codex"} and receipt.get("observed"):
+            if receipt.get("observed"):
+                kind = "Worker" if scope.get("role") is None else "OpenCode"
                 identifier = receipt.get("container_id")
                 if not isinstance(identifier, str) or not CONTAINER_ID.fullmatch(identifier):
-                    raise ValueError("invalid OpenCode physical create receipt")
+                    raise ValueError(f"invalid {kind} physical create receipt")
                 status, _ = self.docker("GET", "/containers/" + identifier + "/json")
                 if status != 404:
-                    raise ValueError("observed OpenCode container absence remains unconfirmed")
+                    raise ValueError(f"observed {kind} container absence remains unconfirmed")
             receipt.update(state="DELETED")
             self.write(path, receipt)
             return {"absent": True, "scope": scope["key"]}
