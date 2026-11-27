@@ -212,6 +212,11 @@ gateway = [
     "extensions/**/*.yml",
     "extensions/**/*.md",
     "extensions/data_sync/windows-cloud-root.crt",
+    "extensions/superagent/frontend/dist/*",
+    "extensions/superagent/orchestrator/dist/main.mjs",
+    "extensions/superagent/orchestrator/dist/zod.LICENSE",
+    "extensions/superagent/orchestrator/SOURCE.json",
+    "extensions/superagent/orchestrator/vendor/superagent/LICENSE",
 ]
 jiuwenbox = [
     "configs/**/*",
@@ -219,6 +224,10 @@ jiuwenbox = [
 ]
 
 [tool.setuptools.exclude-package-data]
+gateway = [
+    "extensions/superagent/orchestrator/node_modules/**",
+    "extensions/superagent/orchestrator/node_modules/**/*",
+]
 jiuwenswarm = [
     "channels/web/frontend/node_modules/**",
     "channels/web/frontend/node_modules/*",

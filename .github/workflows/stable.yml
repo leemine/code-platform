@@ -108,7 +108,9 @@ jobs:
                   tests/unit_tests/test_project_store.py
                   tests/unit_tests/test_external_model_settings.py)
           if [ "$PROFILE" = native ]; then
-            suites+=(tests/unit_tests/agentserver/test_session_token_usage.py
+            suites+=(gateway/extensions/superagent/tests
+                     tests/unit_tests/test_application_plugins.py
+                     tests/unit_tests/agentserver/test_session_token_usage.py
                      tests/unit_tests/agentserver/test_context_usage.py
                      tests/unit_tests/agentserver/test_adapter_host_contract.py
                      tests/unit_tests/common/test_external_cli_catalog.py
@@ -174,6 +176,14 @@ jobs:
           npm run test:model-reasoning
           npm run test:session-input
       - run: npm run build
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.22.2'
+      - name: Build and test SuperAgent application plugin
+        working-directory: .
+        run: |
+          sh gateway/extensions/superagent/build.sh
+          npm --prefix gateway/extensions/superagent/orchestrator test
       - name: Verify wheel web assets
         run: |
           uv build --wheel --out-dir "$RUNNER_TEMP/workspace-wheel" ../../../..
@@ -186,6 +196,13 @@ jobs:
           prefix = 'jiuwenswarm/channels/web/frontend/dist/'
           with zipfile.ZipFile(wheel) as archive:
               actual = {n[len(prefix):]: archive.read(n) for n in archive.namelist() if n.startswith(prefix) and not n.endswith('/')}
+              plugin = 'gateway/extensions/superagent/'
+              plugin_assets = ['frontend/dist/index.html', 'frontend/dist/app.js', 'frontend/dist/styles.css',
+                               'orchestrator/dist/main.mjs', 'orchestrator/dist/zod.LICENSE',
+                               'orchestrator/SOURCE.json', 'orchestrator/vendor/superagent/LICENSE']
+              for asset in plugin_assets:
+                  assert archive.read(plugin + asset) == (Path('../../../..') / plugin / asset).read_bytes()
+              assert not any(n.startswith(plugin) and '/node_modules/' in n for n in archive.namelist())
           assert expected and actual == expected, 'wheel frontend differs from the final build (including stale files)'
           print(f'Exact wheel frontend: {len(actual)} files')
           PYCODE

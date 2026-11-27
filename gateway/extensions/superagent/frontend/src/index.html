@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>SuperAgent 工单</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header><p>工作区</p><h1>SuperAgent 工单</h1></header>
+    <form id="new-ticket">
+      <label for="request">工作请求</label>
+      <textarea id="request" name="request" required maxlength="12000" rows="4"></textarea>
+      <button type="submit">提交工单</button>
+    </form>
+    <p id="feedback" role="status" aria-live="polite"></p>
+    <section aria-label="工单记录" id="tickets"></section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
