@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 27 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 28 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -26,11 +26,11 @@ generated: true
 | [gateway/common](#module-9) | 2 |
 | [gateway/extensions/cloud_workspace](#module-10) | 8 |
 | [gateway/extensions/data_sync](#module-11) | 3 |
-| [gateway/extensions/superagent](#module-12) | 1 |
+| [gateway/extensions/superagent](#module-12) | 2 |
 | [gateway/services](#module-13) | 10 |
 | [gateway/services/data_sync](#module-14) | 1 |
 | [jiuwenswarm/channels/web](#module-15) | 2 |
-| [jiuwenswarm/channels/web/frontend](#module-16) | 8 |
+| [jiuwenswarm/channels/web/frontend](#module-16) | 9 |
 | [jiuwenswarm/channels/web/frontend/src/components/ChatPanel](#module-17) | 1 |
 | [jiuwenswarm/common](#module-18) | 2 |
 | [jiuwenswarm/data_sync](#module-19) | 2 |
@@ -162,6 +162,7 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261128_0105_superagent-gateway-mvp](F_20261128_0105_superagent-gateway-mvp.md) | F | SuperAgent Gateway 工单与 OpenCode Worker | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/router_adapter.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/orchestrator/main.ts, gateway/extensions/superagent/orchestrator/sqlite.ts, pyproject.toml, MANIFEST.in | 无独立 D：用户在任务会话中批准实施，任务台账和 PNG 保存在管理仓。 |
+| [F_20261128_0848_superagent-original-interfaces](F_20261128_0848_superagent-original-interfaces.md) | F | SuperAgent 原界面接入 WorkSwarm | leemine | gateway/extensions/superagent, jiuwenswarm/channels/web/frontend | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/frontend/build.mjs, gateway/extensions/superagent/frontend/conversation.ts, jiuwenswarm/channels/web/frontend/src/applicationPlugins/managedConversation.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts | 无独立 D：用户在任务会话中批准原界面接入方案，原设计 PNG 与任务台账保存在管理仓。 |
 
 <a id="module-13"></a>
 
@@ -211,6 +212,7 @@ generated: true
 | [F_20261122_0213_opencode-cloud-runtime-ui](F_20261122_0213_opencode-cloud-runtime-ui.md) | F | Code 普通会话显示 OpenCode 云运行时名称 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/channels/web/frontend | gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useProjectRuntime.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0144-opencode-cloud-runtime-ui](../designs/active/D-20261122-0144-opencode-cloud-runtime-ui/design.md) |
 | [F_20261122_0955_managed-runtime-devices](F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 | [F_20261122_1551_named-codex-devices](F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](../designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261128_0848_superagent-original-interfaces](F_20261128_0848_superagent-original-interfaces.md) | F | SuperAgent 原界面接入 WorkSwarm | leemine | gateway/extensions/superagent, jiuwenswarm/channels/web/frontend | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/frontend/build.mjs, gateway/extensions/superagent/frontend/conversation.ts, jiuwenswarm/channels/web/frontend/src/applicationPlugins/managedConversation.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts | 无独立 D：用户在任务会话中批准原界面接入方案，原设计 PNG 与任务台账保存在管理仓。 |
 
 <a id="module-17"></a>
 

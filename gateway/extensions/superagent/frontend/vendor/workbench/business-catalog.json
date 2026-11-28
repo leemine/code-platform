@@ -1,0 +1,103 @@
+{
+  "mode": "simulation",
+  "assets": [
+    {
+      "id": "repayment-allocation",
+      "name": "消费贷还款分摊",
+      "projectId": "pj-order",
+      "description": "消费贷部分还款的累计应收分摊顺序与金额尾差处理。模拟数据用于验证规则版本追溯。",
+      "freshness": 91,
+      "checkedAt": "2026-10-22",
+      "owner": "模拟业务组",
+      "revisions": [
+        {
+          "id": "repayment-allocation-v1",
+          "publishedAt": "2026-09-16",
+          "source": { "label": "模拟发布单 ALLOC-101", "ref": "simulation://consumer-credit/alloc-101" },
+          "sections": [
+            { "id": "rounding-remainder", "title": "金额尾差归属", "body": "模拟规则 R1。将部分还款金额按既定顺序分摊到各笔借据。逐笔精确到分后产生正向尾差时，将尾差补记到未结本金最大的借据。若本金相同，按借据登记时间从早到晚选取。各分摊项合计必须等于入账还款金额。" },
+            { "id": "repayment-order", "title": "部分还款分摊顺序", "body": "模拟规则 R1。先冲减已到期费用，再冲减已到期利息，最后冲减本金。同一分摊项内优先处理到期日较早的借据。" }
+          ]
+        },
+        {
+          "id": "repayment-allocation-v2",
+          "publishedAt": "2026-10-22",
+          "source": { "label": "模拟发布单 ALLOC-207", "ref": "simulation://consumer-credit/alloc-207" },
+          "sections": [
+            { "id": "rounding-remainder", "title": "金额尾差归属", "body": "模拟规则 R2。根据已确定的分摊顺序计算部分还款金额。逐笔精确到分后产生正向尾差时，将尾差补记到未结本金最小且可入账的借据。若本金相同，按借据登记时间从早到晚选取。各分摊项合计必须等于入账还款金额。" },
+            { "id": "repayment-order", "title": "部分还款分摊顺序", "body": "模拟规则 R2。先冲减已到期费用，再冲减已到期利息，最后冲减本金。同一分摊项内到期日相同，按借据登记时间从早到晚处理。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "loan-approval",
+      "name": "消费贷审批流转",
+      "projectId": "pj-order",
+      "description": "申请单进入规则评估、待人工审批或资料补齐时的状态约束。",
+      "freshness": 83,
+      "checkedAt": "2026-11-02",
+      "owner": "模拟业务组",
+      "revisions": [
+        {
+          "id": "loan-approval-v1",
+          "publishedAt": "2026-09-26",
+          "source": { "label": "模拟发布单 APPROVAL-018", "ref": "simulation://consumer-credit/approval-018" },
+          "sections": [
+            { "id": "approval-transition", "title": "审批状态流转", "body": "模拟规则。申请提交后进入规则评估。规则给出转人工结果时进入待人工审批，记录触发原因。审核通过和驳回均为终态，不接受重复审核。" }
+          ]
+        },
+        {
+          "id": "loan-approval-v2",
+          "publishedAt": "2026-11-02",
+          "source": { "label": "模拟发布单 APPROVAL-037", "ref": "simulation://consumer-credit/approval-037" },
+          "sections": [
+            { "id": "approval-transition", "title": "审批状态流转", "body": "模拟规则。申请提交后进入规则评估。评估发现材料缺失时进入待补件，补齐后重新评估。规则给出转人工结果时进入待人工审批，并登记触发原因和受理时间。审批通过、驳回、用户撤回均为终态。" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "repayment-notices",
+      "name": "还款提醒去重",
+      "projectId": "pj-order",
+      "description": "到期提醒的幂等标识、发送前状态复核和下游失败后的重试。",
+      "freshness": 72,
+      "checkedAt": "2026-10-18",
+      "owner": "模拟业务组",
+      "revisions": [
+        {
+          "id": "repayment-notices-v1",
+          "publishedAt": "2026-10-18",
+          "source": { "label": "模拟发布单 NOTICE-042", "ref": "simulation://consumer-credit/notice-042" },
+          "sections": [
+            { "id": "reminder-deduplication", "title": "提醒去重与状态复核", "body": "模拟规则。按借据编号、还款期次和通知类型生成幂等标识。发送前重新读取当期还款状态，已结清时取消。下游超时只可按相同幂等标识重试，成功后记录回执编号。" }
+          ]
+        }
+      ]
+    }
+  ],
+  "useCases": [
+    {
+      "id": "UC-REPAY-01-v1",
+      "assetId": "repayment-allocation",
+      "title": "部分还款分摊的金额尾差",
+      "source": { "label": "模拟确认用例 REPAY-01", "ref": "simulation://consumer-credit/use-cases/repay-01-v1" },
+      "body": "前提：同一客户有两笔未结借据，A 的未结本金为 1800 元，B 为 600 元。操作：登记一笔部分还款，四舍五入后出现 0.01 元正向尾差。预期：将尾差加到未结本金较大的 A，所有分摊项合计与入账还款金额一致。"
+    },
+    {
+      "id": "UC-APPROVAL-01-v2",
+      "assetId": "loan-approval",
+      "title": "审批待补件后的重新评估",
+      "source": { "label": "模拟确认用例 APPROVAL-01", "ref": "simulation://consumer-credit/use-cases/approval-01-v2" },
+      "body": "前提：申请单在规则评估时发现证明文件缺失。操作：记录缺失项并进入待补件，随后收到完整文件。预期：进入重新评估，保留前一次评估记录；需要人审时登记触发原因和受理时间。"
+    },
+    {
+      "id": "UC-NOTICE-01-v1",
+      "assetId": "repayment-notices",
+      "title": "结清后取消到期提醒",
+      "source": { "label": "模拟确认用例 NOTICE-01", "ref": "simulation://consumer-credit/use-cases/notice-01-v1" },
+      "body": "前提：某笔借据当期有一条到期提醒等待发送。操作：在工作队列发送前结清该期，再执行发送前检查。预期：取消提醒，不记录发送成功回执。"
+    }
+  ]
+}

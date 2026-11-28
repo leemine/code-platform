@@ -121,6 +121,7 @@ class TicketService:
             "request": operation.get("original") if operation["kind"] == "start" else None,
             "routing_instruction": operation.get("instruction"),
             "followups": operation.get("inputs", []),
+            "reference": operation.get("reference") if operation["kind"] == "start" else None,
         }
         prompt = (
             "Execute the authorized work in the configured Code project. Use the current project directory "
@@ -247,11 +248,16 @@ class TicketService:
         if len(answers) != len(questions):
             raise SidecarError("BAD_REQUEST")
         for answer, question in zip(answers, questions, strict=True):
-            if answer.get("question") != question.get("question"):
+            card = question.get("card_id")
+            if answer.get("question") != question.get("question") or (
+                "card_id" in answer and answer["card_id"] != card
+            ):
                 raise SidecarError("STALE_INTERACTION")
+            if card is not None:
+                answer["card_id"] = card
             options = {item.get("value", item.get("label")) for item in question.get("options", [])}
             selected = answer.get("selected_options", ())
-            if not set(selected).issubset(options) or (len(selected) > 1 and not question.get("multiSelect")):
+            if not set(selected).issubset(options) or (len(selected) > 1 and not (question.get("multi_select") or question.get("multiSelect"))):
                 raise SidecarError("INVALID_ANSWER")
             if pending.payload["source"] == "permission_interrupt" and (
                 len(selected) != 1 or answer.get("custom_input")

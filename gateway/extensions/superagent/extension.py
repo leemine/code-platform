@@ -85,10 +85,18 @@ class SuperAgentPlugin(ApplicationPluginExtension):
         return self.api.routes() if self.api is not None else ()
 
     def frontend_contributions(self):
-        return (FrontendContribution(
-            id="superagent-tickets", nav_key="app:superagent", title="SuperAgent 工单",
-            render_mode="iframe", entrypoint="index.html", position=180,
-        ),)
+        pages = (
+            FrontendContribution(id="superagent-panel", nav_key="app:superagent", title="SuperAgent",
+                                 render_mode="iframe", entrypoint="panel.html", position=180),
+            FrontendContribution(id="superagent-workbench", nav_key="app:superagent-workbench", title="Workbench",
+                                 render_mode="iframe", entrypoint="workbench.html", position=181),
+        )
+        if self.settings.get("acceptance_page") is True:
+            pages += (FrontendContribution(
+                id="superagent-tickets", nav_key="app:superagent-acceptance", title="SuperAgent 验收",
+                render_mode="iframe", entrypoint="index.html", position=182,
+            ),)
+        return pages
 
     async def shutdown(self):
         try:

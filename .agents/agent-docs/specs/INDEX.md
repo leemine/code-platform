@@ -71,7 +71,7 @@ generated: true
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
-| [S_05_superagent-web-tickets](gateway/S_05_superagent-web-tickets.md) | S | SuperAgent Web 工单插件契约 | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/api.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/orchestrator/main.ts | — |
+| [S_05_superagent-web-tickets](gateway/S_05_superagent-web-tickets.md) | S | SuperAgent Web 工单插件契约 | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/api.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/orchestrator/main.ts | — |
 
 <a id="module-6"></a>
 

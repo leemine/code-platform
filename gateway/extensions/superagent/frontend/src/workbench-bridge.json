@@ -1,0 +1,30 @@
+[
+  [
+    "  let pendingSend;",
+    "  let pendingSend;\n  let selectedThread = '';"
+  ],
+  [
+    "    const fields = { text, projectId, asset, useCaseId };",
+    "    const fields = { text, projectId, asset, useCaseId, threadId: selectedThread || undefined };"
+  ],
+  [
+    "    if (!response.ok) throw new Error(payload);",
+    "    if (!response.ok) throw new Error(payload.detail || String(payload));"
+  ],
+  [
+    "    return `<div class=\"quick-row\">",
+    "    const options = Array.from(rooms.values()).filter(item => item.sessionId && !item.stopped && !item.uncertain);\n    const active = rooms.get(selectedThread);\n    return `<div class=\"quick-row\">\n      <label>话题 <select id=\"workbench-topic\" data-testid=\"workbench-topic-select\" aria-label=\"选择话题\">\n        <option value=\"\">新话题</option>\n        ${options.map(item => `<option value=\"${esc(item.id)}\"${item.id === selectedThread ? ' selected' : ''}>${esc(title(item))}</option>`).join('')}\n      </select></label>\n      ${active?.sessionId ? `<a class=\"q\" data-testid=\"workbench-open-session\" target=\"_top\" href=\"/chat/${encodeURIComponent(active.sessionId)}?application=superagent\">打开 WorkSwarm 会话${active.pendingApproval ? ' · 待审批' : ''}</a>` : ''}"
+  ],
+  [
+    "    store.sendMessage = send;",
+    "    document.addEventListener('change', event => {\n      if (event.target.id !== 'workbench-topic') return;\n      selectedThread = event.target.value;\n      emit();\n    });\n    store.sendMessage = send;"
+  ],
+  [
+    "room.phase === 'awaiting_decision' && workerId === 'w-review'",
+    "room.phase === 'awaiting_decision' && room.businessDecision"
+  ],
+  [
+    "room.expert?.id === 'w-review' ? room.id : undefined",
+    "room.businessDecision ? room.id : undefined"
+  ]
+]

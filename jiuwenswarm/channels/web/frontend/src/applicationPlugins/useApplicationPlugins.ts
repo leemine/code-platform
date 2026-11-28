@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchApplicationPlugins } from './manifest';
+import { configureApplicationConversations } from './managedConversation';
 import type { ApplicationPluginContribution } from './types';
 
 export interface ApplicationPluginsState {
@@ -20,7 +21,9 @@ export function useApplicationPlugins(isGatewayConnected: boolean): ApplicationP
     setLoading(true);
     setError('');
     try {
-      setPlugins(await fetchApplicationPlugins());
+      const next = await fetchApplicationPlugins();
+      configureApplicationConversations(next);
+      setPlugins(next);
     } catch (refreshError) {
       console.warn('Application plugin discovery failed:', refreshError);
       setError(refreshError instanceof Error ? refreshError.message : 'Application plugin discovery failed');
@@ -41,6 +44,7 @@ export function useApplicationPlugins(isGatewayConnected: boolean): ApplicationP
     setError('');
     void fetchApplicationPlugins(controller.signal)
       .then(nextPlugins => {
+        configureApplicationConversations(nextPlugins);
         setPlugins(nextPlugins);
         setError('');
       })
