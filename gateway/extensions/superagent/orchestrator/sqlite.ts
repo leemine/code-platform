@@ -10,6 +10,7 @@ interface Operation {
   ticketId?: string
   assignmentId?: string
   inputIds?: string[]
+  report?: { state: string, summary: string, at: string }
   state: 'queued' | 'claimed' | 'uncertain' | 'done'
 }
 

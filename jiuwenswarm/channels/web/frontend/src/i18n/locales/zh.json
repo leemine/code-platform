@@ -4497,6 +4497,7 @@
     "requestTimeout": "请求超时",
     "requestAborted": "请求已取消",
     "requestFailed": "请求失败",
+    "applicationTextOnly": "此会话的跟进目前仅支持文本。",
     "sendMessageFailed": "发送消息失败",
     "interruptFailed": "中断失败",
     "pauseFailed": "暂停失败",

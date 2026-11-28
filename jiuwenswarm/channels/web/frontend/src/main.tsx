@@ -17,6 +17,13 @@ import './styles/foundation.css'
 import './styles/themes/default/light.css'
 import './index.css'
 import './features/a2ui/a2ui.css'
+import { registerApplicationConversation, type PluginConversationModule } from './applicationPlugins/managedConversation';
+
+const conversationModules = import.meta.glob<PluginConversationModule>(
+  '../../../../../gateway/extensions/*/frontend/conversation.ts',
+  { eager: true },
+);
+Object.values(conversationModules).forEach(registerApplicationConversation);
 
 // Durable desktop drop bridge — must exist before ChatPanel mounts / effect cleanup.
 installDesktopLocalFilesBridge();

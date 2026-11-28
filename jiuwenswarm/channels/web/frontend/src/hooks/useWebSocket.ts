@@ -4,6 +4,7 @@
  * 管理 WebSocket 连接和消息处理
  */
 
+import { resolveApplicationConversation, useApplicationConversationAvailability } from '../applicationPlugins/managedConversation';
 import { isConversationModelGroupBlocked } from '../multi-session/state/conversationModelSelection';
 import { parseModelSelection } from '../features/settings/modules/models/modelGroupAdapters';
 import { isMultiModelCollaborationEnabled } from '../features/multiModelCollaboration/featureConfig';
@@ -1016,6 +1017,48 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onModelsUpdated,
     onCronResultArrived,
   } = options;
+  const availableConversations = useApplicationConversationAvailability();
+  useEffect(() => {
+    if (!activeSessionId || !availableConversations.size) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let conversation: Awaited<ReturnType<typeof resolveApplicationConversation>> = null;
+    const synchronize = async () => {
+      let retry = true;
+      try {
+        conversation ??= await resolveApplicationConversation(activeSessionId);
+        if (controller.signal.aborted) return;
+        if (!conversation) {
+          retry = false;
+          return;
+        }
+        const pending = await conversation.pending(controller.signal);
+        if (controller.signal.aborted) return;
+        const store = useChatStore.getState();
+        const queue = store.getRuntime(activeSessionId)?.pendingQuestions ?? [];
+        const identity = pending ? pendingQuestionIdentity(pending) : undefined;
+        for (const question of queue) {
+          if (question.applicationManaged && pendingQuestionIdentity(question) !== identity) {
+            store.consumePendingQuestion(activeSessionId, question);
+          }
+        }
+        if (pending && identity && !queue.some(question =>
+          question.applicationManaged && pendingQuestionIdentity(question) === identity,
+        )) {
+          store.enqueuePendingQuestion(activeSessionId, pending);
+        }
+      } catch {
+        // Preserve the last confirmed card while the gateway is unavailable.
+      } finally {
+        if (retry && !controller.signal.aborted) timer = setTimeout(synchronize, 1200);
+      }
+    };
+    void synchronize();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [activeSessionId, availableConversations]);
   const activeSessionMode = useSessionStore(
     (state) => state.runtimes[activeSessionId ?? '']?.mode,
   );
@@ -1962,6 +2005,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     }
   }, []);
 
+  const pendingApplicationSends = useRef(new Map<string, { content: string; id: string }>());
   // 发送聊天消息
   const sendMessage = useCallback(
     async (
@@ -1974,6 +2018,29 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         assistance_origin: 'none',
       },
     ): Promise<boolean> => {
+      try {
+        const conversation = await resolveApplicationConversation(sessionId);
+        if (conversation) {
+          if (!content.trim() || mediaItems.length || options?.queuedTaskId) {
+            onErrorRef.current?.(t('network.applicationTextOnly'));
+            return false;
+          }
+          const pending = pendingApplicationSends.current.get(sessionId);
+          const operation = pending?.content === content ? pending : { content, id: generateUuidV4() };
+          pendingApplicationSends.current.set(sessionId, operation);
+          await conversation.follow(content, operation.id);
+          if (pendingApplicationSends.current.get(sessionId) === operation) {
+            pendingApplicationSends.current.delete(sessionId);
+          }
+          useChatStore.getState().addMessage(sessionId, {
+            id: operation.id, role: 'user', content, timestamp: new Date().toISOString(),
+          });
+          return true;
+        }
+      } catch {
+        onErrorRef.current?.(t('network.sendMessageFailed'));
+        return false;
+      }
       if (!options?.queuedTaskId && selectedExpertTeamId(sessionId)) {
         if (!content.trim() && !mediaItems.length) return false;
         try {
@@ -2754,6 +2821,16 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           !pendingMatches || pendingQuestion?.source !== 'permission_interrupt' ||
           !pendingQuestionIdentity(pendingQuestion) || !permissionAnswers.length
         )) return false;
+        if (pendingMatches && !pendingQuestion.duplexJobId && (pendingQuestion.applicationManaged ||
+          effectiveSource === 'permission_interrupt' || effectiveSource === 'ask_user_interrupt')) {
+          const conversation = await resolveApplicationConversation(sessionId);
+          if (conversation) {
+            await conversation.answer(requestId, permissionAnswers);
+            useChatStore.getState().consumePendingQuestion(sessionId, pendingQuestion);
+            return true;
+          }
+          if (pendingQuestion.applicationManaged) return false;
+        }
         if (pendingMatches && pendingQuestion?.duplexJobId) {
           await request('video.search.answer', {
             session_id: sessionId,

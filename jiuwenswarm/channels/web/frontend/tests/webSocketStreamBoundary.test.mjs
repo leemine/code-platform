@@ -16,6 +16,9 @@ let useWebSocket;
 let useChatStore;
 let useSessionStore;
 let webClient;
+let configureApplicationConversations;
+let registerApplicationConversation;
+let superagentConversation;
 
 before(async () => {
   const cacheDir = fileURLToPath(new URL('node_modules/.cache/websocket-stream-boundary/', frontendRoot));
@@ -28,6 +31,8 @@ before(async () => {
       { in: 'src/stores/chatStore.ts', out: 'chatStore' },
       { in: 'src/stores/sessionStore.ts', out: 'sessionStore' },
       { in: 'src/services/webClient.ts', out: 'webClient' },
+      { in: 'src/applicationPlugins/managedConversation.ts', out: 'managedConversation' },
+      { in: '../../../../gateway/extensions/superagent/frontend/conversation.ts', out: 'superagentConversation' },
     ],
     absWorkingDir: fileURLToPath(frontendRoot),
     bundle: true,
@@ -42,6 +47,10 @@ before(async () => {
   ({ useChatStore } = await import(pathToFileURL(join(cacheDir, 'chatStore.js')).href));
   ({ useSessionStore } = await import(pathToFileURL(join(cacheDir, 'sessionStore.js')).href));
   ({ webClient } = await import(pathToFileURL(join(cacheDir, 'webClient.js')).href));
+  ({ configureApplicationConversations, registerApplicationConversation } =
+    await import(pathToFileURL(join(cacheDir, 'managedConversation.js')).href));
+  ({ applicationPluginConversation: superagentConversation } =
+    await import(pathToFileURL(join(cacheDir, 'superagentConversation.js')).href));
 });
 
 function installDom() {
@@ -116,15 +125,19 @@ async function mountConnection(context, sessionIds) {
     useSessionStore.getState().ensureRuntime(sessionId);
     useSessionStore.getState().setMode(sessionId, 'agent');
   }
-  function Probe() {
-    useWebSocket({ activeSessionId: sessionIds[0] });
+  let connectionApi;
+  function Probe({ sessionId }) {
+    connectionApi = useWebSocket({ activeSessionId: sessionId });
     return null;
   }
-  await act(async () => root.render(createElement(Probe)));
+  const showSession = sessionId => act(async () => root.render(createElement(Probe, { sessionId })));
+  await showSession(sessionIds[0]);
   assert.equal(webClient.getState(), 'ready');
   assert.equal(dom.sockets.length, 1);
   const socket = dom.sockets[0];
   return {
+    showSession,
+    send: (text, sessionId) => connectionApi.sendMessage(text, sessionId),
     runtime: (sessionId = sessionIds[0]) => useChatStore.getState().getRuntime(sessionId),
     async snapshot(runtime) {
       const pending = webClient.request('session.get_metadata', { session_id: sessionIds[0], runtime_resume: { after: 0 } });
@@ -518,4 +531,71 @@ test('retained historical replay preserves completed bubbles and time through th
     connection.tick(100);
     assert.ok(connection.runtime().messages.some(message => message.content === 'new output'));
   } finally { await connection.dispose(); }
+});
+
+
+test('managed approval refresh clears only the plugin card after reopening a session', async context => {
+  const managed = 'managed-approval-session';
+  const other = 'other-approval-session';
+  const questions = [{ question: 'Proceed?', header: 'Approval', options: [{ label: 'Approve' }] }];
+  let pending = { request_id: 'plugin-card', questions, source: 'ask_user_interrupt', applicationManaged: true };
+  const lookup = context.mock.fn(async sessionId => sessionId === managed
+    ? { pending: async () => pending }
+    : null);
+  registerApplicationConversation({ applicationPluginId: 'approval-fixture', applicationPluginConversation: lookup });
+  const connection = await mountConnection(context, [managed, other]);
+  try {
+    await act(async () => configureApplicationConversations([{ plugin_id: 'approval-fixture', enabled: false }]));
+    assert.equal(lookup.mock.callCount(), 0);
+    await act(async () => configureApplicationConversations([{ plugin_id: 'approval-fixture', enabled: true }]));
+    assert.deepEqual(connection.runtime().pendingQuestions.map(item => item.request_id), ['plugin-card']);
+    act(() => useChatStore.getState().enqueuePendingQuestion(managed, { request_id: 'native-card', questions }));
+    await connection.showSession(other);
+    pending = null;
+    await connection.showSession(managed);
+    assert.deepEqual(connection.runtime().pendingQuestions.map(item => item.request_id), ['native-card']);
+  } finally {
+    await act(async () => configureApplicationConversations([]));
+    await connection.dispose();
+  }
+});
+
+test('a managed submission retry reuses its ID after a lost response', async context => {
+  const session = 'managed-followup-session';
+  const sent = [];
+  const follow = async (content, id) => {
+    sent.push({ content, id });
+    if (sent.length === 1) throw new Error('Response lost');
+  };
+  registerApplicationConversation({ applicationPluginId: 'send-fixture',
+    applicationPluginConversation: async id => id === session ? { pending: async () => null, follow } : null });
+  const connection = await mountConnection(context, [session]);
+  try {
+    await act(async () => configureApplicationConversations([{ plugin_id: 'send-fixture', enabled: true }]));
+    await act(async () => {
+      assert.equal(await connection.send('Continue', session), false);
+      assert.equal(await connection.send('Continue', session), true);
+      assert.equal(await connection.send('Continue', session), true);
+    });
+    assert.equal(sent[0].id, sent[1].id);
+    assert.notEqual(sent[1].id, sent[2].id);
+  } finally {
+    await act(async () => configureApplicationConversations([]));
+    await connection.dispose();
+  }
+});
+
+
+test('only a confirmed SuperAgent session fails closed during a Gateway lookup outage', async context => {
+  let unavailable = true;
+  context.mock.method(globalThis, 'fetch', async () => {
+    if (unavailable) throw new Error('Gateway lookup unavailable');
+    return Response.json({ id: 'ticket', session_id: 'confirmed-worker', interaction: null });
+  });
+  assert.equal(await superagentConversation('ordinary-session'), null);
+  unavailable = false;
+  assert.ok(await superagentConversation('confirmed-worker'));
+  unavailable = true;
+  await assert.rejects(superagentConversation('confirmed-worker'), /Gateway lookup unavailable/);
+  assert.equal(await superagentConversation('another-ordinary-session'), null);
 });

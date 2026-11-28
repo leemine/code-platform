@@ -4500,6 +4500,7 @@
     "requestTimeout": "Request timed out",
     "requestAborted": "Request aborted",
     "requestFailed": "Request failed",
+    "applicationTextOnly": "Follow-ups in this conversation currently support plain text.",
     "sendMessageFailed": "Failed to send message",
     "interruptFailed": "Interrupt failed",
     "pauseFailed": "Pause failed",

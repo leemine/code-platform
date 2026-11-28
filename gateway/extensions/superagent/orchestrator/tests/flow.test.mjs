@@ -125,3 +125,82 @@ test('revocation fences dispatch and allows only stop to be retried after restar
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('Workbench follow-up and direct conversation follow-up share only the bound Worker', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'superagent-workbench-'));
+  const side = await open(join(home, 'state.sqlite'));
+  const c = side.call;
+  const alice = { owner: 'alice' };
+  try {
+    const initial = { ...request('one', 'Initial'), topic_id: 'topic-one', is_follow: false,
+      evidence: { citation: { assetId: 'asset-a' }, content: 'fixed source bytes' } };
+    const submitted = await c('workbench_message', initial);
+    assert.equal((await c('workbench_message', initial)).id, submitted.id);
+    await route(side, { action: 'accept', title: 'Fixture', instruction: 'Do it', reason: 'New request' });
+    const work = await c('claim', { kind: 'worker' });
+    assert.equal(work.reference, 'fixed source bytes');
+    await c('bound', { operation_id: work.id, session_id: 'session-a', project_dir: home });
+    const ticket = await c('managed_session', { ...alice, session_id: 'session-a' });
+    assert.equal(ticket.id, work.ticketId);
+    const panel = await c('management', { ...alice, view: 'ticket', id: ticket.id });
+    assert.equal(panel.sessionId, 'session-a');
+    assert.equal(panel.threads[0].tickets[0].id, ticket.id);
+    assert.deepEqual(panel.channels, []);
+    await assert.rejects(c('managed_session', { owner: 'bob', session_id: 'session-a' }), /NOT_FOUND/);
+    await c('report', { operation_id: work.id, report: { state: 'ready', summary: 'Done' } });
+    const follow = { ...request('two', 'Bump'), topic_id: 'topic-one', is_follow: true };
+    await assert.rejects(c('workbench_message', { ...follow, owner: 'bob' }), /NOT_FOUND/);
+    const first = await c('workbench_message', follow);
+    assert.equal(first.ticket.id, ticket.id);
+    assert.equal((await c('workbench_message', follow)).id, first.id);
+    await c('follow', { ...request('three', 'Another detail'), ticket_id: ticket.id });
+    assert.equal(await c('claim', { kind: 'route' }), null);
+    const resumed = await c('claim', { kind: 'worker' });
+    assert.equal(resumed.session_id, 'session-a');
+    await c('started_with_inputs', { operation_id: resumed.id });
+    const delivery = await c('claim', { kind: 'worker' });
+    assert.equal(delivery.ticketId, ticket.id);
+    assert.equal(delivery.session_id, 'session-a');
+    assert.deepEqual(delivery.inputs.map(input => input.text), ['Bump', 'Another detail']);
+    const [room] = await c('workbench_topics', { ...alice, topic_id: 'topic-one' });
+    assert.equal(room.ticket.id, ticket.id);
+    assert.deepEqual(room.messages.map(message => message.text), ['Initial', 'Bump', 'Another detail']);
+    assert.deepEqual(await c('workbench_topics', { owner: 'bob', topic_id: 'topic-one' }), []);
+  } finally {
+    await side.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a Workbench business ruling binds to the current report and deduplicates', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'superagent-ruling-'));
+  const side = await open(join(home, 'state.sqlite'));
+  const c = side.call;
+  try {
+    await c('workbench_message', { ...request('origin', 'Compare rules'), topic_id: 'review',
+      evidence: { citation: { assetId: 'asset-a' }, content: 'pinned rules' } });
+    await route(side, { action: 'accept', title: 'Rule review', instruction: 'Compare', reason: 'New review' });
+    const work = await c('claim', { kind: 'worker' });
+    await c('bound', { operation_id: work.id, session_id: 'review-session', project_dir: home });
+    await c('waiting', { operation_id: work.id, question: 'Allow tool?' });
+    const read = () => c('ticket', { owner: 'alice', ticket_id: work.ticketId });
+    const pending = await read();
+    const ruling = { ...request('choice', 'Apply published rule'), topic_id: 'review', ticket_id: work.ticketId,
+      attention_id: pending.attention.id, choice: 'published' };
+    await assert.rejects(c('workbench_ruling', ruling), /STALE_INTERACTION/);
+    await c('report', { operation_id: work.id, report: { state: 'blocked', summary: 'Conflict', question: 'Which rule?' } });
+    const blocked = await read();
+    const answer = { ...ruling, attention_id: blocked.attention.id };
+    const result = await c('workbench_ruling', answer);
+    assert.equal(result.ticket.session_id, 'review-session');
+    assert.equal((await c('workbench_ruling', answer)).id, result.id);
+    await assert.rejects(c('workbench_ruling', { ...answer, operation_id: 'different-answer' }), /STALE_INTERACTION/);
+    assert.equal(await c('claim', { kind: 'route' }), null);
+    const delivery = await c('claim', { kind: 'worker' });
+    assert.equal(delivery.session_id, 'review-session');
+    assert.deepEqual(delivery.inputs.map(input => input.text), ['Apply published rule']);
+  } finally {
+    await side.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

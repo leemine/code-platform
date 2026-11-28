@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
+import { managementView } from './management.ts'
 import { Engine, key, latestAssignment, ticketStage, type Ticket, type Trigger, type WorkerReport }
   from './vendor/superagent/src/core/index.ts'
 import { SettingsSchema, settingsPolicy } from './vendor/superagent/src/policy.ts'
@@ -18,7 +19,10 @@ const Decision = z.discriminatedUnion('action', [
 const Report = z.object({ state: z.enum(['ready', 'blocked', 'failed']), summary: Text,
   question: z.string().trim().min(1).max(1000).optional() }).strict()
 type Args = Record<string, unknown>
-type RequestRecord = { owner: string, triggerId: string, ticketId?: string, digest: string }
+type RequestRecord = { owner: string, triggerId: string, ticketId?: string, digest: string,
+  explicitFollow?: boolean, topicId?: string, citation?: unknown }
+type Topic = { owner: string, triggerId: string }
+const Evidence = z.object({ citation: z.unknown(), content: z.string().max(8000) }).strict()
 type Binding = { session_id: string, project_dir: string, owner: string }
 
 class Refusal extends Error {
@@ -86,6 +90,7 @@ function projection(ticket: Ticket) {
   return {
     id: ticket.id, title: ticket.title, stage: ticketStage(ticket), outcome: ticket.ended?.outcome,
     assignments: ticket.assignments, attention: ticket.attention, session_id: binding?.session_id,
+    report: latestAssignment(ticket)?.report, ended: ticket.ended,
     uncertain: operations.some(operation => operation.state === 'uncertain'),
     stop: stop?.state,
   }
@@ -112,7 +117,12 @@ function receive(params: Args, follow: boolean) {
   const text = Text.parse(params.text)
   const ticketId = follow ? Identifier.parse(params.ticket_id) : undefined
   const triggerId = key('request', owner, requestId)
-  const digest = key('payload', ticketId ?? '', text)
+  const topicId = Identifier.optional().parse(params.topic_id)
+  const evidence = Evidence.optional().parse(params.evidence)
+  const ruling = Identifier.optional().parse(params.attention_id)
+  const digest = topicId || evidence || ruling
+    ? key('payload', ticketId ?? '', text, topicId ?? '', JSON.stringify(evidence ?? null), ruling ?? '')
+    : key('payload', ticketId ?? '', text)
   const prior = store.get<RequestRecord>('request', triggerId)
   if (prior) {
     if (prior.digest !== digest) throw new Refusal('CONFLICT')
@@ -121,17 +131,30 @@ function receive(params: Args, follow: boolean) {
   const ticket = ticketId ? ownedTicket(ticketId, owner) : undefined
   if (ticket?.ended?.by === 'human') throw new Refusal('TICKET_STOPPED')
   if (ticket && projection(ticket).uncertain) throw new Refusal('EXECUTION_UNCERTAIN')
-  const origin = ticket ? store.triggers.get(ticket.origin.triggerId) : undefined
-  const thread = origin?.threads[0]?.id ?? triggerId
+  if (ruling && (!ticket?.attention || ticket.attention.id !== ruling
+      || latestAssignment(ticket)?.report?.state !== 'blocked')) throw new Refusal('STALE_INTERACTION')
+  if (ruling) {
+    if (store.get('ruling', ruling)) throw new Refusal('STALE_INTERACTION')
+    store.put('ruling', ruling, { ticketId, triggerId, choice: params.choice })
+  }
+  // Explicit follow-ups use a private Core thread dedicated to this Ticket.
+  // The first input attaches it before evaluation. Later inputs fan out only to it.
+  const thread = ticket ? key('worker-thread', owner, ticket.id) : triggerId
   const trigger: Trigger = {
     id: triggerId, source, threads: [{ source, id: thread }], actor: { source, id: owner },
     human: true, addressed: 'direct', text, at: new Date().toISOString(),
     channel: { source, thread, address: { messageId: triggerId } }, meta: {},
   }
-  const record = { owner, triggerId, ticketId, digest }
+  const record = { owner, triggerId, ticketId, digest, explicitFollow: follow,
+    topicId, citation: evidence?.citation }
   store.put('request', triggerId, record)
+  if (evidence) store.put('reference', triggerId, evidence.content)
   engine.receive(trigger)
-  engine.evaluateDue()
+  if (ticket) {
+    if (!store.triggers.disposition(triggerId)?.fanout.includes(ticket.id)) {
+      engine.attach(ticket.id, triggerId)
+    }
+  } else engine.evaluateDue()
   return requestProjection(record)
 }
 
@@ -157,6 +180,12 @@ function claim(kind: string) {
       if (!candidate || operation.evalId !== candidate.evalId) { settle(operation); continue }
       const trigger = store.triggers.get(operation.triggerId!)!
       if (!members.includes(trigger.actor.id)) { settle(operation); continue }
+      if (store.get<RequestRecord>('request', trigger.id)?.explicitFollow) {
+        engine.decide(trigger.id, { kind: 'ignore', evalId: candidate.evalId,
+          reason: 'Explicit follow-up stays with its original Ticket' })
+        settle(operation)
+        continue
+      }
       const tickets = store.tickets.list().filter(ticket => ticket.mandate.actor.id === trigger.actor.id
         && ticket.ended?.by !== 'human').slice(0, 20).map(ticket => ({ id: ticket.id, title: ticket.title }))
       engine.candidateDelivered(candidate.evalId)
@@ -181,16 +210,71 @@ function claim(kind: string) {
     const origin = store.triggers.get(ticket.origin.triggerId)
     const inputIds = (operation.inputIds ?? []).filter(id => ticket.undelivered.includes(id))
     const inputs = ticket.inputs.flatMap(input => inputIds.includes(input.id) && input.kind === 'trigger'
-      ? [{ text: store.triggers.get(input.triggerId)?.text ?? '', note: input.note }] : [])
+      ? [{ text: store.triggers.get(input.triggerId)?.text ?? '', note: input.note, reference: store.get<string>('reference', input.triggerId) }] : [])
     if (operation.kind === 'deliver' && (!binding || inputs.length === 0)) { settle(operation); continue }
     settle(operation, 'claimed')
     return {
       ...operation, inputIds, owner, session_id: binding?.session_id, project_dir: binding?.project_dir,
       title: ticket.title,
-      instruction: ticket.execution?.assignment, original: origin?.text, inputs,
+      instruction: ticket.execution?.assignment, original: origin?.text,
+      reference: origin && store.get<string>('reference', origin.id), inputs,
     }
   }
   return null
+}
+
+function boundTicket(sessionId: string, owner: string) {
+  const id = store.get<string>('session_ticket', sessionId)
+    ?? store.tickets.list().find(ticket =>
+      store.get<Binding>('binding', ticket.id)?.session_id === sessionId)?.id
+  if (!id) throw new Refusal('NOT_FOUND')
+  return ownedTicket(id, owner)
+}
+
+function topics(owner: string, topicId?: string) {
+  const records = store.list<RequestRecord>('request').filter(record => record.owner === owner)
+  return store.list<Topic>('topic').filter(topic => topic.owner === owner)
+    .flatMap(topic => {
+      const root = store.get<RequestRecord>('request', topic.triggerId)!
+      if (topicId && root.topicId !== topicId) return []
+      const route = requestProjection(root)
+      const messages = records.filter(record => record.topicId === root.topicId
+          || (route.ticket && record.explicitFollow && record.ticketId === route.ticket.id && !record.topicId))
+        .map(record => {
+          const trigger = store.triggers.get(record.triggerId)!
+          return { id: trigger.id, text: trigger.text, at: trigger.at, citation: record.citation }
+        })
+      const ticket = route.ticket && store.tickets.get(route.ticket.id)
+      const topicsTriggers = new Set(messages.map(message => message.id))
+      const relatedInputs = ticket?.inputs.filter(input => input.kind === 'trigger'
+        && topicsTriggers.has(input.triggerId)).map(input => input.id) ?? []
+      const reports = ticket ? ticketOperations(ticket.id).flatMap(operation => {
+        if (!operation.report) return []
+        const matches = operation.kind === 'start' ? topicsTriggers.has(ticket.origin.triggerId)
+          : operation.inputIds?.some(id => relatedInputs.includes(id))
+        return matches ? [{ id: operation.id, ...operation.report }] : []
+      }) : []
+      return [{ id: root.topicId, messages, reports, ticket: route.ticket, route: route.route,
+        status: route.status, citation: root.citation,
+        ruling: route.ticket?.attention && store.get('ruling', route.ticket.attention.id) }]
+    }).slice(-100)
+}
+
+function workbenchMessage(params: Args) {
+  const owner = user(params.owner)
+  const topicId = Identifier.parse(params.topic_id)
+  const known = store.get<Topic>('topic', key('topic', owner, topicId))
+  if (params.is_follow === true) {
+    if (!known) throw new Refusal('NOT_FOUND')
+    const root = store.get<RequestRecord>('request', known.triggerId)!
+    const ticket = requestProjection(root).ticket
+    if (!ticket?.session_id) throw new Refusal('CONFLICT')
+    return receive({ ...params, ticket_id: ticket.id }, true)
+  }
+  const result = receive(params, false)
+  if (known && known.triggerId !== result.id) throw new Refusal('CONFLICT')
+  if (!known) store.put('topic', key('topic', owner, topicId), { owner, triggerId: result.id })
+  return result
 }
 
 function dispatch(method: string, params: Args) {
@@ -207,6 +291,21 @@ function dispatch(method: string, params: Args) {
   }
   if (!configured) throw new Refusal('NOT_CONFIGURED')
   if (method === 'submit' || method === 'follow') return receive(params, method === 'follow')
+  if (method === 'managed_session') {
+    return projection(boundTicket(Identifier.parse(params.session_id), user(params.owner)))
+  }
+  if (method === 'workbench_message') return workbenchMessage(params)
+  if (method === 'workbench_ruling') {
+    z.enum(['published', 'exception']).parse(params.choice)
+    const [topic] = topics(user(params.owner), Identifier.parse(params.topic_id))
+    if (!topic || topic.ticket?.id !== Identifier.parse(params.ticket_id)) throw new Refusal('NOT_FOUND')
+    if (!z.object({ assetId: Identifier }).safeParse(topic.citation).success) {
+      throw new Refusal('STALE_INTERACTION')
+    }
+    return receive(params, true)
+  }
+  if (method === 'workbench_topics') return topics(user(params.owner), Identifier.optional().parse(params.topic_id))
+  if (method === 'management') return managementView(store, user(params.owner), params, source)
   if (method === 'requests') {
     const owner = user(params.owner)
     return store.list<RequestRecord>('request').filter(request => request.owner === owner)
@@ -240,6 +339,7 @@ function dispatch(method: string, params: Args) {
     const router = Decision.parse(params.decision)
     const request = store.get<RequestRecord>('request', triggerId)!
     user(request.owner)
+    if (request.explicitFollow) throw new Refusal('CONFLICT')
     let ticketId: string | undefined
     if (router.action === 'attach') {
       const target = ownedTicket(router.ticket_id, request.owner)
@@ -271,6 +371,9 @@ function dispatch(method: string, params: Args) {
       throw new Refusal('SESSION_CONFLICT')
     }
     const stored = store.tickets.get(id)!
+    const previous = store.get<string>('session_ticket', sessionId)
+    if (previous && previous !== id) throw new Refusal('SESSION_CONFLICT')
+    store.put('session_ticket', sessionId, id)
     store.put('binding', id, { session_id: sessionId, project_dir: projectDir, owner: stored.mandate.actor.id })
     if (ticket) engine.assignmentStarted(ticket.id, operation.assignmentId!)
     return Boolean(ticket)
@@ -294,8 +397,10 @@ function dispatch(method: string, params: Args) {
     const next = report.state === 'ready' && ticket.undelivered.length
       ? { state: 'waiting' as const, summary: report.summary }
       : report
-    engine.report(ticket.id, next)
-    settle(operation)
+    const updated = engine.report(ticket.id, next)
+    const final = updated.assignments.find(assignment => assignment.id === assignmentId)?.report
+    store.put('operation', operation.id, { ...operation, state: 'done',
+      report: final && { state: report.state, summary: report.summary, at: final.at } })
     return null
   }
   if (method === 'started_with_inputs' && operation.kind === 'start') {

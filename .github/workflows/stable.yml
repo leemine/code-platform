@@ -198,6 +198,10 @@ jobs:
               actual = {n[len(prefix):]: archive.read(n) for n in archive.namelist() if n.startswith(prefix) and not n.endswith('/')}
               plugin = 'gateway/extensions/superagent/'
               plugin_assets = ['frontend/dist/index.html', 'frontend/dist/app.js', 'frontend/dist/styles.css',
+                               'frontend/dist/panel.html', 'frontend/dist/panel.mjs', 'frontend/dist/workbench.html',
+                               'frontend/dist/business-catalog.json', 'frontend/dist/experts.json',
+                               'frontend/dist/workbench-fixtures.json', 'frontend/dist/SOURCE.json',
+                               'frontend/dist/SUPERAGENT.LICENSE',
                                'orchestrator/dist/main.mjs', 'orchestrator/dist/zod.LICENSE',
                                'orchestrator/SOURCE.json', 'orchestrator/vendor/superagent/LICENSE']
               for asset in plugin_assets:

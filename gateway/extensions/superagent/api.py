@@ -5,11 +5,13 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from gateway.extensions.auth.credential_authenticator import AuthContext
 from gateway.extensions.sdk.application_plugin import HTTPRouteContribution
 from gateway.extensions.superagent.sidecar import SidecarError
+from gateway.extensions.superagent.workbench import WorkbenchAPI
 
 
 PREFIX = "/api/superagent/v1"
@@ -31,6 +33,7 @@ class Answer(BaseModel):
     question: str = Field(max_length=1000)
     selected_options: list[str] = Field(default_factory=list, max_length=30)
     custom_input: str = Field(default="", max_length=2000)
+    card_id: str | None = Field(default=None, max_length=128)
 
 
 class InteractionInput(BaseModel):
@@ -45,6 +48,7 @@ class TicketAPI:
             raise ValueError("superagent.public_origin must identify the Web origin")
         self.origin = f"{origin.scheme}://{origin.netloc}"
         self.plugin = plugin
+        self.workbench = WorkbenchAPI(self)
 
     def routes(self):
         return (
@@ -54,6 +58,11 @@ class TicketAPI:
             HTTPRouteContribution(PREFIX + "/tickets/{ticket_id}/stop", self.stop, ("POST",)),
             HTTPRouteContribution(PREFIX + "/tickets/{ticket_id}/interactions/{interaction_id}/answer",
                                   self.answer, ("POST",)),
+            HTTPRouteContribution(PREFIX + "/sessions/{session_id}", self.managed_session),
+            HTTPRouteContribution("/orchestrator/api/{view}", self.management, ("GET", "POST", "PUT")),
+            HTTPRouteContribution("/orchestrator/api/{view}/{item_id}", self.management, ("GET", "POST", "PUT")),
+            HTTPRouteContribution("/orchestrator/api/{view}/{item_id}/{action}", self.management, ("POST",)),
+            *self.workbench.routes(),
         )
 
     async def _owner(self, request: Request):
@@ -142,7 +151,38 @@ class TicketAPI:
             raise HTTPException(409, detail="TICKET_ENDED")
         try:
             self.plugin.service.answer(ticket_id, owner, request.path_params["interaction_id"],
-                                       [item.model_dump() for item in data.answers])
+                                       [item.model_dump(exclude_none=True) for item in data.answers])
         except SidecarError as error:
             raise HTTPException(_ERRORS.get(str(error), 503), detail=str(error)) from None
         return {"accepted": True}
+
+    async def managed_session(self, request: Request):
+        owner = await self._owner(request)
+        ticket = await self._call("managed_session", owner, session_id=request.path_params["session_id"])
+        return self._include_interaction(ticket, owner)
+
+    async def management(self, request: Request):
+        owner = await self._owner(request)
+        path = request.path_params
+        view = path["view"]
+        item_id = path.get("item_id")
+        if request.method == "POST" and view == "tickets" and path.get("action") == "stop":
+            await self._call("cancel", owner, ticket_id=item_id)
+            return {"stopped": True}
+        if request.method == "GET":
+            if item_id and view in {"tickets", "threads"}:
+                view = {"tickets": "ticket", "threads": "thread"}[view]
+            params = {name: request.query_params[name] for name in
+                      ("q", "filter", "kind", "window", "offset", "limit", "state")
+                      if name in request.query_params}
+            params.setdefault("state", "open")
+            params.setdefault("filter", "subscribed")
+            result = await self._call("management", owner, view=view, id=item_id, **params)
+            if result is not None:
+                return result
+            if view in {"ticket", "thread"}:
+                raise HTTPException(404, detail="NOT_FOUND")
+        return JSONResponse(
+            status_code=501,
+            content={"error": "此项由原宿主配置 / This operation requires configuration in the original host."},
+        )

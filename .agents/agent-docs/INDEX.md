@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 88 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 89 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -34,14 +34,14 @@ generated: true
 | [gateway/common](#module-17) | 4 |
 | [gateway/extensions/cloud_workspace](#module-18) | 12 |
 | [gateway/extensions/data_sync](#module-19) | 5 |
-| [gateway/extensions/superagent](#module-20) | 2 |
+| [gateway/extensions/superagent](#module-20) | 3 |
 | [gateway/message_handler](#module-21) | 1 |
 | [gateway/routing](#module-22) | 1 |
 | [gateway/services](#module-23) | 16 |
 | [gateway/services/data_sync](#module-24) | 2 |
 | [jiuwenswarm](#module-25) | 3 |
 | [jiuwenswarm/channels/web](#module-26) | 9 |
-| [jiuwenswarm/channels/web/frontend](#module-27) | 13 |
+| [jiuwenswarm/channels/web/frontend](#module-27) | 14 |
 | [jiuwenswarm/channels/web/frontend/src/components/ChatPanel](#module-28) | 2 |
 | [jiuwenswarm/channels/web/frontend/src/components/SessionSidebar](#module-29) | 1 |
 | [jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace](#module-30) | 2 |
@@ -274,7 +274,8 @@ generated: true
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [F_20261128_0105_superagent-gateway-mvp](features/F_20261128_0105_superagent-gateway-mvp.md) | F | SuperAgent Gateway 工单与 OpenCode Worker | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/router_adapter.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/orchestrator/main.ts, gateway/extensions/superagent/orchestrator/sqlite.ts, pyproject.toml, MANIFEST.in | 无独立 D：用户在任务会话中批准实施，任务台账和 PNG 保存在管理仓。 |
-| [S_05_superagent-web-tickets](specs/gateway/S_05_superagent-web-tickets.md) | S | SuperAgent Web 工单插件契约 | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/api.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/orchestrator/main.ts | — |
+| [F_20261128_0848_superagent-original-interfaces](features/F_20261128_0848_superagent-original-interfaces.md) | F | SuperAgent 原界面接入 WorkSwarm | leemine | gateway/extensions/superagent, jiuwenswarm/channels/web/frontend | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/frontend/build.mjs, gateway/extensions/superagent/frontend/conversation.ts, jiuwenswarm/channels/web/frontend/src/applicationPlugins/managedConversation.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts | 无独立 D：用户在任务会话中批准原界面接入方案，原设计 PNG 与任务台账保存在管理仓。 |
+| [S_05_superagent-web-tickets](specs/gateway/S_05_superagent-web-tickets.md) | S | SuperAgent Web 工单插件契约 | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/api.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/orchestrator/main.ts | — |
 
 <a id="module-21"></a>
 
@@ -367,6 +368,7 @@ generated: true
 | [F_20261122_0213_opencode-cloud-runtime-ui](features/F_20261122_0213_opencode-cloud-runtime-ui.md) | F | Code 普通会话显示 OpenCode 云运行时名称 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/channels/web/frontend | gateway/extensions/cloud_workspace/extension.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/useProjectRuntime.ts, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0144-opencode-cloud-runtime-ui](designs/active/D-20261122-0144-opencode-cloud-runtime-ui/design.md) |
 | [F_20261122_0955_managed-runtime-devices](features/F_20261122_0955_managed-runtime-devices.md) | F | 运行时创建独立 OpenCode 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_managed.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
 | [F_20261122_1551_named-codex-devices](features/F_20261122_1551_named-codex-devices.md) | F | 运行时创建并启动命名 Codex 设备 | 待确认 | gateway/extensions/cloud_workspace, gateway/services, jiuwenswarm/runtime, jiuwenswarm/server, jiuwenswarm/channels/web/frontend | gateway/services/cloud_provider_allocation.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/extensions/cloud_workspace/extension.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex_device.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/runtime/session_provisioner.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/CloudRuntimePanel.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ExecutionPicker.tsx | [D-20261122-0920-managed-runtime-devices](designs/active/D-20261122-0920-managed-runtime-devices/design.md) |
+| [F_20261128_0848_superagent-original-interfaces](features/F_20261128_0848_superagent-original-interfaces.md) | F | SuperAgent 原界面接入 WorkSwarm | leemine | gateway/extensions/superagent, jiuwenswarm/channels/web/frontend | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/workbench.py, gateway/extensions/superagent/frontend/build.mjs, gateway/extensions/superagent/frontend/conversation.ts, jiuwenswarm/channels/web/frontend/src/applicationPlugins/managedConversation.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts | 无独立 D：用户在任务会话中批准原界面接入方案，原设计 PNG 与任务台账保存在管理仓。 |
 | [B_20261031_2104_tool-result-and-codex-tls](bugfix/agent_adapter/B_20261031_2104_tool-result-and-codex-tls.md) | B | Claude 工具结果展示与 Codex TLS 配置接缝修复 | leemine | jiuwenswarm/server/runtime/agent_adapter, jiuwenswarm/common, jiuwenswarm/channels/web/frontend | jiuwenswarm/channels/web/frontend/src/App.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolCallDisplay.tsx, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/ToolGroupDisplay.tsx, jiuwenswarm/channels/web/frontend/src/features/historyRestore.ts, jiuwenswarm/channels/web/frontend/src/features/tool-events/toolEventNormalizer.ts, jiuwenswarm/channels/web/frontend/src/hooks/useWebSocket.ts, jiuwenswarm/channels/web/frontend/src/i18n/locales/en.json, jiuwenswarm/channels/web/frontend/src/i18n/locales/zh.json, jiuwenswarm/channels/web/frontend/src/stores/toolResultLifecycle.ts, jiuwenswarm/channels/web/frontend/src/types/message.ts, jiuwenswarm/channels/web/frontend/tests/subagentHistoryRestore.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolEventNormalizer.test.mjs, jiuwenswarm/channels/web/frontend/tests/toolGroupDisplayOrder.test.mjs, jiuwenswarm/common/codex_adapter_config.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py, tests/unit_tests/agentserver/test_claude_direct_adapter.py, tests/unit_tests/agentserver/test_codex_direct_adapter.py | 无独立 D：用户确认已核对根因的最小修复；Codex 范围明确为模型 verify_ssl:false 配置拦截，不涉及取消或新增执行流程。 |
 | [S_04_github-project-environments](specs/gateway/S_04_github-project-environments.md) | S | GitHub 云端项目环境契约 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx | — |
 
