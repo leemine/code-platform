@@ -1,0 +1,7 @@
+id: superagent
+name: SuperAgent
+version: 0.1.0
+package_type: application
+description: SuperAgent Web tickets with platform-managed Router and OpenCode Worker sessions
+permissions: []
+requires_transport: true

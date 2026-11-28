@@ -13,6 +13,8 @@ flowchart LR
     Host[Gateway Host] -. 服务注入 .-> Registry
 ```
 
+SuperAgent 工单插件提供显式 Web 工单和 OpenCode Worker。构建、启用和隔离试点配置见 [SuperAgent 工单插件](../../gateway/extensions/superagent/README.zh.md)。
+
 ## 纯前端插件
 
 预构建 iframe 页面无需 Python：

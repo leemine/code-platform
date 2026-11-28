@@ -9,7 +9,7 @@ generated: true
 
 由 sync_documents.py 从文档 frontmatter 自动生成；请修改源文档后重新生成，不手工维护。
 
-共 6 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
+共 7 篇文档，按模块分组；跨模块文档在各相关分组展示，总数按文档去重。
 
 ## 模块导航
 
@@ -19,17 +19,18 @@ generated: true
 | [gateway](#module-2) | 2 |
 | [gateway/extensions/cloud_workspace](#module-3) | 1 |
 | [gateway/extensions/data_sync](#module-4) | 1 |
-| [gateway/services](#module-5) | 1 |
-| [gateway/services/data_sync](#module-6) | 1 |
-| [jiuwenswarm/channels/web](#module-7) | 1 |
-| [jiuwenswarm/channels/web/frontend](#module-8) | 1 |
-| [jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace](#module-9) | 1 |
-| [jiuwenswarm/data_sync](#module-10) | 1 |
-| [jiuwenswarm/server](#module-11) | 1 |
-| [jiuwenswarm/server/control](#module-12) | 2 |
-| [runtime](#module-13) | 1 |
-| [server/front](#module-14) | 1 |
-| [未分类](#module-15) | 1 |
+| [gateway/extensions/superagent](#module-5) | 1 |
+| [gateway/services](#module-6) | 1 |
+| [gateway/services/data_sync](#module-7) | 1 |
+| [jiuwenswarm/channels/web](#module-8) | 1 |
+| [jiuwenswarm/channels/web/frontend](#module-9) | 1 |
+| [jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace](#module-10) | 1 |
+| [jiuwenswarm/data_sync](#module-11) | 1 |
+| [jiuwenswarm/server](#module-12) | 1 |
+| [jiuwenswarm/server/control](#module-13) | 2 |
+| [runtime](#module-14) | 1 |
+| [server/front](#module-15) | 1 |
+| [未分类](#module-16) | 1 |
 
 <a id="module-1"></a>
 
@@ -66,13 +67,21 @@ generated: true
 
 <a id="module-5"></a>
 
+## gateway/extensions/superagent
+
+| ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
+|---|---|---|---|---|---|---|
+| [S_05_superagent-web-tickets](gateway/S_05_superagent-web-tickets.md) | S | SuperAgent Web 工单插件契约 | leemine | gateway/extensions/superagent | gateway/extensions/superagent/extension.py, gateway/extensions/superagent/api.py, gateway/extensions/superagent/service.py, gateway/extensions/superagent/platform_executor.py, gateway/extensions/superagent/orchestrator/main.ts | — |
+
+<a id="module-6"></a>
+
 ## gateway/services
 
 | ID / 文档 | 类型 | 标题 | 作者 | 模块 | 代码文件 | 关联 D |
 |---|---|---|---|---|---|---|
 | [S_04_github-project-environments](gateway/S_04_github-project-environments.md) | S | GitHub 云端项目环境契约 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx | — |
 
-<a id="module-6"></a>
+<a id="module-7"></a>
 
 ## gateway/services/data_sync
 
@@ -80,7 +89,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_03_data-sync-directory](gateway/S_03_data-sync-directory.md) | S | 显式项目目录同步契约 | leemine | gateway/extensions/data_sync, gateway/services/data_sync, jiuwenswarm/data_sync, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/store.py, jiuwenswarm/data_sync/contract.py, jiuwenswarm/data_sync/connector.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/server/runtime/session/project_store.py, gateway/services/data_sync/cloud_source.py, jiuwenswarm/data_sync/cloud_export.py, gateway/services/cloud_environments.py, gateway/extensions/agentos/agentos_router/router_client.py, jiuwenswarm/server/control/repositories/project_repository.py, gateway/extensions/data_sync/ui_extension.py, gateway/services/data_sync/ui.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | — |
 
-<a id="module-7"></a>
+<a id="module-8"></a>
 
 ## jiuwenswarm/channels/web
 
@@ -88,7 +97,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S-02-code-workspace-entry](gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
 
-<a id="module-8"></a>
+<a id="module-9"></a>
 
 ## jiuwenswarm/channels/web/frontend
 
@@ -96,7 +105,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_04_github-project-environments](gateway/S_04_github-project-environments.md) | S | GitHub 云端项目环境契约 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx | — |
 
-<a id="module-9"></a>
+<a id="module-10"></a>
 
 ## jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace
 
@@ -104,7 +113,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_03_data-sync-directory](gateway/S_03_data-sync-directory.md) | S | 显式项目目录同步契约 | leemine | gateway/extensions/data_sync, gateway/services/data_sync, jiuwenswarm/data_sync, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/store.py, jiuwenswarm/data_sync/contract.py, jiuwenswarm/data_sync/connector.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/server/runtime/session/project_store.py, gateway/services/data_sync/cloud_source.py, jiuwenswarm/data_sync/cloud_export.py, gateway/services/cloud_environments.py, gateway/extensions/agentos/agentos_router/router_client.py, jiuwenswarm/server/control/repositories/project_repository.py, gateway/extensions/data_sync/ui_extension.py, gateway/services/data_sync/ui.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | — |
 
-<a id="module-10"></a>
+<a id="module-11"></a>
 
 ## jiuwenswarm/data_sync
 
@@ -112,7 +121,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_03_data-sync-directory](gateway/S_03_data-sync-directory.md) | S | 显式项目目录同步契约 | leemine | gateway/extensions/data_sync, gateway/services/data_sync, jiuwenswarm/data_sync, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/store.py, jiuwenswarm/data_sync/contract.py, jiuwenswarm/data_sync/connector.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/server/runtime/session/project_store.py, gateway/services/data_sync/cloud_source.py, jiuwenswarm/data_sync/cloud_export.py, gateway/services/cloud_environments.py, gateway/extensions/agentos/agentos_router/router_client.py, jiuwenswarm/server/control/repositories/project_repository.py, gateway/extensions/data_sync/ui_extension.py, gateway/services/data_sync/ui.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | — |
 
-<a id="module-11"></a>
+<a id="module-12"></a>
 
 ## jiuwenswarm/server
 
@@ -120,7 +129,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S-02-code-workspace-entry](gateway/S_02_code-workspace-entry.md) | S | Code 工作区入口与目录操作 | leemine | gateway, jiuwenswarm/server, jiuwenswarm/channels/web | gateway/routing/workspace_locations.py, jiuwenswarm/server/runtime/gateway_adapter/project_workspace.py | — |
 
-<a id="module-12"></a>
+<a id="module-13"></a>
 
 ## jiuwenswarm/server/control
 
@@ -129,7 +138,7 @@ generated: true
 | [S_03_data-sync-directory](gateway/S_03_data-sync-directory.md) | S | 显式项目目录同步契约 | leemine | gateway/extensions/data_sync, gateway/services/data_sync, jiuwenswarm/data_sync, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace | gateway/extensions/data_sync/extension.py, gateway/services/data_sync/store.py, jiuwenswarm/data_sync/contract.py, jiuwenswarm/data_sync/connector.py, jiuwenswarm/data_sync/transport.py, jiuwenswarm/server/runtime/session/project_store.py, gateway/services/data_sync/cloud_source.py, jiuwenswarm/data_sync/cloud_export.py, gateway/services/cloud_environments.py, gateway/extensions/agentos/agentos_router/router_client.py, jiuwenswarm/server/control/repositories/project_repository.py, gateway/extensions/data_sync/ui_extension.py, gateway/services/data_sync/ui.py, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/LocalCloudAccount.tsx, jiuwenswarm/channels/web/frontend/src/features/cloudWorkspace/localCloudAccountClient.ts | — |
 | [S_04_github-project-environments](gateway/S_04_github-project-environments.md) | S | GitHub 云端项目环境契约 | leemine | gateway/services, gateway/extensions/cloud_workspace, jiuwenswarm/server/control, jiuwenswarm/channels/web/frontend | gateway/services/project_environments.py, gateway/services/project_github.py, gateway/services/project_preparation.py, jiuwenswarm/server/control/project_import.py, jiuwenswarm/channels/web/frontend/src/components/ChatPanel/CloudEnvironmentDialog.tsx | — |
 
-<a id="module-13"></a>
+<a id="module-14"></a>
 
 ## runtime
 
@@ -137,7 +146,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_02_external-adapter-boundary](jiuwenswarm/server/runtime/agent_adapter/S_02_external-adapter-boundary.md) | S | 外部 AgentAdapter 单 Agent 边界规约 | leemine | agent_adapter, runtime | jiuwenswarm/runtime/session/coordinator.py, jiuwenswarm/runtime/plan.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_equipment.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_service.py, jiuwenswarm/server/control/config_service.py, jiuwenswarm/common/model_routing_registry.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode_models.py, jiuwenswarm/server/runtime/agent_adapter/agent_adapters.py, jiuwenswarm/server/runtime/agent_adapter/interface.py, jiuwenswarm/server/runtime/agent_adapter/providers/opencode.py, jiuwenswarm/runtime/service.py, jiuwenswarm/server/runtime/agent_adapter/execution_input.py, jiuwenswarm/server/runtime/agent_adapter/equipment.py, jiuwenswarm/server/runtime/agent_adapter/providers/codex.py, jiuwenswarm/server/runtime/agent_adapter/providers/claude.py | — |
 
-<a id="module-14"></a>
+<a id="module-15"></a>
 
 ## server/front
 
@@ -145,7 +154,7 @@ generated: true
 |---|---|---|---|---|---|---|
 | [S_01_cloud-account-instance](gateway/S_01_cloud-account-instance.md) | S | 云账号与原实例链契约 | leemine | gateway, server/front | gateway/services/cloud_environments.py, gateway/services/cloud_instance_policy.py, gateway/services/cloud_opencode_pool.py, gateway/services/cloud_opencode_relay.py, gateway/services/cloud_codex_pool.py, gateway/services/cloud_codex_relay.py, gateway/auth/account_authenticator.py, gateway/extensions/agentos/agentos_router/router_client.py, gateway/common/security/service_auth.py, gateway/common/security/provider_relay_tls.py | — |
 
-<a id="module-15"></a>
+<a id="module-16"></a>
 
 ## 未分类
 

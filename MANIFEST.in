@@ -16,4 +16,5 @@ recursive-include jiuwenswarm/server/runtime/designer/skills *
 
 # 排除 node_modules，避免打包进 wheel
 prune jiuwenswarm/channels/web/frontend/node_modules
+prune gateway/extensions/superagent/orchestrator/node_modules
 global-exclude node_modules
