@@ -146,6 +146,10 @@ class WebFileDownloadManager:
         agent_http_base: str | None = None,
         agent_http_base_key: str = "",
     ) -> str:
+        from gateway.common.security.worker_permission import is_worker_permission_key_path
+
+        if is_worker_permission_key_path(Path(file_path).resolve()):
+            raise ValueError("The application Worker signing key cannot be transferred")
         payload: dict[str, Any] = {
             "path": file_path,
             "sid": session_id,
@@ -195,6 +199,12 @@ class WebFileDownloadManager:
             payload = json.loads(payload_json)
             if not isinstance(payload, dict):
                 return None
+            file_path = payload.get("path")
+            if isinstance(file_path, str):
+                from gateway.common.security.worker_permission import is_worker_permission_key_path
+
+                if is_worker_permission_key_path(Path(file_path).resolve()):
+                    return None
             if check_expiry:
                 # 兼容无 exp 字段的交付令牌：不强制过期；有 exp 则严格校验。
                 exp = payload.get("exp")

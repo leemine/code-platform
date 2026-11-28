@@ -112,7 +112,8 @@ export function managementView(store: Store, owner: string, params: Params, sour
       }
     }
     case 'sources':
-      return [{ ...hostSource(source), stats: { received: triggers.length, filtered: 0, lastAt: triggers.at(-1)?.at } }]
+      return [{ ...hostSource(source), dropped: [],
+        stats: { received: triggers.length, filtered: 0, lastAt: triggers.at(-1)?.at } }]
     case 'tickets':
       return paginate(ticketRows.filter(ticket => params.state === 'open'
         ? ticket.state === 'open' : ticket.stage === params.state), params)

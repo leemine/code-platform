@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gateway.common.model_selection import ModelSelection, ResolvedModel
+from gateway.common.security.worker_permission import WORKER_PERMISSION_KEY, sign_full_access, verifies_full_access
 from jiuwenswarm.common.adapter_capabilities import AdapterCapabilities
 
 from .main_agent_role import MainAgentRole
@@ -45,6 +46,7 @@ class ExecutionInputPolicy:
 class SessionFacts:
     storage_dir: Path
     has_assistant_history: bool
+    worker_permission_profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,14 +61,58 @@ class ExecutionInput:
     main_agent_role: MainAgentRole | None = field(default=None, repr=False)
 
 
-def session_facts(session_id: str, *, active: bool = False) -> SessionFacts:
+def _worker_permission_profile(session_id: str, saved: dict) -> str | None:
+    if WORKER_PERMISSION_KEY not in saved:
+        return None
+    if not verifies_full_access(
+        saved[WORKER_PERMISSION_KEY], session_id, saved.get("user_id", ""),
+        saved.get("project_id", ""), saved.get("execution_provider", ""),
+    ):
+        raise ValueError("Invalid application Worker permission binding")
+    return "full_access"
+
+
+def session_facts(session_id: str, *, active: bool = False, metadata: dict | None = None) -> SessionFacts:
     from jiuwenswarm.common.utils import get_agent_sessions_dir
     from jiuwenswarm.server.runtime.session.session_history import read_session_history_records
+    from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
+
+    saved = metadata if metadata is not None else get_session_metadata(session_id, enable_writeback=False)
     history = False if active else any(
         row.get("role") == "assistant" and row.get("event_type") != "chat.request_completed"
         for row in read_session_history_records(session_id)
     )
-    return SessionFacts(get_agent_sessions_dir(), history)
+    return SessionFacts(get_agent_sessions_dir(), history, _worker_permission_profile(session_id, saved))
+
+
+def _worker_metadata(adapter, request, directory: Path) -> dict:
+    from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata, patch_session_metadata
+
+    sid = request.session_id or "default"
+    saved = get_session_metadata(sid, enable_writeback=False)
+    params = request.params or {}
+    if WORKER_PERMISSION_KEY not in params and WORKER_PERMISSION_KEY not in saved:
+        return saved
+
+    require_capability(adapter, "worker_permission_profile", declared_only=True)
+    project_dir = saved.get("project_dir")
+    if not project_dir or Path(project_dir).resolve() != directory:
+        raise ValueError("Application Worker must use its bound project directory")
+    owner = saved.get("user_id", "")
+    project_id = saved.get("project_id", "")
+    provider = saved.get("execution_provider", "")
+    query = params.get("query")
+    if owner != request.user_id or not isinstance(query, str) or params.get("content", query) != query:
+        raise ValueError("Invalid application Worker permission grant")
+    if not verifies_full_access(
+        params.get(WORKER_PERMISSION_KEY), sid, owner, project_id, provider,
+        turn=(request.request_id, query),
+    ):
+        raise ValueError("Invalid application Worker permission grant")
+    binding = sign_full_access(sid, owner, project_id, provider)
+    if saved.get(WORKER_PERMISSION_KEY) != binding:
+        saved = patch_session_metadata(sid, {WORKER_PERMISSION_KEY: binding})
+    return saved
 
 
 def request_defaults(*, model_client_config, model_config_obj, model_name,
@@ -149,6 +195,8 @@ def prepare_execution_input(adapter, request, inputs, *, config=None,
     path = Path(directory).expanduser()
     if not path.is_absolute() or not path.is_dir():
         raise ValueError("Execution requires an existing absolute project directory")
+    path = path.resolve()
+    saved = _worker_metadata(adapter, request, path)
     # One catalog instance pins resolution and the owned service's configuration.
     catalog = ModelCatalog(config) if policy.require_model or policy.include_model_catalog else None
     model = resolve_model(request, catalog=catalog,
@@ -162,8 +210,8 @@ def prepare_execution_input(adapter, request, inputs, *, config=None,
         settings = deepcopy(catalog.config.get(policy.catalog_settings_key, {})) if policy.catalog_settings_key else {}
     return ExecutionInput(
         request.request_id, sid,
-        str(path.resolve()),
-        session_facts(sid, active=adapter.has_session_runtime(sid)),
+        str(path),
+        session_facts(sid, active=adapter.has_session_runtime(sid), metadata=saved),
         model.model_copy(deep=True) if isinstance(model, ResolvedModel) else model,
         tuple(item.model_copy(deep=True) for item in models), settings, role,
     )

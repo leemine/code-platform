@@ -187,6 +187,7 @@ import { generateUuidV4 } from './utils/uuid';
 import { ApplicationPluginOutlet } from './applicationPlugins/ApplicationPluginOutlet';
 import { enabledApplicationPlugins } from './applicationPlugins/manifest';
 import { useApplicationPlugins } from './applicationPlugins/useApplicationPlugins';
+import { useApplicationConversationPresentation } from './applicationPlugins/managedConversation';
 import type { ApplicationPluginNavKey } from './applicationPlugins/types';
 import {
   findShareImageJobForSession,
@@ -1352,6 +1353,12 @@ function AppContent({
   const showRuntimeNav = activeNav === 'runtime' || Boolean(cloudRuntimes?.runtimes.length);
   const applicationPlugins = applicationPluginState.plugins;
   const visibleApplicationPlugins = enabledApplicationPlugins(applicationPlugins);
+  const applicationWorkMode = useApplicationConversationPresentation(sessionId)?.workMode;
+  useEffect(() => {
+    if (applicationWorkMode && routeSessionId === sessionId) {
+      void useWorkspaceStore.getState().setWorkMode(applicationWorkMode);
+    }
+  }, [applicationWorkMode, routeSessionId, sessionId]);
   const settingsRequest = useMemo(() => resolveSettingsRequest(request), [request, resolveSettingsRequest]);
 
   useEffect(() => {
@@ -2421,6 +2428,8 @@ function AppContent({
   const [permissionSnapshot, setPermissionSnapshot] = useState<{
     sessionId: string; status: RuntimePermissionStatus | null;
   } | null>(null);
+  const workerPermissionProfile = permissionSnapshot?.sessionId === sessionId
+    ? permissionSnapshot.status?.worker_profile : undefined;
   useEffect(() => {
     if (!isConnected || sessionId === NEW_CONVERSATION_ID || selectedExecutionProvider === 'harness') {
       setPermissionSnapshot(null);
@@ -2437,7 +2446,7 @@ function AppContent({
         const status = response.runtime?.permissions ?? null;
         const desired = serverConfig?.permissions_profile === 'automatic' ? 'automatic'
           : serverConfig?.permissions_enabled === 'false' ? 'full_access' : 'default';
-        retry = retry || status?.state === 'pending' || !!status && status.desired_profile !== desired;
+        retry = retry || status?.state === 'pending' || !!status && status.desired_profile !== (status.worker_profile ?? desired);
         if (!disposed) setPermissionSnapshot({ sessionId, status });
       } catch {
         if (!disposed) setPermissionSnapshot({ sessionId, status: null });
@@ -4812,7 +4821,7 @@ const showWorkspaceDivider = effectiveTeamAreaExpanded && !showConversationNotFo
                         onNavigateToAgents={handleNavigateToAgentManagement}
                         onToggleTeamArea={handleToggleDetailPanel}
                         onOpenCodeReview={handleOpenCodeReview}
-                        permissionProfiles={(permissionSnapshot?.sessionId === sessionId
+                        permissionProfiles={workerPermissionProfile ? [workerPermissionProfile] : (permissionSnapshot?.sessionId === sessionId
                           ? permissionSnapshot.status?.supported_profiles : undefined) ?? providerPermissionProfiles(
                           serverConfig?.execution_provider_permission_profiles, selectedExecutionProvider,
                         )}

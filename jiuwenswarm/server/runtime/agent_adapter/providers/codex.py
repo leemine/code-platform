@@ -93,6 +93,7 @@ class Session:
     cancel_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     effective_permission: str | None = None
     desired_permission: str = "default"
+    worker_permission_profile: str | None = None
     pending: dict = field(default_factory=dict)
     control_ready: asyncio.Event = field(default_factory=asyncio.Event)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -276,15 +277,19 @@ class CodexAdapter:
                 raise ValueError("Codex session workspace cannot change after binding")
             if runtime_id != current.runtime_id:
                 raise ValueError("Codex session runtime device cannot change after binding")
+            if facts is not None and facts.worker_permission_profile is not None:
+                current.worker_permission_profile = current.desired_permission = facts.worker_permission_profile
             return
         from ..execution_input import session_facts
         facts = facts or session_facts(session_id)
+        worker_profile = facts.worker_permission_profile
         binding = recovery.load("codex", session_id, directory)
         if binding:
             recovery.require_settings(binding, self._binding_settings(runtime_id))
             self._sessions[session_id] = Session(directory, Path(binding["root"]), swarm_id=session_id,
                 thread_id=binding["native_id"], model_revision=binding["model_revision"],
-                desired_permission=binding["permission"], runtime_id=runtime_id)
+                desired_permission=worker_profile or binding["permission"], runtime_id=runtime_id,
+                worker_permission_profile=worker_profile)
             return
         if facts.has_assistant_history:
             raise ValueError("Codex cannot restore a released session without a recovery binding; its original native thread cannot be identified")
@@ -292,7 +297,8 @@ class CodexAdapter:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
         self._sessions[session_id] = Session(directory, root, swarm_id=session_id,
-                                             desired_permission=self._permission_profile, runtime_id=runtime_id)
+                                             desired_permission=worker_profile or self._permission_profile,
+                                             runtime_id=runtime_id, worker_permission_profile=worker_profile)
 
     def _binding_settings(self, runtime_id):
         return self._settings | {"runtime_id": runtime_id} if runtime_id is not None else self._settings
@@ -892,7 +898,8 @@ class CodexAdapter:
         effective = session.effective_permission if session else None
         return {"supported_profiles": list(self.permission_profiles), "update_timing": "idle",
                 "desired_profile": desired, "effective_profile": effective,
-                "state": "not_started" if effective is None else "applied" if effective == desired else "pending"}
+                "state": "not_started" if effective is None else "applied" if effective == desired else "pending",
+                **({"worker_profile": session.worker_permission_profile} if session and session.worker_permission_profile else {})}
 
     async def reload_agent_config(self, config_base=None, env_overrides=None, target_session_id=None, reload_scopes=None):
         if reload_scopes and "permissions" not in reload_scopes:
@@ -903,7 +910,7 @@ class CodexAdapter:
             self._permission_profile = profile
         for sid, session in self._sessions.items():
             if target_session_id is None or sid == target_session_id:
-                session.desired_permission = profile
+                session.desired_permission = session.worker_permission_profile or profile
                 self._save_binding(session)
 
     async def process_message_impl(self, request, inputs):
