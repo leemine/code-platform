@@ -215,6 +215,7 @@ import { useTaskAsr } from '../../features/taskAsr/useTaskAsr';
 import { RecordingWaveform } from '../../features/taskAsr/RecordingWaveform';
 import { useTaskAsrEnabled } from '../../features/taskAsr/featureFlag';
 import { ApplicationPluginTaskInputActions } from '../../applicationPlugins/ApplicationPluginOutlet';
+import { useApplicationConversationPresentation } from '../../applicationPlugins/managedConversation';
 
 /** 输入栏下拉所需的最小技能数据结构（与 SkillPanel 中的 SkillItem 保持一致） */
 type InputAreaSkillItem = {
@@ -1238,8 +1239,9 @@ export const InputArea = forwardRef<InputAreaHandle, InputAreaProps>(function In
   const persistSessionActive = useSessionStore(
     (s) => s.runtimes[activeSessionId ?? '']?.persistSession ?? false,
   );
+  const conversationPresentation = useApplicationConversationPresentation(activeSessionId);
   const persistTagVisible = Boolean(
-    activeSessionId && activeSessionId !== NEW_CONVERSATION_ID && persistSessionActive,
+    activeSessionId && activeSessionId !== NEW_CONVERSATION_ID && persistSessionActive && !conversationPresentation?.hidePersistTag,
   );
 
   const mentionableMembers = useMemo(() => {

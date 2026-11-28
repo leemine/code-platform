@@ -13,12 +13,15 @@ superagent:
   project_id: existing-code-project-id
   members: [authenticated-project-user]
   router_model: configured-model-name
+  execution_provider: opencode-direct
   model_selection: {type: model, id: configured-opencode-compatible-model-id}
 ```
 
 `members` lists authenticated participants allowed to work in the configured pilot project. The Gateway account authority is required. Register the Code project and its isolated worktree using the platform's normal project tools. Start the Gateway and AgentServer as usual. Open **SuperAgent** for the administration panel or **Workbench** to submit text, cite an asset revision, and follow a topic. Select a topic to open the bound WorkSwarm conversation and respond using WorkSwarm's native authorization card. Workbench follow-ups and plain text from that conversation use the recorded Ticket and Worker Session. The original demonstration ticket page is available only with `superagent.acceptance_page: true`. Keep one Gateway writer per data directory.
 
-The panel displays WorkSwarm data for Sources, Threads, Decisions and Tickets. Open Worker Session links navigate to WorkSwarm. Deployment configuration is read-only in the panel. The pilot runs the Router once per new request. Host-specific setup, editable policy and prompts, and the persistent Router management session are deferred. The Workbench catalog is a pinned prototype dataset. Workbench rulings address business questions from a Worker report. OpenCode permissions go through the native WorkSwarm authorization card.
+The panel displays WorkSwarm data for Sources, Threads, Decisions and Tickets. Open Worker Session links navigate to WorkSwarm. Deployment configuration is read-only in the panel. The pilot runs the Router once per new request. Host-specific setup, editable policy and prompts, and the persistent Router management session are deferred. The Workbench catalog is a pinned prototype dataset. Workbench rulings address business questions from a Worker report. Provider interactions that request approval use the native WorkSwarm authorization card.
+
+SuperAgent Worker sessions use the provider's Full Access profile. The Gateway signs each Worker turn for its session, owner, project, provider, request ID and input. WorkSwarm stores a separate verified session binding. Ordinary sessions use the existing WorkSwarm permission setting. The default execution provider is `opencode-direct`. Other providers must declare support for application Worker permission profiles. For split deployments with separate data directories, provision the same 32-byte private key in both services and set `JIUWENSWARM_APPLICATION_WORKER_KEY_FILE` to its absolute path on each host. Local processes sharing the data directory use a private key created by the Gateway.
 
 The build verifies the original panel Git blobs and the original Workbench snapshot using `frontend/vendor/SOURCE.json`. The latter is the original prototype's local standalone build, with its own byte hashes. The generated package combines that HTML with a small transport adapter and includes the original license. The build and runtime need neither DSH nor Cordis packages.
 

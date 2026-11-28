@@ -12,3 +12,4 @@ class AdapterCapabilities:
     native_resume: bool = False
     context_usage: bool = False
     manual_compaction: bool = False
+    worker_permission_profile: bool = False

@@ -7,6 +7,7 @@ import shutil
 
 from filelock import FileLock
 
+from gateway.common.config import get_config
 from gateway.common.paths import get_root_dir
 from gateway.common.work_mode import is_default_project_id
 from gateway.extensions.sdk.application_plugin import (
@@ -33,7 +34,10 @@ class SuperAgentPlugin(ApplicationPluginExtension):
         self.lease = None
 
     async def initialize(self, config):
-        self.settings = config.config.get("superagent") or {}
+        settings = config.config.get("superagent")
+        if settings is None:
+            settings = get_config().get("superagent")
+        self.settings = settings or {}
         if not self.is_enabled():
             return
         if is_default_project_id(self.settings.get("project_id")):
@@ -58,6 +62,7 @@ class SuperAgentPlugin(ApplicationPluginExtension):
             return
         self.executor = PlatformExecutor(
             services.require_agent_client(), self.settings["project_id"], self.settings["model_selection"],
+            self.settings.get("execution_provider", "opencode-direct"),
         )
         root = get_root_dir() / "superagent"
         root.mkdir(parents=True, exist_ok=True, mode=0o700)

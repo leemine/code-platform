@@ -13,11 +13,13 @@ files: [gateway/extensions/superagent/extension.py, gateway/extensions/superagen
 - Gateway 显式启用应用插件，登记一个非默认 Code 项目及其可信账号清单。Web 写接口校验同源，所有读写逐次校验身份、试点成员与目标工单的归属。
 - SQLite 由每个 Gateway 数据目录内单一协调进程写入。固定版本的 SuperAgent Engine 管理 Trigger、Ticket、Assignment 和输入投递，事务同时持久化领域状态和执行意图。平台 Session 和 OpenCode 原生 Session 的关系由平台 Runtime 保存。
 - Router 通过平台声明式 Agent Process CLI 使用配置模型和空工具清单。输出通过结构校验后才能接单、忽略或关联。关联目标来自当前用户的候选工单，再由 Core 校验有效委托。
-- 创建 Worker 会话时绑定 `opencode-direct`，并读取平台返回的项目 ID 和目录。属于该工单的每个执行轮都显式带回该目录，Worker 复用同一会话。项目目录由服务端绑定。Workbench 首条消息可引用服务端目录中的资产版本、章节和用例，Worker 收到提交时固定的正文。
+- 创建 Worker 会话时默认绑定 `opencode-direct`，并读取平台返回的项目 ID 和目录。属于该工单的每个执行轮都显式带回该目录，Worker 复用同一会话。项目目录由服务端绑定。Workbench 首条消息可引用服务端目录中的资产版本、章节和用例，Worker 收到提交时固定的正文。
+- `execution_provider` 默认 `opencode-direct`。插件为原 Worker 会话签发 `full_access`，每轮签名绑定会话、账号、项目、Provider、请求 ID 和输入。Runtime 验证签名及适配器能力后才应用权限，并保存独立的会话绑定作为恢复依据。普通权限配置刷新后仍保留 Worker 策略。普通会话继续使用原权限策略。无会话权限能力的 Provider 拒绝执行该 Worker 请求。
 
 ## 原界面与会话
 
 - 网关发布原管理面板和 Workbench 两个入口。原管理面板展示当前账号的编排记录、线程及工单。原管理面板和 Workbench 均链接到 Ticket 已绑定的 WorkSwarm Session。工单验收入口仅随 `superagent.acceptance_page: true` 发布。
+- WorkSwarm 确认当前 Session 属于 SuperAgent 工单后，切换到 Code 模式，并隐藏输入区的「永续会话」标记。会话持久化、原 Ticket 和审批照常使用。
 - Workbench 新话题按正文送 Router。已有话题根据账号和话题记录定位到原 Ticket，显式追问由 Core 直接投递。WorkSwarm 已绑定会话的人工文本走相同跟进接口。Router 只处理新请求，已绑定的跟进保持原平台 Session 和 OpenCode 原生 Session。
 - Workbench 业务裁定属于 Worker 报告中的等待项，绑定有效的资产引用和注意事项 ID。工具许可和提问仍由 WorkSwarm 原生控件处理。
 - 原面板和 Workbench 输入固定来源。Build 生成宿主适配产物。插件构建与运行使用 WorkSwarm、Node 和平台 OpenCode Provider。

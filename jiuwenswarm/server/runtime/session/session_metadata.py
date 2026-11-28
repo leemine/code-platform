@@ -721,6 +721,10 @@ def _write_metadata_unfenced(
             else:
                 to_write.pop("runtime_id", None)
         if current is not None and current.get("session_id"):
+            from gateway.common.security.worker_permission import WORKER_PERMISSION_KEY
+
+            if WORKER_PERMISSION_KEY in current and WORKER_PERMISSION_KEY not in (options.merge_fields or ()):
+                to_write = {**to_write, WORKER_PERMISSION_KEY: current[WORKER_PERMISSION_KEY]}
             if "main_agent_role" in current:
                 to_write = {**to_write, "main_agent_role": current["main_agent_role"]}
             elif "main_agent_role" in to_write:

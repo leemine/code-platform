@@ -128,6 +128,7 @@ class Session:
     client: Any = None
     model_revision: str = ""
     desired_permission: str = "default"
+    worker_permission_profile: str | None = None
     effective_permission: str | None = None
     close_unconfirmed: bool = False
     pending: dict = field(default_factory=dict)
@@ -223,22 +224,26 @@ class ClaudeAdapter:
                 raise RuntimeError("Claude SDK shutdown is unconfirmed; close this session before continuing")
             if current.directory != directory:
                 raise ValueError("Claude session workspace cannot change after binding")
+            if facts is not None and facts.worker_permission_profile is not None:
+                current.worker_permission_profile = current.desired_permission = facts.worker_permission_profile
             return
         from ..execution_input import session_facts
         facts = facts or session_facts(session_id)
+        worker_profile = facts.worker_permission_profile
         binding = recovery.load("claude", session_id, directory)
         if binding:
             recovery.require_settings(binding, self._settings)
             self._sessions[session_id] = Session(directory, Path(binding["root"]), swarm_id=session_id,
                 native_id=binding["native_id"], started=True, model_revision=binding["model_revision"],
-                desired_permission=binding["permission"])
+                desired_permission=worker_profile or binding["permission"], worker_permission_profile=worker_profile)
             return
         if facts.has_assistant_history:
             raise ValueError("Claude cannot restore a released session without a recovery binding; its original native session cannot be identified")
         parent = facts.storage_dir / ".claude-direct"
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         root = Path(tempfile.mkdtemp(prefix="session-", dir=parent))
-        self._sessions[session_id] = Session(directory, root, swarm_id=session_id, desired_permission=self._permission_profile)
+        self._sessions[session_id] = Session(directory, root, swarm_id=session_id,
+            desired_permission=worker_profile or self._permission_profile, worker_permission_profile=worker_profile)
 
     def _save_binding(self, session):
         if session.swarm_id and session.started:
@@ -629,7 +634,8 @@ class ClaudeAdapter:
         desired = session.desired_permission if session else self._permission_profile
         effective = session.effective_permission if session else None
         return {"supported_profiles": list(self.permission_profiles), "update_timing": "idle", "desired_profile": desired,
-                "effective_profile": effective, "state": "not_started" if effective is None else "applied" if effective == desired else "pending"}
+                "effective_profile": effective, "state": "not_started" if effective is None else "applied" if effective == desired else "pending",
+                **({"worker_profile": session.worker_permission_profile} if session and session.worker_permission_profile else {})}
 
     async def reload_agent_config(self, config_base=None, env_overrides=None, target_session_id=None, reload_scopes=None):
         if reload_scopes and "permissions" not in reload_scopes:
@@ -640,7 +646,7 @@ class ClaudeAdapter:
             self._permission_profile = profile
         for sid, session in self._sessions.items():
             if target_session_id is None or sid == target_session_id:
-                session.desired_permission = profile
+                session.desired_permission = session.worker_permission_profile or profile
                 self._save_binding(session)
 
     async def process_message_impl(self, request, inputs):

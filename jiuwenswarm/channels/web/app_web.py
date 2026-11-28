@@ -515,7 +515,10 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
             )
 
     def _is_api_route(self) -> bool:
-        return urlparse(self.path).path.startswith("/api")
+        path = urlparse(self.path).path
+        return path.startswith(("/api", "/orchestrator/api/")) or path in {
+            "/workbench/room", "/workbench/messages", "/workbench/decisions",
+        }
 
     def _is_ws_route(self) -> bool:
         path = urlparse(self.path).path
@@ -1048,7 +1051,11 @@ class _SpaStaticHandler(SimpleHTTPRequestHandler):
 
     @classmethod
     def _is_path_under_allowed_root(cls, target: Path) -> bool:
+        from gateway.common.security.worker_permission import is_worker_permission_key_path
+
         target_resolved = target.resolve()
+        if is_worker_permission_key_path(target_resolved):
+            return False
         return (
             cls._is_path_under(Path(cls.workspace_root), target_resolved)
             or cls._is_path_under(Path(cls.agent_teams_root), target_resolved)

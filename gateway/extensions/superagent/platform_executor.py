@@ -8,6 +8,7 @@ import contextlib
 from pathlib import Path
 from uuid import uuid4
 
+from gateway.common.security.worker_permission import WORKER_PERMISSION_KEY, sign_full_access
 from jiuwenswarm.common.e2a.gateway_normalize import e2a_from_agent_fields
 from jiuwenswarm.common.schema.message import ReqMethod
 from jiuwenswarm.runtime.interaction import InteractionAnswerInput
@@ -19,10 +20,12 @@ class PlatformExecutionError(RuntimeError):
 
 
 class PlatformExecutor:
-    def __init__(self, agent_client, project_id: str, model_selection: dict[str, str]):
+    def __init__(self, agent_client, project_id: str, model_selection: dict[str, str],
+                 execution_provider: str = "opencode-direct"):
         self.client = agent_client
         self.project_id = project_id
         self.model_selection = dict(model_selection)
+        self.execution_provider = execution_provider
 
     @staticmethod
     def _envelope(method, request_id, user_id, session_id, params, *, stream=False):
@@ -52,7 +55,7 @@ class PlatformExecutor:
             user_id,
             {
                 "project_id": self.project_id,
-                "execution_provider": "opencode-direct",
+                "execution_provider": self.execution_provider,
                 "mode": "code",
                 "work_mode": "code",
                 "persist_session": True,
@@ -82,7 +85,11 @@ class PlatformExecutor:
                 "project_id": self.project_id,
                 "project_dir": project_dir,
                 "cwd": project_dir,
-                "execution_provider": "opencode-direct",
+                "execution_provider": self.execution_provider,
+                WORKER_PERMISSION_KEY: sign_full_access(
+                    session_id, user_id, self.project_id, self.execution_provider,
+                    turn=(request_id, text),
+                ),
                 "model_selection": self.model_selection,
                 "supports_user_interaction": True,
             },

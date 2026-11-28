@@ -122,6 +122,7 @@ class _Session:
     equipment: Any = None
     equipment_error: bool = False
     desired_permission: str = "default"
+    worker_permission_profile: str | None = None
     effective_permission: str | None = None
     permission_error: bool = False
     configuration_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -421,9 +422,17 @@ class OpenCodeAdapter:
             directory != trusted_directory or current and (current.project_id, current.runtime_id) != (project_id, runtime_id)
         ):
             raise ValueError("Managed OpenCode session workspace does not match its project binding")
-        if current is None:
+        if current is not None:
+            if facts is not None and facts.worker_permission_profile is not None:
+                if not current.service:
+                    raise ValueError("Application Worker permissions require a session-owned OpenCode server")
+                current.worker_permission_profile = current.desired_permission = facts.worker_permission_profile
+        else:
             from ..execution_input import session_facts
             facts = facts or session_facts(session_id)
+            worker_profile = facts.worker_permission_profile
+            if worker_profile and not self._executable:
+                raise ValueError("Application Worker permissions require a session-owned OpenCode server")
             binding = recovery.load("opencode", session_id, directory)
             shared_provider = bool(project_id) and (binding is None or binding.get("shared_provider", False))
             if binding:
@@ -439,7 +448,9 @@ class OpenCodeAdapter:
                 model_revision=binding["model_revision"] if binding else "", restored=bool(binding), equipment=Equipment(),
                 usage=OpenCodeUsage(complete=not bool(binding)), project_id=project_id,
                 shared_provider=shared_provider, runtime_id=runtime_id,
-                desired_permission=binding["permission"] if binding and self._executable else self._permission_profile)
+                worker_permission_profile=worker_profile,
+                desired_permission=worker_profile or (binding["permission"] if binding and self._executable
+                                                     else self._permission_profile))
             if self._executable:
                 from .opencode_service import SessionService
                 if binding:
@@ -472,7 +483,7 @@ class OpenCodeAdapter:
                 self._sessions[session_id] = session
                 async with session.configuration_lock:
                     if not binding:
-                        session.desired_permission = self._permission_profile
+                        session.desired_permission = session.worker_permission_profile or self._permission_profile
                     await self._apply_permissions(session)
                     self._save_binding(session)
             except BaseException:
@@ -907,7 +918,8 @@ class OpenCodeAdapter:
         elif session:
             state = "failed" if session.permission_error else "applied" if effective == desired else "pending"
         return {"supported_profiles": supported, "update_timing": "idle",
-                "desired_profile": desired, "effective_profile": effective, "state": state}
+                "desired_profile": desired, "effective_profile": effective, "state": state,
+                **({"worker_profile": session.worker_permission_profile} if session and session.worker_permission_profile else {})}
 
     async def _apply_permissions(self, session):
         if not session.service:
@@ -967,7 +979,7 @@ class OpenCodeAdapter:
         # Publish intent to every owned session before I/O. One failure must not
         # leave another session able to start with a silently stale policy.
         for _, session in sessions:
-            session.desired_permission = profile
+            session.desired_permission = session.worker_permission_profile or profile
             if session.service:
                 self._save_binding(session)
         for sid, session in sessions:

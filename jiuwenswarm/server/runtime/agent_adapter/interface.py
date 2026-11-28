@@ -2103,9 +2103,12 @@ class JiuWenSwarm:
                 from .execution_input import prepare_execution_input
                 inputs["_host_execution"] = prepare_execution_input(adapter, request, inputs, config=config_base, role=role)
             elif request.session_id:
+                from gateway.common.security.worker_permission import WORKER_PERMISSION_KEY
                 from jiuwenswarm.server.runtime.session.session_metadata import get_session_metadata
 
                 saved = get_session_metadata(request.session_id, cache_bust=True, enable_writeback=False)
+                if WORKER_PERMISSION_KEY in params or WORKER_PERMISSION_KEY in saved:
+                    raise ValueError("provider_capability_unsupported: worker_permission_profile")
                 if "main_agent_role" in saved:
                     raise ValueError("provider_capability_unsupported: main_instructions")
         return inputs, memory_mode, turn

@@ -146,6 +146,9 @@ test('Workbench follow-up and direct conversation follow-up share only the bound
     assert.equal(panel.sessionId, 'session-a');
     assert.equal(panel.threads[0].tickets[0].id, ticket.id);
     assert.deepEqual(panel.channels, []);
+    const [source] = await c('management', { ...alice, view: 'sources' });
+    assert.deepEqual(source.dropped, []);
+    assert.equal(source.stats.received, 1);
     await assert.rejects(c('managed_session', { owner: 'bob', session_id: 'session-a' }), /NOT_FOUND/);
     await c('report', { operation_id: work.id, report: { state: 'ready', summary: 'Done' } });
     const follow = { ...request('two', 'Bump'), topic_id: 'topic-one', is_follow: true };

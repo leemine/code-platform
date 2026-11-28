@@ -11,6 +11,7 @@ export const applicationPluginId = 'superagent';
 
 const base = '/api/superagent/v1';
 const known = new Set<string>();
+const presentation = { workMode: 'code', hidePersistTag: true } as const;
 
 async function call<T>(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<T | null> {
   const response = await fetch(base + path, {
@@ -52,6 +53,7 @@ export async function applicationPluginConversation(sessionId: string): Promise<
   known.add(sessionId);
   const ticketPath = '/tickets/' + encodeURIComponent(ticket.id);
   return {
+    presentation,
     async follow(text, operationId) {
       await call(ticketPath + '/follow', 'POST', { text, operation_id: operationId });
     },

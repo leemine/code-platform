@@ -17,6 +17,7 @@ export interface RuntimePermissionStatus {
   update_timing: 'idle' | 'new_session';
   desired_profile: Permission;
   effective_profile: Permission | null;
+  worker_profile?: Permission;
   state: 'not_started' | 'pending' | 'applied' | 'failed' | 'unsupported';
 }
 

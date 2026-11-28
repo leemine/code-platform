@@ -1,8 +1,15 @@
 import { useSyncExternalStore } from 'react';
+import type { WorkMode } from '../features/workspace/projectTypes';
 import type { AskUserQuestionPayload, UserAnswer } from '../types';
 import type { ApplicationPluginContribution } from './types';
 
+interface ConversationPresentation {
+  workMode?: WorkMode;
+  hidePersistTag?: boolean;
+}
+
 export interface ManagedConversation {
+  presentation?: ConversationPresentation;
   follow(text: string, operationId: string): Promise<void>;
   pending(signal: AbortSignal): Promise<AskUserQuestionPayload | null>;
   answer(requestId: string, answers: UserAnswer[]): Promise<void>;
@@ -15,12 +22,16 @@ export interface PluginConversationModule {
 
 const plugins: PluginConversationModule[] = [];
 const listeners = new Set<() => void>();
+const presentations = new Map<string, { pluginId: string; value: ConversationPresentation }>();
 let activeIds: ReadonlySet<string> = new Set();
 
 export function configureApplicationConversations(contributions: readonly ApplicationPluginContribution[]): void {
   const ids = new Set(contributions.filter(plugin => plugin.enabled !== false).map(plugin => plugin.plugin_id));
   if (activeIds.size === ids.size && [...ids].every(id => activeIds.has(id))) return;
   activeIds = ids;
+  for (const [sessionId, { pluginId }] of presentations) {
+    if (!activeIds.has(pluginId)) presentations.delete(sessionId);
+  }
   listeners.forEach(listener => listener());
 }
 
@@ -33,6 +44,10 @@ export function useApplicationConversationAvailability(): ReadonlySet<string> {
   return useSyncExternalStore(subscribe, () => activeIds);
 }
 
+export function useApplicationConversationPresentation(sessionId?: string | null): ConversationPresentation | undefined {
+  return useSyncExternalStore(subscribe, () => sessionId ? presentations.get(sessionId)?.value : undefined);
+}
+
 export function registerApplicationConversation(plugin: PluginConversationModule): void {
   plugins.push(plugin);
 }
@@ -41,7 +56,12 @@ export async function resolveApplicationConversation(sessionId: string): Promise
   for (const plugin of plugins) {
     if (!activeIds.has(plugin.applicationPluginId)) continue;
     const conversation = await plugin.applicationPluginConversation(sessionId);
-    if (conversation) return conversation;
+    if (!conversation || !activeIds.has(plugin.applicationPluginId)) continue;
+    if (conversation.presentation && presentations.get(sessionId)?.value !== conversation.presentation) {
+      presentations.set(sessionId, { pluginId: plugin.applicationPluginId, value: conversation.presentation });
+      listeners.forEach(listener => listener());
+    }
+    return conversation;
   }
   return null;
 }
